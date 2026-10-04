@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const listeners = {};
 const context = vm.createContext({
-  document: {addEventListener: (event, handler) => {listeners[event] = handler;}},
+  document: {querySelector: selector => selector==='#modal'?{open:true}:null, addEventListener: (event, handler) => {listeners[event] = handler;}},
   FormData: class {
     constructor(form) {this.form = form;}
     get(key) {return this.form.elements[key]?.value ?? null;}
@@ -74,5 +74,28 @@ function changeScreen(value) {
   await vm.runInContext("newBacktest({pattern:'vcp',base_days:25,volume_multiple:1.5,vcp_volume_multiple:.8})", context);
   assert.match(context.body, /name="base_days"[^>]*value="25"/);
   assert.match(context.body, /name="vcp_volume_multiple"[^>]*value="0.8"/);
-  console.log('Screen dropdown, form initialization, submitted filters and clone preservation passed.');
+  // The dialog appears before the slow date request resolves, and closing it cancels rendering.
+  vm.runInContext(`api=()=>new Promise(resolve=>{globalThis.resolveDates=resolve;});globalThis.modalOpen=true;document.querySelector=selector=>selector==='#modal'?{open:modalOpen}:null;`,context);
+  const opening=vm.runInContext('newBacktest()',context);
+  assert.match(context.body,/Checking downloaded history/);
+  vm.runInContext('modalOpen=false',context);
+  context.resolveDates({start:'2020-01-01',end:'2025-12-31'});
+  await opening;
+  assert.match(context.body,/Checking downloaded history/);
+  // An active job gets an explanation and polling can re-enable the existing form.
+  vm.runInContext(`
+    globalThis.submit={disabled:false};globalThis.availability={textContent:'',hidden:false};
+    globalThis.runtimeForm={dataset:{},querySelector:()=>submit};
+    document.querySelector=selector=>selector==='#backtest-form'?runtimeForm:selector==='#backtest-availability'?availability:null;
+    backtestWindow={start:'2020-01-01',missing_symbols:[]};state.jobs=[{type:'Backtest',status:'running'}];
+    updateBacktestAvailability();
+  `,context);
+  assert.equal(context.submit.disabled,true);
+  assert.match(context.availability.textContent,/Backtest is running/);
+  vm.runInContext('state.jobs=[];updateBacktestAvailability()',context);
+  assert.equal(context.submit.disabled,false);
+  vm.runInContext("backtestWindow.missing_symbols=['IDEA'];updateBacktestAvailability()",context);
+  assert.equal(context.submit.disabled,true);
+  assert.match(context.availability.textContent,/IDEA/);
+  console.log('Screen presets, immediate dialog, cancellation, job completion and missing-data explanations passed.');
 })().catch(error => {console.error(error);process.exitCode=1;});

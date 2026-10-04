@@ -172,17 +172,36 @@ function render(){
   $('#top-navigation').innerHTML=nav.filter(([id])=>id!=='paper'||state.paper_enabled).map(([id,label,icon])=>`<a class="nav-link ${id===currentView?'active':''}" href="#${id}" ${id===currentView?'aria-current="page"':''}><span class="nav-icon">${icon}</span>${label}${id==='backtests'?`<span class="count">${state.runs.length}</span>`:''}</a>`).join('');
   $('#view').innerHTML=({overview,data:dataView,backtests:backtestsView,paper:paperView,jobs:jobsView,settings:settingsView}[currentView])();
 }
-async function refresh(redraw=true){state=await api('bootstrap');if(redraw)render();}
+async function refresh(redraw=true){state=await api('bootstrap');if(redraw)render();updateBacktestAvailability();}
 function readForm(form,schema){const values=new FormData(form), result={};for(const [key,s] of Object.entries(schema.properties)){if(s.type==='boolean')result[key]=values.has(key);else if(s.type==='number'||s.type==='integer')result[key]=Number(values.get(key));else result[key]=values.get(key);}return result;}
+let backtestDialogRequest=0, backtestWindow=null;
+function updateBacktestAvailability(){
+  const form=$('#backtest-form');if(!form)return;
+  const job=activeJob();
+  const missing=backtestWindow?.missing_symbols||[];
+  const reason=job?`${job.type} is ${job.status}. Wait for it to finish; this button will become available automatically.`
+    :missing.length?`Missing valid candle history for ${missing.join(', ')}. Open Market data and fetch missing data. If ingestion fails, inspect Jobs & logs; invalid provider candles must be resolved before a backtest.`
+    :!backtestWindow?.start?'Not enough downloaded history for a test window. Fetch more history in Market data.' : '';
+  const submit=form.querySelector('[type="submit"]');
+  submit.disabled=Boolean(reason)||form.dataset.submitting==='true';
+  const notice=$('#backtest-availability');notice.textContent=reason;notice.hidden=!reason;
+}
 async function newBacktest(seed={}){
   const screenValue=seed.screen||`builtin:${seed.pattern||'vcp'}`;
   seed={...screenPreset(screenValue),...seed,screen:screenValue};
-  const window = await api('backtest/window?warmup='+Math.max(seed.base_days||25,seed.sma_days||50,seed.minimum_warmup_sessions||50,seed.min_rs_rating>0||seed.candidate_rank==='rs_126'?126:50,seed.require_rising_long_trend?220:seed.require_long_trend?200:50,seed.pattern==='multiyear'?seed.multiyear_base_days||260:50));
+  const dialogRequest=++backtestDialogRequest;
+  modal('New backtest','<p role="status">Checking downloaded history and available test dates…</p>');
+  let window;
+  try {window = await api('backtest/window?warmup='+Math.max(seed.base_days||25,seed.sma_days||50,seed.minimum_warmup_sessions||50,seed.min_rs_rating>0||seed.candidate_rank==='rs_126'?126:50,seed.require_rising_long_trend?220:seed.require_long_trend?200:50,seed.pattern==='multiyear'?seed.multiyear_base_days||260:50));}
+  catch(error){if(dialogRequest===backtestDialogRequest&&$('#modal').open)modal('New backtest',`<div class="form-error" role="alert">${esc(error.message)}</div><button class="button" data-action="close">Close</button>`);return;}
+  if(dialogRequest!==backtestDialogRequest||!$('#modal').open)return;
   seed={start:window.start||'',end:window.end||'',capital:1000000,pattern:'vcp',entry_mode:'pivot',winner_exit:'trail_50d',skip_weak_markets:false,buy_cost_bps:0,sell_cost_bps:0,...seed};
   const coverage=window.start ? `<strong>History loaded:</strong> ${window.history_start} → ${window.history_end}. <strong>Safe test window:</strong> ${window.start} → ${window.end}. The sessions before the safe window are warmup context for indicators and the first signal; they are not included in the reported backtest period. This window is the common overlap available across ${window.ready_symbols} of ${window.total_symbols} loaded symbols. <button type="button" class="text-button" data-action="use-dates" data-start="${window.start}" data-end="${window.end}">Use safe test window</button>` : 'Fetch more daily history before running a backtest. There must be enough sessions for indicator warmup and testing.';
   const schema=state.backtest_schema;
   const groups=[['Experiment',['strategy','screen','name','start','end','capital','minimum_warmup_sessions'],'Choose the active Swing Pattern strategy, then select a Banana screen or saved custom screen. Portfolio assumptions remain per run.'],['Banana screen filters',['base_days','max_depth_pct','volume_multiple','sma_days','require_long_trend','require_rising_long_trend','min_rs_rating','min_turnover','vcp_window_days','vcp_volume_multiple','blue_sky_lookback_days','multiyear_base_days','multiyear_max_depth_pct'],'The screen determines which completed daily setups qualify. IPO base is intended for young listings; Blue sky uses long-history highs.'],['Entry, risk & exits',['entry_mode','candidate_rank','risk_pct','stop_pct','winner_exit','skip_weak_markets','market_breadth_pct','breakeven_r','trail_pct','max_positions','max_hold_days'],'Entry and winner-exit choices follow the reference workflow. Breakeven, trailing fallback and holding limit remain explicit assumptions for reproducibility.'],['Execution costs',['slippage_bps','buy_cost_bps','sell_cost_bps'],'Banana-style comparison runs use zero costs; research runs can add brokerage, taxes and slippage explicitly.']];
-  modal('New backtest',`<div class="notice">${coverage}</div><div class="notice warn">Current-constituent universe; corporate actions and historical membership unverified. This run is for exploring rules, not proving an edge.</div><form id="backtest-form"><input type="hidden" name="pattern" value="${esc(seed.pattern)}">${groups.map(([title,keys,help])=>`<div class="form-section"><h3>${title}</h3><p>${help}</p><div class="fields">${keys.map(k=>field(k,schema,seed[k])).join('')}</div></div>`).join('')}<div class="form-section">${field('acknowledge_limitations',schema,false)}</div><div class="form-error" role="alert"></div><div class="form-actions"><button type="button" class="button" data-action="close">Cancel</button><button class="button primary" type="submit" ${activeJob()?'disabled':''}>Run backtest →</button></div></form>`);
+  backtestWindow=window;
+  modal('New backtest',`<div class="notice">${coverage}</div><div class="notice warn">Current-constituent universe; corporate actions and historical membership unverified. This run is for exploring rules, not proving an edge.</div><form id="backtest-form"><input type="hidden" name="pattern" value="${esc(seed.pattern)}">${groups.map(([title,keys,help])=>`<div class="form-section"><h3>${title}</h3><p>${help}</p><div class="fields">${keys.map(k=>field(k,schema,seed[k])).join('')}</div></div>`).join('')}<div class="form-section">${field('acknowledge_limitations',schema,false)}</div><div id="backtest-availability" class="notice warn" role="status"></div><div class="form-error" role="alert"></div><div class="form-actions"><button type="button" class="button" data-action="close">Cancel</button><button class="button primary" type="submit">Run backtest →</button></div></form>`);
+  updateBacktestAvailability();
 }
 async function showChart(isin){const item=state.instruments.find(x=>x.isin===isin);if(!item)return;modal(item.name,`<p>Loading historical candles…</p>`);
   const data=await api('bars/'+encodeURIComponent(isin));if(!$('#modal').open)return;
@@ -236,15 +255,15 @@ document.addEventListener('change',event=>{
   else if(form.id==='screen-form'&&event.target.name==='pattern')applyScreenPreset(form,`builtin:${event.target.value}`);
 });
 document.addEventListener('submit',async event=>{
-  const form=event.target;if(!['settings-form','token-form','backtest-form','screen-form','paper-form'].includes(form.id))return;event.preventDefault();const submit=form.querySelector('[type="submit"]'), errorBox=form.querySelector('.form-error');submit.disabled=true;errorBox.textContent='';
+  const form=event.target;if(!['settings-form','token-form','backtest-form','screen-form','paper-form'].includes(form.id))return;event.preventDefault();const submit=form.querySelector('[type="submit"]'), errorBox=form.querySelector('.form-error');submit.disabled=true;form.dataset.submitting='true';errorBox.textContent='';
   try{
     if(form.id==='settings-form'){await api('settings','PUT',readForm(form,state.settings_schema));toast('Data settings saved.');}
     if(form.id==='token-form'){const input=form.elements.access_token;const token=input.value.trim();await api('connection','PUT',{access_token:token});input.value='';toast('Token saved on the server. Fetch data to validate access.');}
     if(form.id==='screen-form'){const payload={name:form.elements.name.value.trim(),pattern:form.elements.pattern.value};screenKeys.forEach(k=>{const schema=state.backtest_schema.properties[k];payload[k]=schema.type==='boolean'?form.elements[k].checked:schema.type==='number'||schema.type==='integer'?Number(form.elements[k].value):form.elements[k].value;});await api('screens','POST',payload);$('#modal').close();toast('Screen saved. It is now available in new backtests.');}
-    if(form.id==='backtest-form'){await api('jobs/backtest','POST',readForm(form,state.backtest_schema));$('#modal').close();location.hash='jobs';toast('Backtest queued.');}
+    if(form.id==='backtest-form'){const config=readForm(form,state.backtest_schema);if(backtestWindow?.end&&config.end>backtestWindow.end)throw new Error(`End date ${config.end} exceeds downloaded coverage through ${backtestWindow.end}. Use the safe test window above, or extend history in Settings and fetch missing data.`);await api('jobs/backtest','POST',config);$('#modal').close();location.hash='jobs';toast('Backtest queued.');}
     if(form.id==='paper-form'){await api(paperPath('portfolio'),paperPortfolio()?'PUT':'POST',readForm(form,paperSchema()));$('#modal').close();location.hash='paper';toast('Paper portfolio saved.');}
     await refresh();
-  }catch(error){errorBox.textContent=error.message;}finally{submit.disabled=false;}
+  }catch(error){errorBox.textContent=error.message;errorBox.scrollIntoView({block:'nearest'});}finally{form.dataset.submitting='false';submit.disabled=false;updateBacktestAvailability();}
 });
 document.addEventListener('input',event=>{if(event.target.id==='instrument-search')$('#instrument-table').innerHTML=instrumentTable(event.target.value);});
 $('#modal').addEventListener('close',disposeChart);

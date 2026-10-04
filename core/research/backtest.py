@@ -242,20 +242,47 @@ def simulate(datasets, cfg, *, state=None, liquidate=True, allow_entries=True):
         'modeled_fees': total_fees, 'modeled_slippage': total_slippage, 'skipped_entries': skipped}}
 
 
+_WINDOW_RECORDS = {}
+
+
 def available_window(settings, warmup=50):
-    """Suggest dates from actual sessions, including one signal session before entry."""
+    """Cache compact date metadata; never retain every symbol's OHLCV in memory."""
     universe = store.read('universes/' + settings.universe, {})
-    records = [store.read('bars/' + item['isin']) for item in universe.get('instruments', [])]
-    ready = [r['bars'] for r in records if r and len(r['bars']) > warmup + 2]
+    summaries, missing = [], []
+    for item in universe.get('instruments', []):
+        name = 'bars/' + item['isin']
+        path = store.DATA / (name + '.json')
+        try:
+            stat = path.stat()
+            signature = (stat.st_mtime_ns, stat.st_size)
+        except FileNotFoundError:
+            signature = None
+        cached = _WINDOW_RECORDS.get(str(path))
+        if cached and cached[0] == signature:
+            summary = cached[1]
+        else:
+            record = store.read(name)
+            bars = record.get('bars', []) if record else []
+            summary = {'dates': [b['date'] for b in bars],
+                       'requested_start': record.get('requested_start') if record else None,
+                       'requested_end': record.get('requested_end') if record else None}
+            if len(_WINDOW_RECORDS) >= 2048:
+                _WINDOW_RECORDS.clear()
+            _WINDOW_RECORDS[str(path)] = (signature, summary)
+        if not summary['dates']:
+            missing.append(item['symbol'])
+        summaries.append(summary)
+    ready = [r for r in summaries if len(r['dates']) > warmup + 2]
+    loaded = [r for r in summaries if r['dates']]
     result = {'start': None, 'end': None, 'warmup_sessions': warmup + 1,
-              'ready_symbols': len(ready), 'total_symbols': len(records),
-              'history_start': None, 'history_end': None}
-    loaded = [r['bars'] for r in records if r and r['bars']]
+              'ready_symbols': len(ready), 'total_symbols': len(summaries),
+              'history_start': None, 'history_end': None, 'missing_symbols': missing}
     if loaded:
-        result.update(history_start=min(b[0]['date'] for b in loaded),
-                      history_end=max(b[-1]['date'] for b in loaded))
-    if ready and all(records):
-        start, end = max(b[warmup + 1]['date'] for b in ready), min(b[-1]['date'] for b in ready)
+        result.update(history_start=min(r['dates'][0] for r in loaded),
+                      history_end=max(r['dates'][-1] for r in loaded))
+    if ready and not missing:
+        start = max(max(r['dates'][warmup + 1], r['requested_start'] or r['dates'][0]) for r in ready)
+        end = min(min(r['dates'][-1], r['requested_end'] or r['dates'][-1]) for r in loaded)
         if start < end:
             result.update(start=start, end=end)
     return result
@@ -274,7 +301,7 @@ def prepare(settings, cfg):
         if record['requested_end'] < str(cfg.end) or record['requested_start'] > str(cfg.start):
             raise ValueError(f"Your test requests {cfg.start} to {cfg.end}, but {item['symbol']} was downloaded for "
                              f"{record['requested_start']} to {record['requested_end']}. "
-                             "Use the available dates shown above, or fetch earlier history in Market data.")
+                             "Use the available dates shown above, or extend the requested history in Settings and fetch missing data in Market data.")
         bars = record['bars']
         if len([b for b in bars if b['date'] < str(cfg.start)]) < warmup:
             excluded.append(item['symbol'])
