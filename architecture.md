@@ -19,16 +19,18 @@ saved experiments or a portfolio ledger. Reconnect and fetch real data for a fre
 restore the existing durable data directory when continuing an existing one; a legacy encrypted token also needs its original encryption key.
 Never replace missing user history with example records or hardcoded historical metrics.
 
-## Deployment amendment — 4 October 2026
+## Current deployment decisions — 4 October 2026
 
-The owner now authorizes the agent to commit and push to the public repository `manoj-mathivanan/trader_all` and deploy this MVP for remote research/paper use before edge validation. Live execution and the full Postgres/Redis production roadmap remain deferred. This amendment supersedes earlier deployment deferrals, manual-only Git rules, mandatory deployment authentication and encrypted-token claims for the current runtime.
+The owner now authorizes the agent to commit and push to the public repository `manoj-mathivanan/trader_all` and deploy this MVP for remote research/paper use before edge validation. Live execution and the full Postgres/Redis production roadmap remain deferred. These are final current-runtime decisions. The future infrastructure roadmap below is not required for this deployed MVP; its database, queue and live-broker proposals are not current capabilities.
 
 The approved VPS is DigitalOcean `manoj-projects` in Bangalore, Ubuntu 24.04, 1 vCPU/1 GB RAM/25 GB SSD ($6/month before taxes). Domain: `manojmathivanan.com`; application: `https://trader.manojmathivanan.com`. Caddy HTTPS forwards to one loopback Uvicorn process in Docker Compose. Set `TRADER_PUBLIC_ORIGIN` explicitly; hosts and browser write origins remain checked. No website authentication is configured by owner choice, so all existing UI actions are publicly reachable.
 
-New UI token saves use a plaintext private file with restricted filesystem permissions, outside published state through `TRADER_PRIVATE_DIR`. Tokens are never returned to the UI/logs or committed. Legacy encrypted local records remain readable solely for migration compatibility. `main` holds shared code, tests and configuration only. No data branch is published. Production starts fresh, and local/production files remain independent with no database or synchronization. `TRADER_ENV=local` defaults to research only; production explicitly enables paper APIs and automatic scheduling. The server never commits or pushes. Nightly production backups remain on the VPS. Data, credentials and deploy keys remain outside the code checkout and image. See `deploy/README.md` for exact runtime, snapshot, migration and restore contracts.
+New UI token saves use a plaintext private file with restricted filesystem permissions, outside published state through `TRADER_PRIVATE_DIR`. Tokens are never returned to the UI/logs or committed. Legacy encrypted local records remain readable solely for migration compatibility. `main` holds shared code, tests and configuration only. No data branch is published. Production starts fresh, and local/production files remain independent with no database or synchronization. `TRADER_ENV=local` defaults to research only; production explicitly enables paper APIs and automatic scheduling. The server never commits or pushes. Nightly production backups remain on the VPS. Data and credentials remain outside the code checkout and image. The server needs no GitHub write credential. The complete deployment, backup and recovery specification is embedded below; no other document is required for these contracts.
 
 ## Reading map
 
+- [Current deployment decisions](#current-deployment-decisions--4-october-2026)
+- [Complete deployment and recovery specification](#complete-deployed-mvp-specification-and-recovery-runbook)
 - [Owner decisions and implementation status](#owner-decisions-and-implementation-status)
 - [Current application rebuild specification](#current-application-rebuild-specification)
 - [Data source, universe and ingestion contract](#data-source-universe-and-ingestion-contract)
@@ -50,9 +52,9 @@ New UI token saves use a plaintext private file with restricted filesystem permi
 
 | Area | Final decision / current status |
 |---|---|
-| Purpose | Personal, local-first, rules-based equities research and simulated paper trading; no SaaS, multi-tenant service, tips or managed money |
+| Purpose | Personal rules-based equities research locally and in production; production-only simulated paper trading; no SaaS, multi-tenant service, tips or managed money |
 | Current market coverage | NSE cash equities matched to current Nifty 50 or Nifty 500 constituents; broad NSE/BSE support is a future target |
-| Product order | Dashboard first, real data and backtests next; local paper support is explicitly authorized before edge validation |
+| Product order | Dashboard first, real data and backtests next; production paper support is explicitly authorized before edge validation |
 | Visual direction | Light cream/green Banana-inspired design, optional persistent dark toggle; original source/assets only |
 | Strategy versus screen | One active Swing Patterns strategy with VCP, Blue sky, Multi-year and IPO screens; no separate parity strategy/profile |
 | Future strategies | intraday_momentum and scalping are registered as planned; options is a roadmap item, not a current registry entry |
@@ -61,33 +63,33 @@ New UI token saves use a plaintext private file with restricted filesystem permi
 | Accounting invariants | Paper capital and membership are fixed after creation; capital transfers/reallocation are not implemented; editing other settings never resets the ledger |
 | Execution | Simulated EOD long-only fills only; paper uses next_open; backtests also allow pivot/close; Upstox is currently data access, not an order broker |
 | Persistence | Durable per-strategy JSON ledger, atomic replacement and session checkpoint; startup restores history and retries interrupted scheduled work |
-| Runtime | One loopback FastAPI process, one in-process job worker and one local weekday scheduler; no Postgres, Redis, RQ or separate runner yet |
+| Runtime | One loopback FastAPI process and in-process job worker per environment; weekday paper scheduler starts only in production; no Postgres, Redis, RQ or separate runner |
 | Data honesty | Real provider data only; tests may use isolated synthetic fixtures; no invented candles, prices, trades or performance |
-| Research gate | Edge is not validated; current constituents, adjustments, historical RS and listing history remain incomplete; live/production progression requires research validation |
-| Deployment | Remote deployment is deferred until the owner finalizes the local build; this task does not deploy or enable live mode |
-| Future authentication | Basic Auth is accepted by the owner through live Phase 7; 2FA/rate limits are optional improvements, not newly imposed requirements |
-| Source control | Owner commits and pushes manually; an agent must not commit or push on the owner's behalf |
+| Research gate | Edge is not validated; current constituents, adjustments, historical RS and listing history remain incomplete; live trading and the larger database/queue roadmap require research validation; current remote research/paper MVP is authorized |
+| Deployment | MVP deployed to DigitalOcean with Caddy HTTPS at trader.manojmathivanan.com; live mode remains unavailable |
+| Authentication | No website login for the current public MVP by owner choice; optional Basic Auth is implemented but unset; live-broker access is a separate future decision |
+| Source control | Owner authorizes agent commits/pushes of shared code/configuration to public manoj-mathivanan/trader_all main; all data and secrets excluded; server never pushes |
 
-Implemented: six dashboard views, encrypted token entry, real constituent matching/ingestion,
+Implemented: six production dashboard views (five locally), plaintext private token saves, real constituent matching/ingestion,
 coverage and candlestick charts, saved screens, costed backtests and complete sortable reports,
 jobs/logs, isolated paper portfolios, configurable paper UI, scheduling and restart recovery.
-Production deployment/database/queue/services, Telegram, momentum/scalping/options execution,
+Production MVP deployment is implemented. Database/queue/separate runners, Telegram, momentum/scalping/options execution,
 live broker accounts/orders/stops/reconciliation and unbiased edge validation remain pending.
-No account/portfolio or nightly schedule is created automatically at installation.
+No account/portfolio or automatic paper schedule is created at installation. Deployment installs the separate nightly data-backup timer.
 
 ## Current application rebuild specification
 
-The following sections define the actual local build. They distinguish API compatibility defaults,
+The following sections define the current shared application and its local/production differences. They distinguish API compatibility defaults,
 new-form UI seeds, reference-site observations and future goals explicitly. If a known limitation
 is described, reproduce the documented current behavior rather than silently claiming a fix.
 
 ### Current repository and run commands
 
-The current local build is intentionally smaller than the production architecture below:
+The shared file-based MVP is intentionally smaller than the future database/queue architecture below:
 
 | Path | Responsibility |
 |---|---|
-| `dashboard/api/main.py` | Loopback-only FastAPI API, bootstrap payload, settings/token/jobs/bars/runs routes |
+| `dashboard/api/main.py` | Loopback-bound FastAPI API, allowed public proxy origin, local/production gate, bootstrap/settings/token/jobs/bars/runs/paper routes |
 | `dashboard/web/app.js` | Single-page dashboard renderer and forms |
 | `dashboard/web/style.css` | Light Banana-inspired dashboard styling |
 | `dashboard/web/index.html` and `favicon.svg` | Static document shell and original app icon |
@@ -103,7 +105,7 @@ The current local build is intentionally smaller than the production architectur
 | `core/portfolio/manager.py` | Strategy identity, isolated creation/configuration/status/persistence |
 | `core/portfolio/registry.py` | Per-strategy paper schema and runner registration |
 | `core/portfolio/paper.py` | Swing config, forward-only cycle, data fingerprints and atomic checkpoints |
-| `core/portfolio/scheduler.py` | Local weekday schedule, claims and restart recovery |
+| `core/portfolio/scheduler.py` | Production-only weekday schedule, claims and restart recovery |
 | `core/risk/position_sizer.py` | Shared risk and cash sizing |
 | `core/execution/paper.py` | Shared simulated fills, fees and actual slippage |
 | `core/strategies/registry.py` | Active Swing Patterns strategy plus planned Intraday Momentum and Scalping entries |
@@ -118,8 +120,7 @@ On Windows, run `start.ps1` from the repository root. The dashboard is loopback-
 
 - Upstox is the primary historical EOD source. The user has Upstox API access; never ask for or
   print access tokens in chat, logs, code, or reports.
-- The token is entered in Settings, encrypted locally, and never returned to the browser in
-  plaintext. The local API accepts mutating requests only with the local UI request header.
+- The token is entered in each environment's Settings and saved as plaintext in its private file, with restricted filesystem permissions. It is never returned to the browser or logged. Legacy encrypted local records remain readable with the original key. Mutating requests require the existing `X-Trader-Request: local-ui` header in both environments; its name is a protocol marker, not authentication.
 - The API default universe is **Nifty 50**; the owner expanded this research to **Nifty 500**.
   Both are implemented Settings choices. The full available 500-member provider universe has
   been fetched; broader NSE/BSE coverage and historical membership remain future work.
@@ -147,7 +148,7 @@ On Windows, run `start.ps1` from the repository root. The dashboard is loopback-
 
 ### Decisions and precedence
 
-- Build the local dashboard first, use real data, then inspect backtests and local paper trading.
+- Use the shared dashboard for real-data research/backtests locally or in production; create and run paper portfolios only in production.
 - One Swing strategy owns four screen families; VCP is a screen, not another strategy. There is
   no separate Banana parity profile. Intraday Momentum and Scalping are visibly planned.
 - Backtest and paper forms have exactly one **Screen** dropdown containing built-ins and saved
@@ -155,10 +156,8 @@ On Windows, run `start.ps1` from the repository root. The dashboard is loopback-
   visible Banana screen selector. Only custom-screen creation has a **Base screen** selector.
 - Every dropdown change replaces all thirteen screen-filter values, including custom → built-in
   transitions. It leaves dates, name, capital, entries, exits, risk, fees and acknowledgment alone.
-- Local paper simulation is authorized before edge validation. This does not mean the edge is
-  validated. Remote deployment is deferred until owner finalization; live execution remains future.
-- Basic Auth is the accepted future authentication choice, including Phase 7; optional stronger
-  authentication is not a new owner requirement. The current server still enforces loopback access.
+- Production paper simulation and remote MVP hosting are authorized before edge validation; this does not validate the edge. Live execution remains future.
+- The public MVP deliberately has no website authentication. Basic Auth remains an optional implementation, not a deployment requirement. Uvicorn remains bound to loopback behind Caddy.
 - The owner authorizes the agent to commit and push to the public repository; exclude credentials.
 - The reference site's screen thresholds are research inputs. Actual implemented predicates below
   determine the local output; do not imply missing reference filters are enforced.
@@ -219,7 +218,7 @@ return to overview. Closing/changing views disposes charts and closes the modal.
 | Backtests | New backtest; newest-first run cards with name, universe, dates, IST creation time, return, drawdown, trades; open complete report; explanatory research text |
 | Paper trading | Strategy portfolio selector; Create/configure portfolio; pause/resume new entries; Run daily cycle; status/universe/start/last session/schedule; equity/cash/realized/unrealized cards; open positions, equity curve, closed trades, fills and full JSON export |
 | Jobs & logs | All returned jobs with type/time/status and View logs; pending-job link and manual Refresh; readable timestamped log in a modal |
-| Settings | Universe/history form; encrypted-token connection form; token saved/replacement status; local authentication status; backtest configuration action |
+| Settings | Universe/history form; private plaintext-token connection form; token saved/replacement status; environment/authentication status; backtest configuration action |
 
 Sidebar saved-screen buttons open New backtest seeded from that screen. Add new screen opens
 name, Base screen and all thirteen filters. New backtest groups fields into Experiment; Banana screen
@@ -237,6 +236,66 @@ Trade headers sort symbol, entry date, quantity, P&L, R or exit reason; clicking
 Initial order is newest exit first. Entry-date cells show both entry and exit. Sorting only affects
 presentation. Adjust & rerun preserves every explicit historical parameter and changes the name
 to `<original> · revised`; acknowledgment resets. Export preserves the saved report as JSON.
+
+Clicking a stock name in a backtest trade row opens a **Trade chart** dialog for that specific
+ledger row. Sorting must retain the original trade-array index, including repeated trades in
+the same stock. The dialog displays daily candles plus volume, locked green BUY and red SELL
+markers at the saved entry/exit dates and execution prices (including modeled slippage), and
+buy/sell date/price, quantity, net P&L and exit reason summaries. A **Back to report** button
+returns to the same run and preserves the current sort. The chart is 450 px tall on desktop,
+360 px on mobile; the summary uses three desktop columns and two on mobile.
+
+`GET /api/runs/{run_id}/trades/{trade_index}/chart` validates the saved run and zero-based
+ledger index, reads candles exclusively from `run_data/{run_id}.json`, and returns run_id,
+trade_index, symbol, trade, bars and source=`frozen_backtest_snapshot`. Include up to 60 sessions
+before entry and 20 after exit, retaining every holding-session candle and clipping to the
+backtest end. Reject missing snapshots or entry/exit dates with an actionable 404; never fall
+back to today's cache. Bind markers to the matching saved candle timestamps and trade prices.
+Fit the initial viewport to the trade/context interval, allow normal pan/zoom and resize, and
+dispose overlays with the chart. Same-day buys/sells retain distinct labels. Daily candles
+cannot locate the intraday execution time. Cancel stale chart responses when leaving the dialog.
+Verify frozen-input selection, invalid indices/missing snapshots, sorting/repeated symbols,
+marker anchoring and back navigation. Regression files: tests/test_trade_chart.py and
+tests/test_trade_chart.cjs; the latter runs through `npm.cmd test` with the screen-preset tests.
+
+The trade chart also explains the decision using `core/research/trade_chart.py::explain_trade`.
+Its API response adds `explanation` (series descriptors, signal date/timestamp/price, checks,
+notices, pattern, entry mode, candidate priority and winner-exit rule). Each candle adds a
+`chart_values` dictionary keyed by series id. Calculate all values against the full frozen
+history before cropping, without modifying the snapshot. Missing warmup values are omitted.
+Show distinct configured trend SMA, SMA 50 and SMA 200, plus SMA 150 for `trail_30w`.
+Add the prior signal breakout high and base low (omit the base low for Blue sky), a separate
+entry pivot when it differs from the signal trigger, initial stop, breakeven activation and
+the +25% target only for `take_25`. Initial stop is entry × (1 − stop_pct/100), activation is
+entry × (1 + stop_pct/100 × breakeven_r), target is entry × 1.25. Base/trigger/pivot levels
+span the signal lookback through recorded exit; risk levels span entry through recorded exit.
+All lines have checked, labelled color controls above the chart and can be toggled independently.
+Render them through the price-series `TRADE_CONTEXT` KLineChart indicator on `candle_pane`;
+its calc reads `chart_values`, and each figure supplies a styles callback. Toggle visibility
+by overriding the indicator figures, retaining candles and recorded execution markers.
+
+Add a blue SIGNAL marker at the completed signal session close, with a separate label offset
+from BUY/SELL. The signal is the entry session for non-legacy `close` execution and the previous
+session otherwise. Below the graph, **Why this trade qualified** shows the saved strategy,
+signal date, entry rule, winner rule and priority, followed by actual values, requirements and
+Passed/Failed/Context/Unavailable states. Reconstruct trend, breakout, prior-50-session volume
+and turnover checks; enabled long/rising SMA 200 checks; VCP three-window price/volume
+contraction and dryup; or base-depth checks for multi-year/IPO/legacy breakouts. Where relevant,
+compute RS 126 percentile and enabled market breadth from the frozen universe on the signal
+date alone. RS without a minimum is context, not a passed filter. Do not mix percent/volume
+values with the chart's price axis; keep these in the condition table and volume pane.
+
+The active-stop line is explicitly **Reconstructed active stop**, not a saved engine audit
+trace. Start from the recorded entry stop; incorporate saved buy/sell costs and slippage in
+breakeven; ratchet using the saved winner rule and completed closes. A stop updated at close
+becomes active next session; pivot/close entries skip the entry-session stop update. If the
+reconstruction reaches a stop earlier than the ledger exit, end the trace and display the
+discrepancy date. Explain failed historical checks and older engine differences instead of
+rewriting the ledger. VCP notices distinguish contraction trigger from execution pivot and
+state that base-depth/market-cap filters are not enforced. Regression coverage in
+`tests/test_trade_explanation.py` verifies full warmup, snapshot immutability, no future signal
+leakage, next-session stop changes and close-entry timing. Browser verification must confirm
+visible lines and toggles as well as the signal and execution labels.
 
 Charts use vendored KLineChart 9.8.12, candlesticks plus VOL, Asia/Kolkata timezone, drag/pan,
 scroll/zoom, ResizeObserver and disposal on modal changes. Daily chart is 365 px tall desktop,
@@ -401,6 +460,8 @@ use its final rounded equity. Flat trades count in trade_count but neither wins 
 
 ### Persistent paper portfolio and scheduling
 
+This section applies to production only. Local mode hides paper navigation, rejects all paper API routes and never starts or recovers the paper scheduler. Shared simulation/portfolio modules remain in the codebase for reuse and isolated tests.
+
 Only Swing currently registers a paper plugin. Manager is strategy-ID based; future strategies
 must register a distinct config model and cycle runner, get their own portfolio/cash/history,
 and never reuse Swing's ledger. Registry metadata alone does not enable trading.
@@ -428,8 +489,7 @@ auto_run defaults false; hour 16–23, minute 0–59, default 16:15 IST. The sin
 checks every 30 seconds on weekdays, only at/after configured time, and claims one scheduled
 attempt per strategy/day. It waits while another job is active. A normal failed attempt is not
 automatically retried that day; manual retry is available. Startup first marks interrupted jobs
-failed, then releases missing/interrupted schedule claims. Server must remain running; no OS
-service, exchange-holiday calendar or notifications exist in this local build.
+failed, then releases missing/interrupted schedule claims. The production container must remain running; Docker restarts it after a process crash and Docker/Caddy start at boot. No exchange-holiday calendar or notifications are implemented. The systemd backup timer is separate from this in-process paper scheduler.
 
 ### Strategy plugin and restart contracts
 
@@ -478,8 +538,7 @@ with payload {portfolio_id: ID, strategy_id: ID, trigger: "schedule"}; save atte
 at and job_id while holding the same process lock. A busy global worker delays other strategies;
 the next tick continues them. There is one worker across strategies, independent money per strategy.
 
-Startup order is exact: jobs.recover() → scheduler.recover_interrupted() → scheduler.start() →
-serve HTTP. Shutdown signals its Event and joins the daemon scheduler with a two-second bound.
+Startup always calls jobs.recover(). Production then calls scheduler.recover_interrupted() → scheduler.start() → serve HTTP. Local proceeds directly to HTTP without recovering/starting paper scheduling. Only production shutdown signals its scheduler Event and joins the daemon thread with a two-second bound.
 No startup function calls portfolio create/save or overwrites capital/positions/history.
 Recovery marks queued/running jobs failed with `Interrupted by server restart. Retry this job.`.
 A schedule claim with no matching job or a failed interrupted job is released by setting its
@@ -496,14 +555,12 @@ started interrupted cycle remains available to retry manually (or via a later en
 | During partial provider ingestion | Preserve portfolio; retain valid bar-file updates; fix/retry ingestion before simulation |
 | Process restart / configuration edit | Preserve id, creation date, first eligible session, cash, positions, trades, equity and cycles |
 | Processed OHLCV revised | Halt cycle; investigate input change, never silently rewrite paper history |
-| Missing encryption key | Restore matching key or reconnect data token; portfolio history is independent and remains intact |
+| Missing legacy encryption key / private token | Restore the matching legacy key only for an old encrypted token, or reconnect in that environment; portfolio history remains independent and intact |
 | Missing/corrupt portfolio file | Do not auto-create a replacement account; restore a backup/investigate data integrity |
 
 Persistence means retaining the same data directory across server restarts. Atomic replacement and
 file fsync protect against an interrupted process write; they do not promise recovery from disk loss
-or every filesystem/power-loss scenario. The current server does not restart itself after a crash;
-restart it with start.ps1. Future VPS service/container orchestration must provide process restart
-and durable volumes. No automatic portfolio reset/delete, cash deposit/withdrawal, mode transition,
+or every filesystem/power-loss scenario. A local process is restarted with start.ps1 after a crash. Production Docker Compose uses restart: unless-stopped and durable host-mounted data/private directories; Docker and Caddy are enabled at boot. No automatic portfolio reset/delete, cash deposit/withdrawal, mode transition,
 or historical-revision override is exposed in the local UI/API.
 
 Paper record contains id, strategy_name, mode, broker_account_id, sizer_type, status, created_at,
@@ -555,18 +612,15 @@ error. The token is sent only to /api/connection and is never part of sample con
 
 ### API, security and persistence contract
 
-All routes use the same origin and optional Basic Auth. Bind 127.0.0.1:8765, one process, no
-proxy headers/reload/multiple workers. Accept only loopback clients and localhost/loopback hosts
-(testclient/testserver in tests). Mutating requests require `X-Trader-Request: local-ui` and,
-when Origin is present, exact base-origin match. Security response headers: nosniff, DENY frames,
+All routes use the same origin and optional Basic Auth (unset in the public MVP). Bind 127.0.0.1:8765 with one process, never reload/multiple workers. Local launch disables proxy headers. Production trusts proxy headers only from 127.0.0.1; Caddy removes X-Forwarded-For so the peer remains loopback. Accept loopback peers and localhost/loopback hosts (testclient/testserver in tests), plus the hostname of explicitly configured TRADER_PUBLIC_ORIGIN. Mutations require `X-Trader-Request: local-ui`; when Origin is present, require exact TRADER_PUBLIC_ORIGIN for the public host, otherwise exact base-origin match. These guards are not a login or authorization system. Security response headers: nosniff, DENY frames,
 no-referrer and no-store. Do not expose OpenAPI/docs endpoints. ValueError returns 400 detail. Standard schema errors return 422 locations/messages without echoing inputs; generic plugin-config validation returns a safe 422 detail string. Invalid/missing run, bar and job IDs return 404; unknown strategy IDs and unimplemented paper plugins return 400, and GET of a valid strategy without a portfolio returns JSON null.
 
 | Method and route | Request / response |
 |---|---|
 | GET `/` and `/static/*` | HTML shell and static assets |
-| GET `/api/bootstrap` | settings/settings_schema, backtest_schema, patterns, screens, token_saved, instruments/catalog coverage, universe_updated, jobs (latest 100), runs, strategies, auth_enabled, paper_schema/portfolio and generic paper_schemas/paper_portfolios |
+| GET `/api/bootstrap` | settings/settings_schema, backtest_schema, patterns, screens, token_saved, instruments/catalog coverage, universe_updated, jobs (latest 100), runs, strategies, auth_enabled, environment, paper_enabled, remote_enabled, paper_schema/portfolio and generic paper_schemas/paper_portfolios |
 | PUT `/api/settings` | Settings; reject while job active; persist only, no implicit fetch |
-| PUT `/api/connection` | access_token 20–10000 chars after whitespace checks; encrypt; saved status only |
+| PUT `/api/connection` | access_token 20–10000 chars after whitespace checks; save plaintext private file; saved status only |
 | POST `/api/screens` | name/pattern/thirteen filters; validate and persist resolved preset |
 | POST `/api/jobs/universe` | Queue constituent/instrument match job |
 | POST `/api/jobs/ingest` | Require saved token; queue missing-boundary ingestion |
@@ -585,15 +639,14 @@ no-referrer and no-store. Do not expose OpenAPI/docs endpoints. ValueError retur
 Storage root defaults to repository/data; override with TRADER_DATA_DIR. Atomic JSON writes use
 UTF-8, reject NaN, write sibling .tmp, flush and os.fsync the temporary file, then atomically replace, guarded by an in-process RLock. This is not
 a multi-process database. Store timestamps UTC ISO strings, display IST. No broker tokens appear
-in reports, logs or bootstrap. Fernet key is `.local-key`, override TRADER_KEY_FILE; encrypted
-token and key must be backed up together or the user must reconnect. Optional auth requires
+in reports, logs or bootstrap. The private directory is TRADER_PRIVATE_DIR or DATA/private; new token records contain access_token and saved_at. Legacy encrypted_token records alone require Fernet .local-key (override TRADER_KEY_FILE). Keep legacy token/key together to restore them, or reconnect. No new encrypted records are written. Optional auth requires
 both DASHBOARD_ADMIN_USER and DASHBOARD_ADMIN_PASSWORD; supplying just one prevents startup.
 `.env` is not loaded automatically.
 
 | File under data/ | Contents |
 |---|---|
 | settings.json | universe, requested start/end |
-| private/upstox.json | encrypted_token, saved_at |
+| private/upstox.json (or separate TRADER_PRIVATE_DIR/upstox.json) | New: access_token, saved_at; legacy: encrypted_token, saved_at; never publish or include in data backups |
 | universes/{universe}.json | name, fetched_at, membership=current_snapshot, source URL, source_row_count, provider_exclusions [{symbol,isin,reason}], instruments [{symbol,name,sector,key,isin,series}] |
 | bars/{isin}.json | instrument, bars [{date,timestamp,open,high,low,close,volume}], fetched_at, source=upstox_v3, requested_start/end, adjustments=unverified, verified_repairs |
 | provider_overrides/{isin}.json | repairs [{date,provider_values,verified_candle,source,reason,verified_at}]; exact-match independently verified source corrections only |
@@ -636,6 +689,57 @@ sessions; boundary-only ingestion does not repair internal gaps or revise all hi
 
 ### Regression acceptance requirements
 
+Backtest dialog correction (deployed 4 October 2026, source commit
+`bc0cc06381ec166793e19dad5e98d796764a996c`): open the modal immediately with a
+"Checking downloaded history and available test dates" status before awaiting the window API.
+Render the completed form only if the dialog is still open and its request generation matches;
+closing it or starting another request must discard stale responses. Window fetch failures
+appear inside the dialog. Do not silently clamp cloned experiment configurations.
+
+`available_window` keeps compact chronological session-date/requested-range metadata cached
+per bar-file path and `(mtime_ns, size)`, bounded to 2048 entries, invalidated on atomic ingestion
+updates. Read one uncached record at a time, not every universe OHLCV record simultaneously.
+Return `missing_symbols` alongside the existing response fields. A symbol with absent/empty bars
+blocks the safe-window recommendation; do not silently remove it from the universe. Bound the
+recommended end by both observed candle coverage and recorded requested coverage.
+
+Keep a status explanation next to the Run backtest button: name an active job, missing symbols
+or insufficient history. Refresh this status during normal bootstrap polling, so finishing an
+active job re-enables the existing form without reopening it. Preserve the disabled state while
+that form submits. Reject a chosen end after the safe available end locally with instructions
+to use available dates or extend Settings/history and fetch missing data. Scroll form errors
+into view on mobile. Backend date errors give the same earlier/later-history instruction.
+
+Observed production diagnosis: 499 of 500 Nifty 500 symbols had usable records; IDEA ingestion
+failed with "Invalid OHLCV candle detected", and no IDEA record was written. Validation correctly
+rejected a genuine provider-data error. Requested history ended
+2026-10-01, so a test ending 2026-10-04 exceeded its recorded coverage. These are dated
+observations, not hardcoded UI limits. The deployed first/cached window requests measured
+approximately 5.04/0.23 seconds; the loading modal is visible immediately even on a cold request.
+All 48 deployed Python tests passed; Node tests cover immediate opening, stale-response
+cancellation, job-finish re-enablement and named missing-data explanations. Phone-sized
+390×844 UI inspection confirmed the visible IDEA blocker next to disabled Run.
+
+Production recovery on 4 October 2026: re-fetching Upstox's IDEA candle for 2024-08-30
+confirmed OHLC `[16.44, 16.44, 15.39, 15.64]` and invalid volume `-81259413`.
+The research work had already independently verified the matching NSE bhavcopy row with
+volume `4213707883` (see the exact override JSON below). Production had started with fresh
+state and therefore lacked that environment-specific correction. Install that exact recipe at
+`/srv/trader/data/provider_overrides/INE669E01016.json` (container path
+`/state/data/provider_overrides/INE669E01016.json`, owned by UID 10001). The existing provider
+adapter applies it only when the date and all five original numeric OHLCV values match,
+then validates the replacement normally; unmatched errors must still fail. This recovery used
+the previously verified NSE evidence and freshly checked Upstox row; attempts to re-download
+the NSE archive during production recovery timed out. No general overflow correction or
+unconditional exception was added. This small recipe is a reproducible provider correction,
+not a copy of local research datasets; runtime files remain outside GitHub.
+
+After installation, production ingestion job `dfb94361ed9e` completed successfully at
+2026-10-04 14:13:08 UTC with `symbols=500`, `bars=834559`; IDEA contributed 1983 bars.
+History requested remains 2018-10-01 through 2026-10-01. The earlier failed jobs remain in
+the job history as evidence; their status is not rewritten. On a fresh installation, reproduce
+and verify this correction before ingestion if Upstox still supplies that exact invalid row.
+
 Regression acceptance: custom→every built-in resets all thirteen filters and checkbox.checked;
 old presets inherit disabled new-filter defaults; exact provider repair matches all values;
 ordinary unmatched/ambiguous constituents fail; RS ranking uses only completed-session prefixes;
@@ -654,12 +758,12 @@ scheduler one-attempt/restart checks. Tests use synthetic fixtures only, never d
    core/risk/position_sizer.py and core/execution/paper.py. Keep production modules separate.
 2. Implement schemas/storage/security and bootstrap, registry, provider ingestion and jobs.
 3. Implement predicates and the shared daily simulator to the formulas and conventions above.
-4. Build the HTML shell, design tokens, six views, dialogs/preset merge and polling behavior.
+4. Build the HTML shell, design tokens, six production views/five local views, dialogs/preset merge and polling behavior; gate paper routes/scheduler on TRADER_ENV.
 5. Implement paper manager/plugin/cycle/scheduler using the same simulator; persist independently.
 6. Vendor KLineChart and its license. Add Python execution/data/API/paper tests and Node dropdown
    regression tests. No production DB, Redis, broker SDK, vectorbt or frontend framework is needed.
 7. Start locally, enter a token through Settings, refresh universe, fetch actual data, inspect a
-   chart, run a backtest, inspect/export its complete report, then create local paper if desired.
+   chart, run a backtest and inspect/export its complete report. Separately deploy production from the embedded specification, enter its own token, load its own history and create paper there if desired.
 
 ```powershell
 python -m venv .venv
@@ -817,7 +921,7 @@ specified in this document. The HTML shell loads favicon, style.css, KLineChart 
 /static; use defer for both scripts and UTF-8/viewport/theme-color metadata. The root document
 contains the required DOM IDs given above. All application files and this spec are UTF-8.
 
-The following actual local support files are fully specified here. They replace the original
+The following shared/local support files are fully specified here; production support files are embedded in the deployment section. They replace the original
 production starter-file suggestions for the current rebuild; do not install unused broker SDKs,
 Timescale/Redis, vectorbt or Telegram merely to display this page.
 
@@ -885,6 +989,10 @@ data/cache/
 artifacts/
 data/
 .local-key
+
+!.env.example
+*.log
+*.pid
 ```
 
 ### dashboard/web/index.html
@@ -1013,6 +1121,10 @@ Base screen, Strategy, Portfolio name and Allocated capital (₹), as described 
 | `start` | Test from |
 | `end` | Test through |
 | `acknowledge_limitations` | I understand this is an exploratory backtest |
+
+Research provenance note: the following section is maintained by the research/enhancement work.
+Its references to "this thread" and statements that no deployment/commit/push was performed
+describe that research work, not the separate deployment thread recorded later in this document.
 
 ## Research decisions, reproducible configurations and results from this thread
 
@@ -1657,14 +1769,563 @@ for frontend changes. Record an engine hash/version with future runs as a propos
 current saved run metadata does not automatically contain one. Analytical artifacts live under
 artifacts/; they are optional evidence and must not be needed to interpret this document.
 
+## Complete deployed MVP specification and recovery runbook
+
+This section records the final decisions and implementation from the deployment thread on
+4 October 2026 (IST). It is the current specification, not the future PostgreSQL/Redis roadmap.
+All required deployment files are reproduced below. Private credentials cannot be reconstructed
+from a public document; preserve them separately or re-enter them after recovery.
+
+### Environment boundaries and final decisions
+
+| Concern | Local | Production |
+|---|---|---|
+| Source | Shared repository main | Same shared source main |
+| TRADER_ENV | local (default) | production, explicitly set by Compose |
+| Market data, screens, backtests, jobs | Independent local files | Independent production files |
+| Paper portfolio/API/scheduler | Hidden/blocked; no scheduler recovery/start | Enabled capability; owner creates/configures portfolio |
+| Token | Own Settings save/private file | Own Settings save/private file |
+| Data root | repository/data by default | Host /srv/trader/data → container /state/data |
+| Private root | DATA/private by default | Host /srv/trader/private → container /state/private |
+| URL | http://127.0.0.1:8765 | https://trader.manojmathivanan.com |
+| Login | Optional Basic Auth, normally unset | No website authentication, explicitly owner-selected |
+
+Production starts fresh. Do not seed it from local candles, screens, settings, runs, paper
+ledgers or credentials. Subsequent deployment updates retain production files. No shared database,
+database service, local/production synchronization or automatic merging is implemented or wanted
+now. Both environments use the same algorithms, schemas and UI source. Local research/backtests
+may run independently; only the production process owns paper activity. Do not infer runtime mode
+from the hostname: TRADER_ENV controls paper availability; TRADER_PUBLIC_ORIGIN controls proxy
+hostname/origin acceptance. Neither variable establishes authentication.
+
+GitHub contains code, tests, pinned dependencies, vendored licensed frontend library, architecture
+and deployment configuration only. Exclude data/, artifacts/, .env/other environment secrets,
+.local-key, private keys, provider tokens, paper ledgers, downloaded candles and backups. There is
+no server-data branch in the final design and no nightly Git commit/push. Only shared-source
+updates are committed. The server pulls the public repository over HTTPS without a GitHub secret.
+The proposed write deploy key was never registered and is not needed.
+
+### Deployed infrastructure inventory (observed 4 October 2026)
+
+| Item | Recorded value |
+|---|---|
+| Public source repository | https://github.com/manoj-mathivanan/trader_all |
+| Deployed source baseline before this documentation reconciliation | bfdc756e483abd58faa98fd08b86fcc3e32df9be |
+| DigitalOcean Droplet | manoj-projects, ID 605977148 |
+| Region / OS | Bangalore BLR1 / Ubuntu 24.04 LTS x64 |
+| Plan | Basic Regular shared CPU; 1 vCPU, 1 GB RAM, 25 GB SSD |
+| Recorded price | USD 6/month before taxes/additional charges; historical quote, not a guaranteed future price |
+| Public / private IPv4 | 143.244.142.226 / 10.122.0.2 |
+| SSH | root, port 22; ED25519 login verified |
+| Swap | 2 GB /swapfile, persisted in /etc/fstab |
+| Domain | manojmathivanan.com, Cloudflare registrar and DNS |
+| DNS | A, name trader, IPv4 143.244.142.226, DNS-only, TTL Auto |
+| Application | https://trader.manojmathivanan.com |
+| Parent domain / www | Reserved for future personal site and multiple projects; not routed by this deployment |
+| Domain expiry / renewal | 4 October 2027; auto-renew scheduled 4 September 2027; recorded renewal USD 10.46/year |
+| Supervision | docker.service and caddy.service enabled; Compose restart unless-stopped |
+| Firewall | UFW enabled; allow TCP 22, 80, 443 and UDP 443; equivalent IPv6 rules |
+| Provider backups / monitoring | Paid automated Droplet backups not enabled; free monitoring enabled |
+
+Provider account payment methods were added by the owner, and domain payment was completed by
+the owner. This document contains no payment information or account authentication credentials.
+Rebuilding or replacing a Droplet may change its IP and SSH host key; update DNS and verify the
+new host fingerprint instead of treating the recorded identities as permanent.
+
+### SSH access and account recovery
+
+Existing local private key: C:\Users\maman\.ssh\manoj_projects_ed25519; public key is the
+same path with .pub. Registered name: manoj-projects-deployment. Login-key fingerprint:
+SHA256:O/fcFIlXPeA+8cFT9Qwej1Sps2BWqX4IahLYYC9wR/g. The key has no passphrase;
+preserve the private key separately in protected storage. A public key/fingerprint cannot log in.
+Recorded server ED25519 host fingerprint:
+SHA256:8Hf+8ajN6hE5PN/5fDOPF5z45TtYXkUfNVgENk2wRRQ.
+
+For replacement infrastructure without a surviving login key, generate a new ED25519 pair
+with ssh-keygen, choose its passphrase interactively, and register only its public .pub file
+when creating the new Droplet. Do not overwrite a surviving key. The new key/fingerprint will
+differ from this record; preserve it securely and update the recorded identity. A new key alone
+does not restore access to the existing server without console/account recovery authorization.
+
+```powershell
+ssh -i "$env:USERPROFILE/.ssh/manoj_projects_ed25519" -o IdentitiesOnly=yes root@143.244.142.226
+```
+
+On another computer restore the protected private key, restrict access to its owner (chmod 600
+on Linux/macOS), and use ssh -i /path/to/key -o IdentitiesOnly=yes root@143.244.142.226.
+Preserve DigitalOcean/Cloudflare account access, registered email and two-factor recovery codes
+separately. If the SSH key is lost, use DigitalOcean console/recovery access to replace the
+Droplet's authorized key. Adding a key only to the DigitalOcean account does not retrofit the
+existing Droplet. Never embed a private key, token, password or recovery code into this document.
+
+### Exact application changes required for the two environments
+
+At module startup dashboard/api/main.py reads TRADER_ENV, default local; accept only local or
+production, otherwise raise RuntimeError. Set PAPER_ENABLED = (ENVIRONMENT == 'production').
+PUBLIC_ORIGIN is TRADER_PUBLIC_ORIGIN with trailing slash removed; if supplied it must be an
+HTTPS origin with a hostname, no path/query/fragment/username. Optional Basic Auth requires
+both administrator variables or neither; supplying only one fails startup.
+
+Lifespan always runs jobs.recover(). Only production runs scheduler.recover_interrupted() and
+scheduler.start(). Hold the returned Event/thread; on shutdown set the Event and join(timeout=2).
+Local must not recover schedule claims or create/start a schedule thread. Tests can exercise the
+shared engine directly in isolated fixtures; that is not local runtime paper enablement.
+
+Before dispatch, local middleware returns 403 with detail 'Paper trading is available only in
+production.' for /api/paper/*, /api/jobs/paper and /api/strategies/*/paper/*, including GET.
+Bootstrap additionally returns environment, paper_enabled and remote_enabled. In local mode
+paper_portfolio is null and paper_portfolios is {}; schemas remain available for shared code.
+Production returns its own stored portfolios. paper_enabled does not mean auto_run is true.
+
+The frontend filters Paper trading from navigation when paper_enabled is false; direct #paper
+falls back to Overview. Overview's local execution hint says paper trading runs in production.
+Render the .local-status label as Production workspace or Local workspace using environment.
+The paper form describes automatic cycles running while the production server is running.
+Settings reports local/remote workspace, configured login status and simulated execution.
+Preserve responsive navigation; tested phone viewport was 390×844, with no page-width overflow.
+
+Uvicorn listens on loopback only. Production uses host networking so host Caddy can reach it.
+Trust proxy headers solely from 127.0.0.1. Caddy strips X-Forwarded-For so middleware sees the
+loopback peer while retaining the forwarded HTTPS scheme. Allow the configured public hostname
+alongside local/test hosts. Mutating requests require X-Trader-Request: local-ui and, if Origin
+is present, the exact public HTTPS origin for the public host or base origin for a local host.
+Keep nosniff, DENY frames, no-referrer/no-store and safe validation errors. These controls do not
+prevent an unauthenticated visitor from using the public UI or its allowed APIs.
+
+### Exact private-token persistence contract
+
+store.private_dir() dynamically resolves TRADER_PRIVATE_DIR or DATA/private. save_token(value)
+uses the process RLock, creates the private directory, writes upstox.tmp as UTF-8 JSON with
+{access_token: value, saved_at: UTC ISO timestamp}, chmods the file 0600, flushes/fsyncs, and
+atomically replaces upstox.json. The production directory is mode 0700 and UID/GID 10001.
+The filesystem, not new encryption, protects newly saved plaintext tokens. Windows private-file
+ACLs also depend on the user profile/filesystem; POSIX mode numbers are not a Windows ACL promise.
+
+token_saved() reports presence only. token() reads the private file, falling back to legacy
+DATA/private/upstox.json; returns access_token if present, otherwise decrypts encrypted_token
+with the original Fernet .local-key/TRADER_KEY_FILE. Keep cryptography only for legacy support.
+No new Fernet token record is written. The UI gets saved status, never the token. PUT connection
+reports that the token is saved and will be validated on the next data fetch. A saved token is
+not proof it is valid. Owner's Upstox token expires daily; replace it through production Settings.
+No automatic broker login/refresh or live order path exists. Production did not inherit the
+local token. Private credentials are excluded from images, Git and data backup archives.
+
+### Fresh-server installation sequence
+
+Recreate the application and support files from this document first (or clone the public source).
+Generate the frontend vendor files before building the Docker image if they are missing; the
+image copies dashboard/web but does not execute npm. Python 3.13 and Node 22 were used for checks;
+KLineChart is pinned to 9.8.12 and the Python dependency list is specified elsewhere in this doc.
+On a fresh Ubuntu 24.04 server, after authorizing its SSH key and adding the DNS record:
+
+```sh
+apt-get update
+apt-get install -y docker.io docker-compose-v2 caddy rsync python3 git ufw
+git clone https://github.com/manoj-mathivanan/trader_all.git /opt/trader
+cd /opt/trader
+bash deploy/bootstrap.sh
+ufw allow 22/tcp
+ufw allow 80/tcp
+ufw allow 443/tcp
+ufw allow 443/udp
+ufw --force enable
+cp deploy/Caddyfile /etc/caddy/Caddyfile
+caddy validate --config /etc/caddy/Caddyfile
+systemctl reload caddy
+docker compose up -d --build
+install -m 755 deploy/backup.sh /usr/local/sbin/trader-backup
+cp deploy/trader-backup.service deploy/trader-backup.timer /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable --now trader-backup.timer
+```
+
+Allow SSH before enabling the firewall. Adapt the hostname/IP for replacement infrastructure.
+Caddy obtains and renews the public HTTPS certificate; public DNS and inbound 80/443 must work.
+No Cloudflare proxy, external database, Redis, GitHub token, GitHub deploy key or SSH agent on the
+server is required. bootstrap.sh retains an unused snapshots directory from earlier preparation;
+its existence does not enable a Git snapshot service. Do not install the abandoned snapshot timer.
+
+Confirm health using curl -fsS https://trader.manojmathivanan.com/api/bootstrap and Docker/Caddy
+logs. Expect environment=production, paper_enabled=true, auth_enabled=false; a fresh installation
+has token_saved=false, zero runs and zero loaded instruments. Defaults are schema settings, not
+downloaded history. In Settings save a production token and desired universe/history, then
+Refresh universe → Fetch missing data. Only after real coverage exists create a production
+paper portfolio with explicit capital/acknowledgment; enable auto_run only if chosen by the owner.
+No code deployment automatically allocates capital, creates a portfolio or enables automatic runs.
+
+### Backups, archive format and restore
+
+The systemd backup timer runs at 20:00 UTC (01:30 IST the following calendar day), randomized by
+up to 120 seconds, Persistent=true. This is unrelated to the weekday paper schedule. The oneshot
+service timeout is 3600 seconds. A flock on /run/trader-backup.lock prevents overlapping backups.
+The script checks jobs.json and defers with a nonzero exit if a job is queued/running; it does not
+automatically retry immediately. After completion run systemctl start trader-backup.service.
+The pre-stop active-job check is not an atomic admission lock: avoid initiating work during the
+backup window; a job queued between the check and stop can be interrupted and recovered normally.
+
+For a consistent file copy, stop the trader container, install an EXIT trap to restart it, and
+export all non-secret JSON into /srv/trader/backup-state. Ignore any private path and .tmp file;
+reject other non-JSON input files. Hash exact JSON file bytes with SHA256. manifest.json is
+{version: 1, files: {relative_filename: lowercase_64_character_sha256}}; blobs/<sha>.json.gz holds
+the original bytes compressed with empty gzip filename and mtime=0. Identical input files share
+one blob. New blobs must parse as JSON and pass credential-key/JWT scans. Write blobs/manifest
+via temporary files and atomic replace; remove unreferenced blobs from the current staging set.
+These scans are safeguards, not a general guarantee that arbitrary JSON contains no sensitive data.
+
+Archive that complete staging set to /srv/trader/backups/data-<UTC timestamp>.tar.gz. Cleanup
+removes matching archives older than seven days using find -mtime +7 (mtime-day semantics, not
+an exact seven-archive count). The script makes no Git call and never copies the private token.
+Only backups deduplicate/compress inputs; live run_data/<run_id>.json still saves full candle
+inputs per backtest. Do not silently change live formats while rebuilding from this document.
+
+Backups currently reside on the same VPS, so server/disk loss can lose both data and backups.
+No off-server destination or paid provider backup was configured. Download selected archives
+separately until an off-server plan is selected. Local research backups are independent and not
+scheduled by the production timer. Re-enter credentials after disaster recovery.
+
+```sh
+systemctl start trader-backup.service
+journalctl -u trader-backup.service -n 50 --no-pager
+systemctl list-timers trader-backup.timer
+```
+
+To restore, select a trusted complete archive and extract it into an empty staging directory.
+Keep the application stopped when switching data. Never overwrite the current live ledger as a
+deployment troubleshooting shortcut. Check capacity and preserve current state before switching:
+
+```sh
+mkdir -p /srv/trader/restore-snapshot
+tar -xzf /path/to/chosen-data-archive.tar.gz -C /srv/trader/restore-snapshot
+cd /opt/trader
+python3 deploy/data_snapshot.py restore /srv/trader/restore-snapshot /srv/trader/restored-data
+docker compose stop trader
+mv /srv/trader/data /srv/trader/data-before-restore
+mv /srv/trader/restored-data /srv/trader/data
+chown -R 10001:10001 /srv/trader/data
+docker compose up -d
+```
+
+Use fresh empty restore directories, not directories from a previous restore attempt; ensure
+data-before-restore does not already exist, or choose a distinct dated preservation path. The
+restorer accepts manifest version 1, validates filename containment, excludes private paths,
+requires .json destinations and 64-character hexadecimal hashes, decompresses files and checks
+every output SHA256. Existing nonempty restore destinations are rejected. This verifies archive
+content integrity, not authenticity of an untrusted archive. Original private credentials remain
+separate; do not copy local ones implicitly. Retain the old data until restored health/history
+is verified; move it off-server first if there is insufficient disk space for two copies.
+
+### Source updates, operation and verification
+
+Normal source update: run a successful backup, pull main with --ff-only and rebuild. Keep data
+and private bind mounts outside /opt/trader. Do not deploy unrelated local work or replace the
+production data directory from a checkout. There is no automatic GitHub-to-VPS deployment.
+
+```sh
+cd /opt/trader
+git pull --ff-only origin main
+docker compose up -d --build
+docker compose ps
+docker compose logs --tail 100
+systemctl status caddy --no-pager
+df -h /
+free -h
+```
+
+GitHub Actions runs Python tests and npm checks/tests on main pushes and pull requests, with no
+deploy job or credential. Deployment-thread evidence: 47 Python tests passed locally and in the
+Linux Docker image; npm syntax and screen-preset tests passed. Tests explicitly assert that local
+paper routes return 403, local scheduling is never started/recovered, and production starts/stops
+one scheduler. Remote-origin/private-token separation is tested without leaking tokens. Public
+HTTPS bootstrap, desktop/390×844 mobile UI, production paper controls, container rebuild/restart
+and a manual empty-state production backup were verified. The manual backup exited successfully
+and restarted the container; no funded portfolio cycle or populated production restore was run.
+Do not describe unobserved GitHub CI status or a populated disaster-recovery rehearsal as passed.
+
+At deployment cutover local research retained 112 backtests and 500 instruments; production
+started with no history/token/portfolio. These are dated observations, not fixed UI values or
+promises that production will remain empty. Local source update preserved its existing files.
+
+Size investigation: local candles were approximately 0.164 GiB, run reports 0.025 GiB, and 112
+run-input files 12.019 GiB. Those input files contained 16 unique byte-identical datasets totaling
+1.800 GiB, with 10.219 GiB duplicate bytes. The audit did not deduplicate live application files.
+Git source objects were only about 291 KiB at that measurement. This motivated excluding data
+from Git, not a shared database. Large backtests/history can exceed the smallest VPS's RAM/disk;
+monitor capacity before expanding. Last fresh-state server check had approximately 19 GiB free
+disk and 2 GiB swap; these figures change with usage and are not resource guarantees.
+
+Operational evidence/access notes live in ignored artifacts/server-access.md and screenshots;
+they are conveniences, not prerequisites to rebuild. Temporary local migration copies were
+prepared before the owner selected a fresh production start; none were transferred into
+production or published. Cleanup of that generated copy/partial archive was blocked by automatic
+approval review, and the copies remained ignored under artifacts/migration and
+artifacts/trader-data.tar.gz. An optional empty-body public token-write check was also blocked;
+no credential was changed. These tool outcomes do not imply a failing application endpoint.
+
+### Exact deployment files to recreate
+
+Copy the following blocks to the named relative paths. Keep shell/Python/YAML/Dockerfile line
+endings LF and save all source as UTF-8. Deployment paths/UID/origin must match the contracts above.
+
+#### Dockerfile
+
+```dockerfile
+FROM python:3.13-slim
+WORKDIR /app
+COPY requirements-lock.txt .
+RUN pip install --no-cache-dir -r requirements-lock.txt
+COPY core core
+COPY strategies strategies
+COPY dashboard dashboard
+RUN useradd --uid 10001 --create-home trader
+USER trader
+CMD ["python", "-m", "uvicorn", "dashboard.api.main:app", "--host", "127.0.0.1", "--port", "8765", "--proxy-headers", "--forwarded-allow-ips", "127.0.0.1"]
+```
+
+#### compose.yaml
+
+```yaml
+services:
+  trader:
+    build: .
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      TRADER_ENV: production
+      TRADER_PUBLIC_ORIGIN: https://trader.manojmathivanan.com
+      TRADER_DATA_DIR: /state/data
+      TRADER_PRIVATE_DIR: /state/private
+    volumes:
+      - /srv/trader/data:/state/data
+      - /srv/trader/private:/state/private
+    stop_grace_period: 60s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: '3'
+```
+
+#### deploy/Caddyfile
+
+```caddyfile
+trader.manojmathivanan.com {
+    reverse_proxy 127.0.0.1:8765 {
+        header_up -X-Forwarded-For
+    }
+}
+```
+
+#### deploy/bootstrap.sh
+
+```bash
+#!/bin/bash
+set -euo pipefail
+install -d -o 10001 -g 10001 /srv/trader/data /srv/trader/private
+chmod 700 /srv/trader/private
+install -d /opt/trader /srv/trader/snapshots /srv/trader/backups
+if [ ! -f /swapfile ]; then
+    fallocate -l 2G /swapfile
+    chmod 600 /swapfile
+    mkswap /swapfile
+    swapon /swapfile
+    printf '/swapfile none swap sw 0 0\n' >>/etc/fstab
+fi
+systemctl enable --now docker caddy
+```
+
+#### deploy/backup.sh
+
+```bash
+#!/bin/bash
+set -euo pipefail
+exec 9>/run/trader-backup.lock
+flock -n 9 || exit 0
+cd /opt/trader
+python3 - <<'PY'
+import json
+from pathlib import Path
+p = Path('/srv/trader/data/jobs.json')
+if p.exists() and any(j['status'] in ('queued', 'running') for j in json.loads(p.read_text())):
+    raise SystemExit('Backup deferred: a job is active. Run manually after completion.')
+PY
+docker compose stop trader
+trap 'cd /opt/trader; docker compose start trader' EXIT
+mkdir -p /srv/trader/backup-state /srv/trader/backups
+python3 deploy/data_snapshot.py snapshot /srv/trader/data /srv/trader/backup-state
+tar -czf /srv/trader/backups/data-$(date -u +%Y%m%dT%H%M%SZ).tar.gz -C /srv/trader/backup-state .
+find /srv/trader/backups -name 'data-*.tar.gz' -mtime +7 -delete
+```
+
+#### deploy/data_snapshot.py
+
+```python
+"""Content-addressed, compressed snapshots of non-secret Trader JSON state."""
+import gzip
+import hashlib
+import json
+import re
+import shutil
+import sys
+from pathlib import Path
+
+
+def snapshot(source, target):
+    blobs = target / 'blobs'
+    blobs.mkdir(parents=True, exist_ok=True)
+    manifest = {}
+    for path in sorted(source.rglob('*')):
+        if not path.is_file() or 'private' in path.relative_to(source).parts or path.suffix == '.tmp':
+            continue
+        if path.suffix != '.json':
+            raise ValueError(f'Unexpected file: {path}')
+        with path.open('rb') as stream:
+            digest = hashlib.file_digest(stream, 'sha256').hexdigest()
+        blob = blobs / (digest + '.json.gz')
+        if not blob.exists():
+            raw = path.read_text(encoding='utf-8')
+            json.loads(raw)
+            if re.search(r'"(?:access_token|encrypted_token|api_key|api_secret|password|private_key)"\s*:', raw, re.I) or re.search(r'eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+', raw):
+                raise ValueError(f'Credential found: {path}')
+            del raw
+            pending = blob.with_suffix('.tmp')
+            with path.open('rb') as src, pending.open('wb') as dst:
+                with gzip.GzipFile(filename='', mode='wb', fileobj=dst, mtime=0) as compressed:
+                    shutil.copyfileobj(src, compressed)
+            pending.replace(blob)
+        manifest[path.relative_to(source).as_posix()] = digest
+    target.mkdir(parents=True, exist_ok=True)
+    pending = target / 'manifest.tmp'
+    pending.write_text(json.dumps({'version': 1, 'files': manifest}, indent=2) + '\n', encoding='utf-8')
+    pending.replace(target / 'manifest.json')
+    used = set(manifest.values())
+    for blob in blobs.glob('*.json.gz'):
+        if blob.name.removesuffix('.json.gz') not in used:
+            blob.unlink()
+    print(f'Snapshot: {len(manifest)} files, {len(used)} unique blobs.')
+
+
+def restore(source, target):
+    manifest = json.loads((source / 'manifest.json').read_text())
+    if manifest['version'] != 1:
+        raise ValueError('Unsupported snapshot version')
+    if target.exists() and any(target.iterdir()):
+        raise ValueError('Restore destination must be empty')
+    target.mkdir(parents=True, exist_ok=True)
+    for name, digest in manifest['files'].items():
+        path = (target / name).resolve()
+        if not path.is_relative_to(target.resolve()) or 'private' in Path(name).parts or path.suffix != '.json' or not re.fullmatch('[a-f0-9]{64}', digest):
+            raise ValueError('Unsafe snapshot manifest')
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with gzip.open(source / 'blobs' / (digest + '.json.gz'), 'rb') as src, path.open('wb') as dst:
+            shutil.copyfileobj(src, dst)
+        with path.open('rb') as stream:
+            if hashlib.file_digest(stream, 'sha256').hexdigest() != digest:
+                raise ValueError(f'Corrupt snapshot: {name}')
+    print(f'Restored {len(manifest["files"])} verified files.')
+
+
+if __name__ == '__main__':
+    {'snapshot': snapshot, 'restore': restore}[sys.argv[1]](Path(sys.argv[2]), Path(sys.argv[3]))
+```
+
+#### deploy/trader-backup.service
+
+```ini
+[Unit]
+Description=Back up production Trader state locally
+After=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/trader-backup
+TimeoutStartSec=3600
+```
+
+#### deploy/trader-backup.timer
+
+```ini
+[Unit]
+Description=Nightly production Trader backup
+
+[Timer]
+OnCalendar=*-*-* 20:00:00 UTC
+Persistent=true
+RandomizedDelaySec=120
+
+[Install]
+WantedBy=timers.target
+```
+
+#### .dockerignore
+
+```text
+.git
+.env
+*.env
+.local-key
+data
+artifacts
+node_modules
+.venv
+**/__pycache__
+```
+
+#### .gitattributes
+
+```gitattributes
+* text=auto
+*.sh text eol=lf
+*.py text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+Dockerfile text eol=lf
+```
+
+#### .env.example
+
+```dotenv
+# Optional Basic Auth for the LOCAL RESEARCH app. Set both in the process environment.
+# The server fails to start if only one is configured.
+DASHBOARD_ADMIN_USER=
+DASHBOARD_ADMIN_PASSWORD=
+# Enter the Upstox token in Settings, never here. New saves are plaintext private files.
+# Python does not load this file automatically. Supply variables explicitly.
+TRADER_PUBLIC_ORIGIN=
+TRADER_DATA_DIR=
+TRADER_PRIVATE_DIR=
+TRADER_ENV=local
+# Remote deployment uses https://trader.manojmathivanan.com and /srv/trader storage.
+```
+
+#### .github/workflows/checks.yml
+
+```yaml
+name: Checks
+on:
+  push:
+    branches: [main]
+  pull_request:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: pip install -r requirements-lock.txt
+      - run: npm ci && npm run check && npm test
+      - run: python -m unittest discover -s tests -q
+```
+
 ## Future production design — not the current runtime
 
 The numbered sections below preserve the production architecture and intent. Section references
 such as §3/§4.2 inside this roadmap refer to the numbered production sections, not the current
-local rebuild. Production phase checkboxes are pending; implementing local equivalents does not
-certify production completion. Remote deployment is a subsequent owner-finalized task, not an
-action performed by this document update. Reuse the current UI and migrate its durable data;
-do not rebuild it with an older theme or overwrite existing ledgers.
+shared rebuild. The remote file-based MVP is deployed; that does not complete the proposed Timescale/Redis/live-broker platform. Database and queue migration are deferred by owner decision. Preserve the shared UI and independent environment histories; future migration must be explicit and must never overwrite paper ledgers.
 
 ## 1. What this is — future production scope
 
@@ -1677,9 +2338,7 @@ backtest it → paper trade it for some weeks → go live with real capital — 
 strategy.
 
 This is one project within the owner's personal portfolio website (where each project gets its own
-subdomain, e.g. `trader.<domain>`, and its own GitHub repo). That site-level context is out of
-scope for this document; this document covers the trading platform itself, which is a single
-repo/project.
+subdomain and repository). The purchased parent domain is manojmathivanan.com and Trader uses trader.manojmathivanan.com. The root domain and other projects are reserved, not implemented by this MVP. Current Trader DNS/hosting are specified above.
 
 ### Explicit non-goals
 - Not a SaaS product, not multi-tenant, not for managing other people's money.
@@ -1987,7 +2646,7 @@ this platform makes real trading decisions).
 ### 4.9 Repository layout
 
 ```
-trader-bot/
+trader_all/
 ├── README.md                    # this document
 ├── requirements.txt             # see §9
 ├── .env.example                 # see §9 — infra-level config only, NOT broker secrets
@@ -2031,8 +2690,7 @@ trader-bot/
 
 ## 5. Deployment architecture
 
-- **Repo:** one GitHub repo, `trader-bot`. **The owner pushes/commits to GitHub themselves — no
-  automated agent should run `git commit`/`git push`.**
+- **Repo:** public `manoj-mathivanan/trader_all`, shared code/configuration on main. Agent commits/pushes are authorized by the owner; server-side commits/pushes and data publication are not. The services below describe a future platform, not the current one-container deployment.
 - **Host:** a single inexpensive VPS (Hetzner/DigitalOcean class, ~$5-20/month).
 - **Services (Docker Compose):**
   - `db` — `timescale/timescaledb` image (Postgres + the Timescale extension; one engine, no
@@ -2066,7 +2724,7 @@ trader-bot/
 **Phase 0 — Edge validation gate for production progression**
 The original ordering required this spike before building any dashboard. The owner superseded that
 ordering: the local dashboard and real-data research increment were built first so rules can be
-inspected and tuned interactively. Local paper simulation is also authorized. The gate still
+inspected and tuned interactively. Production paper simulation and the file-based remote MVP are also authorized. The gate still
 applies before live trading or production infrastructure. Use a plain Python/pandas script or the local engine with a fixed data snapshot and
 walk-forward split.
 - Validate the four implemented screens (VCP, Blue sky, Multi-year, IPO base) against the
@@ -2171,7 +2829,7 @@ Resolved since the first draft of this document:
 - **Historical EOD data source** — use the owner's existing Upstox account as the primary source
   (see Phase 3 caveat about delisted-symbol coverage below — this is downgraded from "open" to "a
   risk to verify early," not a blocking unknown).
-- **Domain** — not purchased yet; explicitly deferred. Non-blocking, parallel track (§6).
+- **Domain** — purchased: manojmathivanan.com, Cloudflare registrar/DNS. Trader HTTPS and DNS are configured at trader.manojmathivanan.com; root/other projects remain future work.
 - **Sizer defaults** — confirmed: `risk_pct = 1.5`, `stop_pct = 8`, trail-to-breakeven-then-trail
   (bananapatterns-style), per owner confirmation.
 - **Backtest history** — the local working range is `2019-01-01` through `2026-10-05` subject to
@@ -2184,7 +2842,7 @@ Also resolved, from a design review pass:
 
 - **Edge validation before building infrastructure** — confirmed: a Phase 0 spike (§6) gates entry
   into production Phase 1. Timescale/Redis/event bus remain gated; the local dashboard and
-  local paper simulator are already authorized and implemented.
+  production paper simulator and file-based remote MVP are authorized and implemented; local mode is research-only.
 - **Options phase ordering** — confirmed: options stay deferred to Phase 8. They need tooling
   (Greeks-aware sizer, chain data) the platform doesn't have yet, and carry materially higher risk
   than equity swing — proving out the operational discipline (reconciliation, exchange-side stops,
@@ -2199,13 +2857,11 @@ Also resolved, in a later round:
   on the Swing backtest schema; exact reference parity still depends on RS and historical-universe data.
 - **Starting capital** — resolved: it's simply the `capital_allocated` field on the Portfolio,
   set by the owner when creating the portfolio in the dashboard. No spec-level default needed.
-- **Dashboard authentication strength** — resolved per owner: Basic Auth is fine for now,
-  including through Phase 7 going live. Noting once, as an accepted trade-off rather than an
-  unresolved risk: the dashboard will hold live broker credentials and can place real orders behind
-  only Basic Auth — a cheap complementary mitigation worth considering later (not required, not
-  blocking) is keeping the dashboard off the public internet entirely (bind to localhost + SSH
-  tunnel, or an IP allowlist/VPN at the Caddy/firewall level) rather than relying on auth strength
-  alone once real money is involved.
+- **Dashboard authentication strength** — current public MVP has no login by owner choice.
+  Basic Auth remains implemented but unset. Earlier acceptance of Basic Auth for a future
+  Phase 7 is a roadmap proposal and does not authorize live execution in this public MVP.
+  Revisit access controls explicitly before enabling any live broker account/order path;
+  stronger authentication or SSH/VPN/IP restrictions are future options, not current requirements.
 
 Still open — resolve before the relevant phase:
 
@@ -2226,7 +2882,7 @@ Still open — resolve before the relevant phase:
 - **Never commit secrets.** `.env`, broker credentials, DB dumps must never be committed — see
   the current `.gitignore` specification above. Future broker credentials belong in encrypted `broker_accounts` storage, not in
   code or `.env`.
-- **Never push to GitHub on the owner's behalf.** The owner commits and pushes manually.
+- **Source publication is authorized:** the agent may commit/push shared code/configuration on the owner's behalf. Never publish local/production state or credentials; the production server must never write to GitHub.
 - **Keep paper and live code paths identical** except for which `BrokerAdapter` instance a
   portfolio resolves to. Any divergence between them defeats the purpose of paper trading.
 - **Avoid survivorship bias** in backtest data — include delisted/merged instruments in the
@@ -2240,9 +2896,7 @@ Still open — resolve before the relevant phase:
 - **One Portfolio per strategy**, capital/account/sizer isolated — do not introduce cross-strategy
   capital pooling or netting beyond the lightweight `account_risk.py` check (§4.2), which only
   applies when two live portfolios explicitly share one broker account.
-- **Do not advance to live trading or production infrastructure before the Phase 0 gate passes.**
-  The local UI, real-data research and paper simulator already exist by owner decision; use them
-  to inspect rules and collect evidence. Local paper permission does not certify the edge.
+- **Do not advance to live trading or the deferred database/queue platform before the Phase 0 gate passes.** The current public file-based research/paper MVP is an explicit owner-approved exception. Production paper permission does not certify the edge; local mode remains research-only.
 - **Live stops are exchange-side orders, not a polled loop** (requirement 15) — this is a safety
   property, not an optimization; don't simplify it away under time pressure.
 - **Reconcile against the broker before resuming after any restart** (requirement 17) — never
