@@ -1,0 +1,10 @@
+.env
+*.env
+!.env.example
+.local-key
+data/
+artifacts/
+.venv/
+node_modules/
+__pycache__/
+*.pyc
