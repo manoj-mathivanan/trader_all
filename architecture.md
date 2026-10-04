@@ -1156,6 +1156,51 @@ bars added across the original eligible cohort; only the run name differs in con
 Retain both immutable input snapshots. The old figure is a historical snapshot, not the latest
 result. Data lookback must always be identified alongside performance.
 
+### Production preset configuration follow-up — 4 October 2026
+
+The owner deployed the application separately, then explicitly asked this thread to configure
+its custom screen directly at https://trader.manojmathivanan.com/#backtests. Saved
+`Nifty 500 blue_sky - research` (`custom_df67e81ea7`) through the production UI. A matching
+complete-rule backtest, `Nifty 500 Blue sky - production comparison` (`59e7c535f60b`), completed
+successfully: April 1, 2025–October 1, 2026, ₹100,000 to ₹106,227.12, +6.23%, 24 trades,
+5.39% displayed maximum drawdown, modeled fees ₹2,279.21 and slippage ₹534.79. Before
+submission, all resolved form values were checked against the retained complete configuration.
+Production's coverage banner starts October 1, 2018; the latest local research includes January
+2018 onward. This is a separate production-data result, not a replacement for the local
+₹1,919.02 result or proof that the full datasets/engine versions match. No production data
+settings, credentials, paper portfolio or schedule were changed by this configuration action.
+No code commit/push was made. Presets are durable `data/screens.json` records, excluded from Git:
+a code deployment alone does not transfer them. Recreate using the exact screen payload below
+or securely migrate the durable data volume; risk/exits/costs still belong to individual runs.
+The completed report can be cloned with Adjust & rerun to preserve these execution settings.
+
+### Forward production paper portfolio — explicitly authorized follow-up
+
+After the research and production backtest, the owner explicitly asked to start paper trading
+with this screen. Created the first Swing patterns portfolio in production on October 4, 2026:
+`Nifty 500 Blue sky - forward paper`, status active, frozen current Nifty 500 universe,
+allocated capital ₹100,000, start_session October 5, 2026. Initial cash/equity ₹100,000,
+zero positions, zero realized/unrealized P&L, no completed paper sessions. No historical
+backtest profit was transferred to its balance. Forward sessions only; earlier data is context.
+
+Configuration copies the retained Blue sky filters and trading settings: next_open entry,
+alphabetical candidate priority, 1% risk, 8% initial stop, take_25 with documented fallback,
+breadth gate enabled at60%, 1R breakeven, 8% percentage trail, five slots, hold120 sessions,
+10 bps slippage/35 bps buy/50 bps sell. Long-trend flags false and min_rs_rating0. PaperConfig
+has no backtest dates or minimum_warmup_sessions; do not submit that backtest-only field.
+Thus paper eligibility follows the existing PaperConfig/required_warmup contract rather than
+the historical comparison's frozen 443-symbol cohort. Current universe membership is fixed
+by the paper creation contract, independent of research Settings changes.
+
+Automatic cycles enabled (auto_run=true), run_hour16/run_minute15 IST, one scheduled attempt
+per weekday while the production server is running. Holidays produce no fictional candles;
+missed completed sessions are processed on a later successful cycle. A qualifying completed
+signal enters at the next observed session's open under the daily simulation convention.
+No automatic browser/Codex reminder was created. Server scheduling, valid provider token and
+real candle availability remain necessary; no real broker order adapter is enabled. View at
+https://trader.manojmathivanan.com/#paper. User can inspect Configure portfolio, pause entries
+or run a manual cycle; edits preserve capital/history and existing positions' exit settings.
+
 ### Exact retained saved screen and execution configuration
 
 Saved title: `Nifty 500 blue_sky - research`, ID `custom_df67e81ea7`. A saved screen stores only

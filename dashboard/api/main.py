@@ -308,4 +308,28 @@ def job_detail(job_id: str):
     return job
 
 
+@app.get('/api/runs/{run_id}/trades/{trade_index}/chart')
+def trade_chart(run_id: str, trade_index: int):
+    """Use the run's frozen candles and original ledger index, never today's cache."""
+    result = run_result(run_id)
+    trades = result.get('trades', [])
+    if trade_index < 0 or trade_index >= len(trades):
+        raise HTTPException(404, 'Trade not found in this backtest.')
+    trade = trades[trade_index]
+    datasets = store.read('run_data/' + run_id, {})
+    bars = [b for b in datasets.get(trade['symbol'], [])
+            if b['date'] <= result['config']['end']]
+    dates = {b['date']: i for i, b in enumerate(bars)}
+    if trade['entry_date'] not in dates or trade['exit_date'] not in dates:
+        raise HTTPException(404, 'The saved candles for this trade are unavailable. No current-data substitute was used.')
+    first, last = dates[trade['entry_date']], dates[trade['exit_date']]
+    from core.research.trade_chart import explain_trade
+    explanation = explain_trade(result, datasets, trade, bars, first, last)
+    enriched = explanation.pop('bars')
+    return {'run_id': run_id, 'trade_index': trade_index, 'symbol': trade['symbol'],
+            'trade': trade, 'bars': enriched[max(0, first - 60):last + 21],
+            'explanation': explanation,
+            'source': 'frozen_backtest_snapshot'}
+
+
 app.mount('/static', StaticFiles(directory=WEB), name='static')

@@ -212,14 +212,65 @@ async function showChart(isin){const item=state.instruments.find(x=>x.isin===isi
   observer=new ResizeObserver(()=>chart?.resize());observer.observe($('#stock-chart'));
 }
 function equitySvg(curve){if(!curve.length)return '';const vals=curve.map(x=>x.equity), min=Math.min(...vals), max=Math.max(...vals), span=max-min||1;const points=vals.map((v,i)=>`${20+i/(vals.length-1||1)*860},${200-(v-min)/span*170}`).join(' ');return `<svg class="equity-chart" viewBox="0 0 900 230" role="img" aria-label="Equity curve from ${money(vals[0])} to ${money(vals.at(-1))}"><defs><linearGradient id="area" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#38875d" stop-opacity=".17"/><stop offset="100%" stop-color="#38875d" stop-opacity="0"/></linearGradient></defs>${[30,85,140,200].map(y=>`<line x1="20" y1="${y}" x2="880" y2="${y}" stroke="var(--line)" stroke-dasharray="4 4"/>`).join('')}<polygon points="20,215 ${points} 880,215" fill="url(#area)"/><polyline points="${points}" fill="none" stroke="var(--green)" stroke-width="2"/></svg><div class="equity-labels"><span>${curve[0].date} · ${money(vals[0])}</span><span>${curve.at(-1).date} · ${money(vals.at(-1))}</span></div>`;}
+let tradeMarkerRegistered=false, tradeChartRequest=0;
+function registerTradeMarker(){
+  if(tradeMarkerRegistered)return;
+  klinecharts.registerOverlay({name:'tradeFill',totalStep:1,needDefaultPointFigure:false,needDefaultXAxisFigure:false,needDefaultYAxisFigure:false,
+    createPointFigures:({coordinates,overlay,bounding})=>{
+      if(!coordinates.length)return [];
+      const {x,y}=coordinates[0], {side,label}=overlay.extendData;
+      const color=side==='buy'?'#24764e':side==='signal'?'#5879c6':'#b95548', labelY=y+(side==='buy'?24:side==='signal'?-48:-24);
+      return [{type:'circle',attrs:{x,y,r:5},styles:{style:'stroke_fill',color,borderColor:'#ffffff',borderSize:2},ignoreEvent:true},
+        {type:'line',attrs:{coordinates:[{x,y},{x,y:labelY}]},styles:{color,size:1},ignoreEvent:true},
+        {type:'text',attrs:{x:Math.min(x+9,bounding.width-8),y:labelY,text:label,align:x>bounding.width-140?'right':'left',baseline:'middle'},styles:{color:'#ffffff',backgroundColor:color,size:11,paddingLeft:5,paddingRight:5,paddingTop:3,paddingBottom:3,borderRadius:3},ignoreEvent:true}];
+    }});
+  tradeMarkerRegistered=true;
+}
+let tradeChartSeries=[];
+function tradeIndicatorFigures(series){return series.map(s=>({key:s.id,title:s.label+': ',type:'line',styles:()=>({color:s.color,size:s.id==='protective_stop'?2:1.3})}));}
+function tradeExplanation(data){
+  const e=data.explanation;if(!e)return '';
+  return `<div class="trade-line-controls" aria-label="Chart indicator lines">${e.series.map(s=>`<label><input type="checkbox" class="trade-line-toggle" data-line="${esc(s.id)}" checked><span style="color:${esc(s.color)}">━</span> ${esc(s.label)}</label>`).join('')}</div>`;
+}
+function tradeSignalDetails(data){
+  const e=data.explanation;if(!e)return '';
+  return `<section class="trade-signal-details"><h3>Why this trade qualified</h3><p>${esc(({vcp:'VCP',blue_sky:'Blue sky',multiyear:'Multi-year breakout',ipo:'IPO base',breakout:'Legacy breakout'})[e.pattern]||e.pattern)} · Signal ${esc(e.signal?.date||'unavailable')} · Entry ${esc(({pivot:'Pivot breakout',close:'Signal close',next_open:'Next session open'})[e.entry_mode]||e.entry_mode)} · Winner exit ${esc(({trail_50d:'50-day trailing average',trail_30w:'30-week trailing average',take_25:'+25% target'})[e.winner_exit]||e.winner_exit)} · Priority ${e.candidate_rank==='rs_126'?'Relative strength':'Alphabetical'}</p><div class="table-wrap"><table><thead><tr><th>Condition</th><th>Signal-session value</th><th>Required</th><th>Check</th></tr></thead><tbody>${e.checks.map(c=>`<tr><td>${esc(c.label)}</td><td>${typeof c.actual==='number'?number(c.actual):esc(c.actual??'Unavailable')}</td><td>${esc(c.required)}</td><td class="${c.passed===true?'positive':c.passed===false?'negative':''}">${c.passed===true?'Passed':c.passed===false?'Failed':c.actual!=null?'Context':'Unavailable'}</td></tr>`).join('')}</tbody></table></div><div class="notice">${e.notices.map(n=>esc(n)).join('<br>')}</div></section>`;
+}
+async function showTradeChart(runId,tradeIndex){
+  const request=++tradeChartRequest;
+  modal('Trade chart',`<button class="text-button" data-action="back-to-report" data-id="${esc(runId)}">← Back to report</button><p>Loading saved backtest candles…</p>`);
+  let data;
+  try{data=await api(`runs/${encodeURIComponent(runId)}/trades/${tradeIndex}/chart`);}
+  catch(error){if(request===tradeChartRequest&&$('#modal').open)modal('Trade chart',`<button class="text-button" data-action="back-to-report" data-id="${esc(runId)}">← Back to report</button><div class="notice warn">${esc(error.message)}</div>`);return;}
+  if(request!==tradeChartRequest||!$('#modal').open||!$('#modal-content [data-action="back-to-report"]'))return;
+  const t=data.trade;
+  modal(`${data.symbol} · Trade chart`,`<div class="actions" style="justify-content:space-between;margin-bottom:18px"><button class="text-button" data-action="back-to-report" data-id="${esc(runId)}">← Back to report</button><span class="badge">${esc(data.symbol)} · 1D · Saved backtest data</span></div><div class="trade-chart-summary"><div><span class="positive">● Bought</span><strong>${money(t.entry)}</strong><small>${esc(t.entry_date)}</small></div><div><span class="negative">● Sold</span><strong>${money(t.exit)}</strong><small>${esc(t.exit_date)}</small></div><div><span>Net P&L · ${number(t.quantity,0)} shares</span><strong class="${t.pnl>=0?'positive':'negative'}">${money(t.pnl)}</strong><small>${esc(t.reason)}</small></div></div>${tradeExplanation(data)}<div id="stock-chart" class="chart trade-chart" aria-label="Daily candles for ${esc(data.symbol)} with bought and sold markers"></div><div class="chart-info">Markers show the recorded execution prices, including modeled slippage. Candles come from this run's frozen input snapshot. Drag to pan; scroll to zoom.<br>Daily candles do not show the time of execution within a session. Corporate-action adjustments remain unverified.</div>${tradeSignalDetails(data)}`);
+  chart=klinecharts.init('stock-chart',{locale:'en-US',timezone:'Asia/Kolkata',styles:document.documentElement.dataset.theme});
+  chart.setStyles({grid:{horizontal:{color:'#e9ede5'},vertical:{show:false}},candle:{bar:{upColor:'#2c8c62',downColor:'#c77565',upBorderColor:'#2c8c62',downBorderColor:'#c77565',upWickColor:'#2c8c62',downWickColor:'#c77565'}}});
+  tradeChartSeries=data.explanation?.series||[];
+  if(tradeChartSeries.length){
+    klinecharts.registerIndicator({name:'TRADE_CONTEXT',shortName:'Trade',series:'price',precision:2,figures:tradeIndicatorFigures(tradeChartSeries),calc:rows=>rows.map(row=>row.chart_values||{})});
+    chart.createIndicator('TRADE_CONTEXT',true,{id:'candle_pane'});
+  }
+  chart.createIndicator('VOL');chart.applyNewData(data.bars);
+  chart.setOffsetRightDistance(20);
+  chart.setBarSpace(Math.max(2,Math.min(12,($('#stock-chart').clientWidth-90)/data.bars.length)));
+  registerTradeMarker();
+  if(data.explanation?.signal){const s=data.explanation.signal;chart.createOverlay({name:'tradeFill',lock:true,points:[{timestamp:s.timestamp,value:s.price}],extendData:{side:'signal',label:'SIGNAL'}});}
+  for(const [side,day,price] of [['buy',t.entry_date,t.entry],['sell',t.exit_date,t.exit]]){
+    const bar=data.bars.find(b=>b.date===day);
+    chart.createOverlay({name:'tradeFill',lock:true,points:[{timestamp:bar.timestamp,value:price}],extendData:{side,label:`${side==='buy'?'BUY':'SELL'} ${money(price)}`}});
+  }
+  observer=new ResizeObserver(()=>chart?.resize());observer.observe($('#stock-chart'));
+}
 function tradeTable(r){
   const keys={symbol:'Symbol',entry_date:'Entry date',exit_date:'Exit date',quantity:'Quantity',pnl:'Net P&L',r:'R',reason:'Exit reason'};
   const sorted=[...r.trades].sort((a,b)=>{const av=a[tradeSort.key]??'',bv=b[tradeSort.key]??'';const cmp=typeof av==='number'&&typeof bv==='number'?av-bv:String(av).localeCompare(String(bv));return tradeSort.direction==='asc'?cmp:-cmp;});
   const head=key=>{const active=tradeSort.key===key, arrow=active?(tradeSort.direction==='asc'?' ↑':' ↓'):'';return `<th class="${['quantity','pnl','r'].includes(key)?'right':''}" aria-sort="${active?(tradeSort.direction==='asc'?'ascending':'descending'):'none'}"><button class="sort-button" data-action="sort-trades" data-sort="${key}">${keys[key]}${arrow}</button></th>`};
-  return `<div class="table-wrap"><table><thead><tr>${head('symbol')}${head('entry_date')}${head('quantity')}${head('pnl')}${head('r')}${head('reason')}</tr></thead><tbody>${sorted.map(t=>`<tr><td>${esc(t.symbol)}</td><td>${t.entry_date}<small>→ ${t.exit_date}</small></td><td class="right">${t.quantity}</td><td class="right ${t.pnl>=0?'positive':'negative'}">${money(t.pnl)}</td><td class="right">${number(t.r)}</td><td>${esc(t.reason)}</td></tr>`).join('')||'<tr><td colspan="6">No trades met these rules in this interval.</td></tr>'}</tbody></table></div>`;
+  return `<div class="table-wrap"><table><thead><tr>${head('symbol')}${head('entry_date')}${head('quantity')}${head('pnl')}${head('r')}${head('reason')}</tr></thead><tbody>${sorted.map(t=>`<tr><td><button class="symbol-button" data-action="trade-chart" data-run="${esc(r.id)}" data-trade="${r.trades.indexOf(t)}" aria-label="View ${esc(t.symbol)} buy and sell chart">${esc(t.symbol)} ↗</button></td><td>${t.entry_date}<small>→ ${t.exit_date}</small></td><td class="right">${t.quantity}</td><td class="right ${t.pnl>=0?'positive':'negative'}">${money(t.pnl)}</td><td class="right">${number(t.r)}</td><td>${esc(t.reason)}</td></tr>`).join('')||'<tr><td colspan="6">No trades met these rules in this interval.</td></tr>'}</tbody></table></div>`;
 }
 async function showResult(id){const r=await api('runs/'+id);selectedRun=r;const m=r.metrics;
-  modal(r.config.name,`<div class="actions" style="justify-content:space-between;margin-bottom:20px"><span class="badge">Swing Pattern · ${esc(r.config.pattern||'breakout')} · daily bars</span><div class="actions"><span class="badge warn">Exploratory · ${esc(r.universe)}</span><button class="button small" data-action="clone">Adjust & rerun</button><button class="button small" data-action="export">Export report JSON ↓</button></div></div><div class="stats">${stat('Net return',pct(m.return_pct),'After modeled costs',m.return_pct>0)}${stat('Max drawdown',number(m.max_drawdown_pct)+'%','Marked daily')}${stat('Expectancy',number(m.expectancy_r)+' R',m.trade_count+' trades')}${stat('Win rate',m.win_rate==null?'—':number(m.win_rate)+'%','Losses included')}</div><h3>Portfolio equity</h3>${equitySvg(r.curve)}<div class="notice" style="margin-top:22px">Modeled fees: ${money(m.modeled_fees)} · Slippage impact: ${money(m.modeled_slippage)} · Profit factor: ${number(m.profit_factor)} · Entries skipped by cash/position limits: ${m.skipped_entries}</div><details><summary>Data limitations & run assumptions</summary><ul>${r.warnings.map(w=>`<li>${esc(w)}</li>`).join('')}</ul><p>Excluded for insufficient warmup: ${esc(r.excluded.join(', ')||'None')}</p><div class="detail-grid">${Object.entries(r.config).filter(([k])=>k!=='acknowledge_limitations').map(([k,v])=>`<div><span>${esc(state.backtest_schema.properties[k]?.title||k)}</span>${esc(v)}</div>`).join('')}</div></details><h3 style="margin:24px 0 16px">The complete trade record <small>Click a column to sort</small></h3>${tradeTable(r)}`);
+  modal(r.config.name,`<div class="actions" style="justify-content:space-between;margin-bottom:20px"><span class="badge">Swing Pattern · ${esc(r.config.pattern||'breakout')} · daily bars</span><div class="actions"><span class="badge warn">Exploratory · ${esc(r.universe)}</span><button class="button small" data-action="clone">Adjust & rerun</button><button class="button small" data-action="export">Export report JSON ↓</button></div></div><div class="stats">${stat('Net return',pct(m.return_pct),'After modeled costs',m.return_pct>0)}${stat('Max drawdown',number(m.max_drawdown_pct)+'%','Marked daily')}${stat('Expectancy',number(m.expectancy_r)+' R',m.trade_count+' trades')}${stat('Win rate',m.win_rate==null?'—':number(m.win_rate)+'%','Losses included')}</div><h3>Portfolio equity</h3>${equitySvg(r.curve)}<div class="notice" style="margin-top:22px">Modeled fees: ${money(m.modeled_fees)} · Slippage impact: ${money(m.modeled_slippage)} · Profit factor: ${number(m.profit_factor)} · Entries skipped by cash/position limits: ${m.skipped_entries}</div><details><summary>Data limitations & run assumptions</summary><ul>${r.warnings.map(w=>`<li>${esc(w)}</li>`).join('')}</ul><p>Excluded for insufficient warmup: ${esc(r.excluded.join(', ')||'None')}</p><div class="detail-grid">${Object.entries(r.config).filter(([k])=>k!=='acknowledge_limitations').map(([k,v])=>`<div><span>${esc(state.backtest_schema.properties[k]?.title||k)}</span>${esc(v)}</div>`).join('')}</div></details><h3 style="margin:24px 0 16px">The complete trade record <small>Click a stock for its trade chart; click a column to sort</small></h3>${tradeTable(r)}`);
 }
 function method(){modal('From a base to a complete record',`<p>The first research strategy looks for a close above a prior price base, confirmed by volume, a moving-average trend filter and minimum turnover.</p><ol><li><strong>Wait for a base.</strong> Measure its length and depth using prior completed candles.</li><li><strong>Confirm at the close.</strong> Check breakout, volume and trend conditions.</li><li><strong>Enter at the next open.</strong> Size within the risk budget and cash available, including modeled costs.</li><li><strong>Manage the exit.</strong> Start with a fixed stop; move to cost-adjusted breakeven and trail after the configured R trigger. New stops activate next session.</li><li><strong>Keep the full record.</strong> Preserve every trade, loss, cost assumption and input dataset.</li></ol><div class="notice">This implementation is long-only and uses daily bars. Current constituent bias and unverified adjustments remain. Relative-strength and separate base-formation strategies are planned next.</div>`);}
 
@@ -238,7 +289,8 @@ document.addEventListener('click',async event=>{
     if(action==='export'){const blob=new Blob([JSON.stringify(selectedRun,null,2)],{type:'application/json'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=`trader-${selectedRun.id}.json`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);return;}
     if(action==='logs'){const job=state.jobs.find(j=>j.id===button.dataset.id)||await api('jobs/'+encodeURIComponent(button.dataset.id));modal(job.type,`<p>${when(job.created_at)} · ${badge(job.status)}</p><div class="log" id="job-log" data-job="${job.id}">${job.logs.map(l=>`${when(l.at)}  ${esc(l.message)}`).join('\n')||'Queued. Waiting for the worker.'}</div>`);return;}
     if(action==='chart'){await showChart(button.dataset.isin);return;}
-    if(action==='result'){await showResult(button.dataset.id);return;}
+    if(action==='result'||action==='back-to-report'){tradeChartRequest++;await showResult(button.dataset.id);return;}
+    if(action==='trade-chart'){await showTradeChart(button.dataset.run,Number(button.dataset.trade));return;}
     button.disabled=true;
     if(action==='refresh-universe'){await api('jobs/universe','POST');toast('Universe refresh started.');}
     if(action==='fetch-data'){await api('jobs/ingest','POST');toast('Daily data fetch started. Follow progress in Jobs & logs.');}
@@ -248,6 +300,9 @@ document.addEventListener('click',async event=>{
   }catch(error){toast(error.message);}finally{button.disabled=false;}
 });
 document.addEventListener('change',event=>{
+  if(event.target.classList?.contains('trade-line-toggle')){
+    if(chart){const enabled=new Set([...document.querySelectorAll('.trade-line-toggle:checked')].map(input=>input.dataset.line));chart.overrideIndicator({name:'TRADE_CONTEXT',figures:tradeIndicatorFigures(tradeChartSeries.filter(s=>enabled.has(s.id)))},'candle_pane');}return;
+  }
   if(event.target.id==='paper-strategy-picker'){selectedPaperStrategy=event.target.value;render();return;}
   const form=event.target.closest('form');
   if(!form||!['backtest-form','paper-form','screen-form'].includes(form.id))return;
@@ -266,7 +321,7 @@ document.addEventListener('submit',async event=>{
   }catch(error){errorBox.textContent=error.message;errorBox.scrollIntoView({block:'nearest'});}finally{form.dataset.submitting='false';submit.disabled=false;updateBacktestAvailability();}
 });
 document.addEventListener('input',event=>{if(event.target.id==='instrument-search')$('#instrument-table').innerHTML=instrumentTable(event.target.value);});
-$('#modal').addEventListener('close',disposeChart);
+$('#modal').addEventListener('close',()=>{tradeChartRequest++;disposeChart();});
 window.addEventListener('hashchange',()=>{if($('#modal').open)$('#modal').close();render();});
 $('#theme-toggle').addEventListener('click',()=>{const theme=document.documentElement.dataset.theme==='light'?'dark':'light';document.documentElement.dataset.theme=theme;localStorage.setItem('trader-theme',theme);$('#theme-toggle').setAttribute('aria-label',`Switch to ${theme==='light'?'dark':'light'} theme`);chart?.setStyles(theme);});
 try{document.documentElement.dataset.theme=localStorage.getItem('trader-theme')||'light';}catch{/* storage unavailable */}
