@@ -1,0 +1,19 @@
+services:
+  trader:
+    build: .
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      TRADER_ENV: production
+      TRADER_PUBLIC_ORIGIN: https://trader.manojmathivanan.com
+      TRADER_DATA_DIR: /state/data
+      TRADER_PRIVATE_DIR: /state/private
+    volumes:
+      - /srv/trader/data:/state/data
+      - /srv/trader/private:/state/private
+    stop_grace_period: 60s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: '3'

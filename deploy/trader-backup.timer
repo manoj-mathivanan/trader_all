@@ -1,0 +1,10 @@
+[Unit]
+Description=Nightly production Trader backup
+
+[Timer]
+OnCalendar=*-*-* 20:00:00 UTC
+Persistent=true
+RandomizedDelaySec=120
+
+[Install]
+WantedBy=timers.target

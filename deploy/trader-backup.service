@@ -1,0 +1,8 @@
+[Unit]
+Description=Back up production Trader state locally
+After=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/trader-backup
+TimeoutStartSec=3600

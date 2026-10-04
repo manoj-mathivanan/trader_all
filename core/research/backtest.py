@@ -1,0 +1,316 @@
+"""Long-only daily breakout research with next-open fills."""
+import hashlib
+import json
+from copy import deepcopy
+from types import SimpleNamespace
+from core.execution.paper import PaperBrokerAdapter
+from core.risk.position_sizer import percent_risk_size
+from core.research import store
+from strategies.swing_patterns.patterns.signals import matches
+
+
+def signal(bars, i, cfg):
+    return matches(bars, i, cfg)
+
+
+def required_warmup(cfg):
+    extra = 220 if getattr(cfg, 'require_rising_long_trend', False) else 200 if getattr(cfg, 'require_long_trend', False) else 0
+    if getattr(cfg, 'min_rs_rating', 0) > 0 or getattr(cfg, 'candidate_rank', 'alphabetical') == 'rs_126':
+        extra = max(extra, 126)
+    if cfg.pattern == 'vcp':
+        return max(cfg.vcp_window_days * 3, cfg.sma_days, 50, extra)
+    if cfg.pattern == 'blue_sky':
+        return max(cfg.sma_days, 50, extra)
+    if cfg.pattern == 'multiyear':
+        return max(cfg.multiyear_base_days, cfg.sma_days, 50, extra)
+    if cfg.pattern == 'ipo':
+        return max(cfg.base_days, cfg.sma_days, 50, extra)
+    return max(cfg.base_days, cfg.sma_days, 50, extra)
+
+
+def simulate(datasets, cfg, *, state=None, liquidate=True, allow_entries=True):
+    """One daily engine for research and durable paper sessions.
+
+    State is copied: a failed cycle never mutates the last committed ledger.
+    """
+    state = deepcopy(state or {})
+    events = {}
+    for symbol, bars in datasets.items():
+        for i, bar in enumerate(bars):
+            if str(cfg.start) <= bar['date'] <= str(cfg.end) and bar['date'] > state.get('last_session', ''):
+                events.setdefault(bar['date'], {})[symbol] = (i, bar)
+    if not events:
+        raise ValueError('No candles in the chosen test interval.')
+    cash = state.get('cash', cfg.capital)
+    positions, marks = state.get('positions', {}), state.get('marks', {})
+    trades, curve, orders = state.get('trades', []), state.get('curve', []), state.get('orders', [])
+    broker = PaperBrokerAdapter(cfg)
+    slip, buy_fee, sell_fee = cfg.slippage_bps / 10000, cfg.buy_cost_bps / 10000, cfg.sell_cost_bps / 10000
+    peak = state.get('peak', cfg.capital)
+    max_dd = state.get('max_dd', 0)
+    total_fees, total_slippage, skipped = (state.get(k, 0) for k in ('total_fees', 'total_slippage', 'skipped'))
+
+    market_cache = {}
+    rs_enabled = getattr(cfg, 'min_rs_rating', 0) > 0 or getattr(cfg, 'candidate_rank', 'alphabetical') == 'rs_126'
+    date_indices = {s: {b['date']: i for i, b in enumerate(bars)} for s, bars in datasets.items()} if cfg.skip_weak_markets or rs_enabled else {}
+    rs_cache = {}
+
+    def relative_strength(day):
+        if day not in rs_cache:
+            returns = {}
+            for symbol, bars in datasets.items():
+                idx = date_indices[symbol].get(day)
+                if idx is not None and idx >= 126:
+                    returns[symbol] = bars[idx]['close'] / bars[idx - 126]['close'] - 1
+            values = sorted(returns.values())
+            from bisect import bisect_left, bisect_right
+            rs_cache[day] = {s: ((bisect_left(values, value) + bisect_right(values, value) - 1) / 2
+                                / max(len(values) - 1, 1) * 100, value) for s, value in returns.items()}
+        return rs_cache[day]
+
+    def market_is_strong(day):
+        """Banana-style breadth gate: at least 40% above the 200-session average."""
+        if day in market_cache:
+            return market_cache[day]
+        eligible = above = 0
+        for symbol, bars in datasets.items():
+            session = date_indices[symbol].get(day)
+            if session is None or session < 200:
+                continue
+            eligible += 1
+            average = sum(row['close'] for row in bars[session - 199:session + 1]) / 200
+            above += bars[session]['close'] > average
+        market_cache[day] = eligible == 0 or above / eligible >= getattr(cfg, 'market_breadth_pct', 40) / 100
+        return market_cache[day]
+
+    def moving_average(bars, idx, length):
+        if idx + 1 < length:
+            return None
+        return sum(row['close'] for row in bars[idx - length + 1:idx + 1]) / length
+
+    def pivot_for(bars, signal_idx, cfg):
+        if cfg.pattern == 'blue_sky':
+            lookback = min(cfg.blue_sky_lookback_days, signal_idx)
+        elif cfg.pattern == 'multiyear':
+            lookback = min(cfg.multiyear_base_days, signal_idx)
+        else:
+            lookback = min(cfg.base_days, signal_idx)
+        if lookback < 1:
+            return None
+        return max(row['high'] for row in bars[signal_idx - lookback:signal_idx])
+
+    def close(symbol, price, day, reason):
+        nonlocal cash, total_fees, total_slippage
+        p = positions.pop(symbol)
+        execution = broker.fill(price, p['quantity'], 'sell')
+        fill, fee = execution['price'], execution['fees']
+        cash += fill * p['quantity'] - fee
+        total_fees += fee
+        total_slippage += execution['slippage']
+        orders.append({'id': f"{symbol}:{day}:sell", 'symbol': symbol, 'date': day, 'side': 'sell',
+                       'quantity': p['quantity'], 'price': fill, 'fees': fee, 'status': 'FILLED', 'reason': reason})
+        pnl = fill * p['quantity'] - fee - p['entry_cost']
+        trades.append({'symbol': symbol, 'entry_date': p['entry_date'], 'exit_date': day,
+                       'entry': p['entry'], 'exit': fill, 'quantity': p['quantity'],
+                       'pnl': pnl, 'r': pnl / p['initial_risk'], 'reason': reason,
+                       'fees': p['entry_fee'] + fee})
+
+    for day in sorted(events):
+        session = events[day]
+        exited = set()
+        entered_today = set()
+        # Open-time exits precede entries; intraday proceeds cannot fund open-time buys.
+        for symbol in sorted(list(positions)):
+            if symbol not in session:
+                continue
+            _, b = session[symbol]
+            p = positions[symbol]
+            if b['open'] <= p['stop'] or p['age'] >= p.get('exit_config', {}).get('max_hold_days', cfg.max_hold_days):
+                close(symbol, b['open'], day, 'Gap through stop' if b['open'] <= p['stop'] else 'Time exit')
+                exited.add(symbol)
+        equity_at_open = cash + sum(p['quantity'] * (session[s][1]['open'] if s in session else marks[s]) for s, p in positions.items())
+        # Ranking uses only the completed signal session, never the entry-day close.
+        def priority(symbol):
+            idx, _ = session[symbol]
+            signal_idx = idx if cfg.entry_mode == 'close' and cfg.pattern != 'breakout' else idx - 1
+            score = relative_strength(datasets[symbol][signal_idx]['date']).get(symbol, (-1, -1)) if signal_idx >= 0 else (-1, -1)
+            return (-score[0], -score[1], symbol)
+
+        candidates = sorted(session, key=priority) if getattr(cfg, 'candidate_rank', 'alphabetical') == 'rs_126' else sorted(session)
+        for symbol in candidates:
+            if not allow_entries:
+                break
+            i, b = session[symbol]
+            signal_idx = i if cfg.entry_mode == 'close' and cfg.pattern != 'breakout' else i - 1
+            if symbol in positions or symbol in exited or (cfg.pattern == 'breakout' and i < 1) or signal_idx < 0 or not signal(datasets[symbol], signal_idx, cfg):
+                continue
+            signal_day = datasets[symbol][signal_idx]['date']
+            if getattr(cfg, 'min_rs_rating', 0) > 0 and relative_strength(signal_day).get(symbol, (-1, 0))[0] < cfg.min_rs_rating:
+                skipped += 1
+                continue
+            if cfg.skip_weak_markets and not market_is_strong(signal_day):
+                skipped += 1
+                continue
+            if len(positions) >= cfg.max_positions:
+                skipped += 1
+                continue
+            if cfg.pattern != 'breakout' and cfg.entry_mode == 'close':
+                raw_fill = b['close']
+            elif cfg.pattern != 'breakout' and cfg.entry_mode == 'pivot':
+                pivot = pivot_for(datasets[symbol], signal_idx, cfg)
+                raw_fill = max(b['open'], pivot or b['open'])
+                if b['high'] < raw_fill:
+                    skipped += 1
+                    continue
+            else:
+                raw_fill = b['open']
+            fill = raw_fill * (1 + slip)
+            stop = fill * (1 - cfg.stop_pct / 100)
+            qty = percent_risk_size(equity_at_open, cash, fill, stop, cfg)
+            if qty < 1:
+                skipped += 1
+                continue
+            execution = broker.fill(raw_fill, qty, 'buy')
+            fee = execution['fees']
+            cash -= qty * fill + fee
+            total_fees += fee
+            total_slippage += execution['slippage']
+            orders.append({'id': f"{symbol}:{day}:buy", 'symbol': symbol, 'date': day, 'side': 'buy',
+                           'quantity': qty, 'price': fill, 'fees': fee, 'status': 'FILLED', 'reason': 'Completed-bar signal'})
+            positions[symbol] = {'entry': fill, 'entry_date': day, 'entry_cost': qty * fill + fee,
+                                 'entry_fee': fee, 'quantity': qty, 'stop': stop, 'best_close': fill,
+                                 'initial_risk': qty * (fill - stop), 'age': 0,
+                                 'exit_config': {k: getattr(cfg, k) for k in ('pattern', 'stop_pct', 'breakeven_r', 'winner_exit', 'trail_pct', 'max_hold_days')}}
+            marks[symbol] = b['open']
+            entered_today.add(symbol)
+        for symbol in sorted(list(positions)):
+            if symbol not in session:
+                continue
+            idx, b = session[symbol]
+            p = positions[symbol]
+            exit_cfg = SimpleNamespace(**p.get('exit_config', {k: getattr(cfg, k) for k in ('pattern', 'stop_pct', 'breakeven_r', 'winner_exit', 'trail_pct', 'max_hold_days')}))
+            if symbol in entered_today and cfg.pattern != 'breakout' and cfg.entry_mode in ('close', 'pivot'):
+                # Daily OHLC cannot locate the low relative to an intraday pivot fill.
+                # Activate protection next session instead of retroactively stopping out.
+                marks[symbol] = b['close']
+                future = datasets[symbol]
+                if liquidate and (idx == len(future) - 1 or future[idx + 1]['date'] > str(cfg.end)):
+                    close(symbol, b['close'], day, 'End of available test data')
+                continue
+            if b['low'] <= p['stop']:
+                close(symbol, p['stop'], day, 'Stop loss / trailing stop')
+                continue
+            p['age'] += 1
+            p['best_close'] = max(p['best_close'], b['close'])
+            # Close-based updates activate next session, never retroactively.
+            if b['close'] >= p['entry'] * (1 + exit_cfg.stop_pct / 100 * exit_cfg.breakeven_r):
+                breakeven = p['entry_cost'] / p['quantity'] / ((1 - sell_fee) * (1 - slip))
+                if exit_cfg.pattern == 'breakout':
+                    trailing = None
+                elif exit_cfg.winner_exit == 'trail_30w':
+                    trailing = moving_average(datasets[symbol], idx, 150)
+                elif exit_cfg.winner_exit == 'take_25':
+                    trailing = None
+                else:
+                    trailing = moving_average(datasets[symbol], idx, 50)
+                if trailing is not None:
+                    p['stop'] = max(p['stop'], breakeven, trailing)
+                elif exit_cfg.winner_exit == 'take_25' and b['close'] >= p['entry'] * 1.25:
+                    close(symbol, b['close'], day, 'Take profit +25%')
+                    continue
+                else:
+                    p['stop'] = max(p['stop'], breakeven, p['best_close'] * (1 - exit_cfg.trail_pct / 100))
+            marks[symbol] = b['close']
+            future = datasets[symbol]
+            if liquidate and (idx == len(future) - 1 or future[idx + 1]['date'] > str(cfg.end)):
+                close(symbol, b['close'], day, 'End of available test data')
+        equity = cash + sum(p['quantity'] * marks[s] for s, p in positions.items())
+        peak = max(peak, equity)
+        max_dd = max(max_dd, (peak - equity) / peak * 100)
+        curve.append({'date': day, 'equity': round(equity, 2), 'drawdown_pct': round((peak - equity) / peak * 100, 4)})
+    wins, losses = [t for t in trades if t['pnl'] > 0], [t for t in trades if t['pnl'] < 0]
+    return {'trades': trades, 'curve': curve,
+        'state': {'cash': cash, 'positions': positions, 'marks': marks, 'trades': trades, 'curve': curve,
+                  'orders': orders, 'last_session': curve[-1]['date'], 'peak': peak, 'max_dd': max_dd,
+                  'total_fees': total_fees, 'total_slippage': total_slippage, 'skipped': skipped},
+        'metrics': {
+        'initial_capital': cfg.capital, 'final_equity': curve[-1]['equity'],
+        'return_pct': (curve[-1]['equity'] / cfg.capital - 1) * 100, 'max_drawdown_pct': max_dd,
+        'trade_count': len(trades), 'win_rate': len(wins) / len(trades) * 100 if trades else None,
+        'expectancy_r': sum(t['r'] for t in trades) / len(trades) if trades else None,
+        'profit_factor': sum(t['pnl'] for t in wins) / -sum(t['pnl'] for t in losses) if losses else None,
+        'modeled_fees': total_fees, 'modeled_slippage': total_slippage, 'skipped_entries': skipped}}
+
+
+def available_window(settings, warmup=50):
+    """Suggest dates from actual sessions, including one signal session before entry."""
+    universe = store.read('universes/' + settings.universe, {})
+    records = [store.read('bars/' + item['isin']) for item in universe.get('instruments', [])]
+    ready = [r['bars'] for r in records if r and len(r['bars']) > warmup + 2]
+    result = {'start': None, 'end': None, 'warmup_sessions': warmup + 1,
+              'ready_symbols': len(ready), 'total_symbols': len(records),
+              'history_start': None, 'history_end': None}
+    loaded = [r['bars'] for r in records if r and r['bars']]
+    if loaded:
+        result.update(history_start=min(b[0]['date'] for b in loaded),
+                      history_end=max(b[-1]['date'] for b in loaded))
+    if ready and all(records):
+        start, end = max(b[warmup + 1]['date'] for b in ready), min(b[-1]['date'] for b in ready)
+        if start < end:
+            result.update(start=start, end=end)
+    return result
+
+
+def prepare(settings, cfg):
+    universe = store.read('universes/' + settings.universe)
+    if not universe:
+        raise ValueError('Refresh the universe and fetch daily data first.')
+    datasets, manifest, excluded = {}, [], []
+    warmup = max(required_warmup(cfg), getattr(cfg, 'minimum_warmup_sessions', 50))
+    for item in universe['instruments']:
+        record = store.read('bars/' + item['isin'])
+        if not record:
+            raise ValueError(f"Missing data for {item['symbol']}. Complete ingestion before running.")
+        if record['requested_end'] < str(cfg.end) or record['requested_start'] > str(cfg.start):
+            raise ValueError(f"Your test requests {cfg.start} to {cfg.end}, but {item['symbol']} was downloaded for "
+                             f"{record['requested_start']} to {record['requested_end']}. "
+                             "Use the available dates shown above, or fetch earlier history in Market data.")
+        bars = record['bars']
+        if len([b for b in bars if b['date'] < str(cfg.start)]) < warmup:
+            excluded.append(item['symbol'])
+            continue
+        datasets[item['symbol']] = bars
+        manifest.append({'symbol': item['symbol'], 'source': record['source'], 'bars': len(bars),
+                         'first': bars[0]['date'], 'last': bars[-1]['date'],
+                         'verified_repairs': record.get('verified_repairs', []),
+                         'sha256': hashlib.sha256(json.dumps(bars, sort_keys=True).encode()).hexdigest()})
+    if not datasets:
+        window = available_window(settings, warmup)
+        suggestion = f" Try {window['start']} to {window['end']}." if window['start'] else ' Fetch more history first.'
+        raise ValueError(f'No symbols have the required {warmup} sessions before the test start.' + suggestion)
+    if not any(str(cfg.start) <= b['date'] <= str(cfg.end) for bars in datasets.values() for b in bars):
+        raise ValueError('No actual candles fall within this test interval. Choose dates within downloaded history.')
+    return universe, datasets, manifest, excluded
+
+
+def run(settings, cfg, log, job_id):
+    universe, datasets, manifest, excluded = prepare(settings, cfg)
+    log(f'Testing {len(datasets)} symbols with one cash balance; {len(excluded)} excluded for insufficient warmup.')
+    result = simulate(datasets, cfg)
+    result.pop('state')  # Persistent execution state belongs to paper portfolios only.
+    result.update(id=job_id, created_at=store.now(), config=cfg.model_dump(mode='json'),
+                  universe=settings.universe, universe_snapshot=universe, manifest=manifest, excluded=excluded,
+                  warnings=['Current constituents only: survivorship bias remains. This is not an edge-validation result.',
+                            'Corporate-action adjustments, exchange-calendar gaps and delisted history are not verified.',
+                            'The Banana screen set and risk/exits are implemented, but historical membership and RS ranking still need a verified market-wide dataset.',
+                            'All-in fee rates are your assumptions, not a verified historical tax/brokerage schedule.',
+                            'No volume participation cap, circuit-limit or non-fill simulation; stops may fill worse in real markets.',
+                            'This run is exploratory/in-sample. Reserve a later untouched period before judging the strategy.'])
+    store.write('run_data/' + job_id, datasets)
+    store.write('runs/' + job_id, result)
+    with store.LOCK:
+        runs = store.read('runs_index', [])
+        runs.insert(0, {k: result[k] for k in ('id', 'created_at', 'config', 'universe', 'metrics')})
+        store.write('runs_index', runs)
+    log(f"Recorded {len(result['trades'])} trades and the input/configuration snapshot.")
+    return {'run_id': job_id}

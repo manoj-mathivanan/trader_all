@@ -1,0 +1,1 @@
+"""Daily swing pattern implementations."""

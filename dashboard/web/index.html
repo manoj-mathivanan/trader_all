@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f7f8f3">
+  <title>Trader — Swing control panel</title>
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/static/style.css">
+  <script defer src="/static/vendor/klinecharts.min.js"></script>
+  <script defer src="/static/app.js"></script>
+</head>
+<body>
+  <a class="skip" href="#content">Skip to content</a>
+  <header class="topbar">
+    <a href="#overview" class="brand" aria-label="Trader home"><span class="brand-mark">↗</span><span>trader<span class="brand-dot">.</span><small>A little more systematic.</small></span></a>
+    <nav id="top-navigation" aria-label="Workspace navigation"></nav>
+    <div class="top-tools"><span class="local-status"><i></i> Local workspace</span><button class="icon-button" id="theme-toggle" aria-label="Switch to dark theme">◐</button><span class="avatar" aria-label="Personal workspace">M</span></div>
+  </header>
+  <aside class="sidebar">
+    <div class="eyebrow">YOUR STRATEGIES</div><div id="strategies"></div>
+    <div class="eyebrow saved-eyebrow">SAVED SCREENS</div><div id="saved-screens"></div>
+    <button class="button add-screen" data-action="new-screen">＋ Add new screen</button>
+    <div class="sidebar-bottom"><div class="risk-icon">◎</div><strong>Protect first.<br>Let the winners run.</strong><p>One set of rules.<br>Every trade, every time.</p><button class="text-button" data-action="method">Explore the method ↗</button></div>
+    <div class="sidebar-foot"><i></i> Research workspace <span>v0.1</span></div>
+  </aside>
+  <main id="content" tabindex="-1">
+    <div class="demo-banner"><span><b>RESEARCH & PAPER</b> Real market data. Simulated trades. No live execution.</span><a href="#settings">Connection settings ↗</a></div>
+    <div id="view"><div class="empty">Loading your workspace…</div></div>
+    <footer><span>Rules-based research. Not investment advice. Backtests are hypothetical.</span><span>Charts by KLineChart · <a href="/static/vendor/KLINECHARTS-LICENSE">Apache 2.0</a></span></footer>
+  </main>
+  <dialog id="modal"><div id="modal-content"></div></dialog>
+  <div id="toast" role="status" aria-live="polite"></div>
+</body>
+</html>

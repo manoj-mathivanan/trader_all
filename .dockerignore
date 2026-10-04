@@ -1,0 +1,9 @@
+.git
+.env
+*.env
+.local-key
+data
+artifacts
+node_modules
+.venv
+**/__pycache__
