@@ -163,6 +163,7 @@ function screenForm(){const schema=state.backtest_schema;return `<form id="scree
 function newScreen(){modal('Add a new screen',screenForm());applyScreenPreset($('#screen-form'),'builtin:vcp');}
 function render(){
   if(!state)return;
+  $('.local-status').innerHTML='<i></i> '+(state.environment==='production'?'Production workspace':'Local workspace');
   currentView=location.hash.slice(1)||'overview';if(!nav.some(x=>x[0]===currentView)||(currentView==='paper'&&!state.paper_enabled))currentView='overview';
   $('#strategies').innerHTML=state.strategies.map(s=>s.status==='active'
     ? `<a class="strategy" href="#overview"><span>⌁</span><div><strong>${esc(s.name)}</strong><small>${esc(s.description)}</small></div></a>`
