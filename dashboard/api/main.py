@@ -11,7 +11,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, SecretStr
-from core.research import store, jobs, upstox, backtest
+from core.research import store, jobs, upstox, backtest, data_quality
 from core.research.config import Settings, BacktestConfig
 from core.portfolio import paper, scheduler, manager as portfolios, registry as paper_plugins
 from core.strategies.registry import all_strategies
@@ -168,6 +168,7 @@ class ScreenInput(BaseModel):
     blue_sky_lookback_days: int = Field(5000, ge=50, le=5000)
     multiyear_base_days: int = Field(260, ge=252, le=2500)
     multiyear_max_depth_pct: float = Field(50, gt=0, le=90)
+    ipo_max_age_days: int = Field(730, ge=1, le=3653)
 
 
 @app.post('/api/screens')
@@ -187,6 +188,11 @@ def save_screen(value: ScreenInput):
 def universe_job():
     cfg = settings()
     return jobs.submit('Refresh universe', lambda log, _: {'symbols': len(upstox.refresh_universe(cfg, log)['instruments'])}, cfg.model_dump(mode='json'))
+
+
+@app.get('/api/data-quality')
+def audit_price_history():
+    return data_quality.audit_cached_universe(settings())
 
 
 @app.post('/api/jobs/ingest')

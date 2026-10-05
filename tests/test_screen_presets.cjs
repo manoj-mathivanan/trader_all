@@ -20,7 +20,7 @@ vm.runInContext(`
   for(const k of ['capital','risk_pct','stop_pct','breakeven_r','trail_pct','max_positions','max_hold_days','slippage_bps','buy_cost_bps','sell_cost_bps'])properties[k]={type:'number',default:10};
   for(const k of ['skip_weak_markets','acknowledge_limitations'])properties[k]={type:'boolean'};
   for(const k of ['require_long_trend','require_rising_long_trend']){properties[k]={type:'boolean',default:false};state.screens[0][k]=false;}
-  properties.market_breadth_pct={type:'number',default:40};properties.minimum_warmup_sessions={type:'integer',default:50};
+  properties.market_breadth_pct={type:'number',default:40};properties.market_min_coverage_pct={type:'number',default:80};properties.minimum_warmup_sessions={type:'integer',default:50};
   state.backtest_schema={properties};
   const form={id:'backtest-form',elements:Object.fromEntries(Object.keys(properties).concat('screen').map(k=>[k,{value:'original',type:properties[k]?.type==='boolean'?'checkbox':'text',checked:false}]))};
   modal=(_title,body)=>{globalThis.body=body;};

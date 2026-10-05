@@ -66,6 +66,12 @@ Open http://127.0.0.1:8765. Local mode supports research and backtests; paper tr
 
 ## Research boundaries
 
+New data-validity safeguards and the first local audit are documented in
+[DATA_VALIDITY.md](DATA_VALIDITY.md). Market data → **Audit price history** lists
+large discontinuities. New backtests and paper sessions halt on suspect gaps;
+IPO entries require verified listing dates, and the enabled breadth gate requires
+sufficient history coverage. Existing reports and ledgers are preserved.
+
 - Swing backtests follow the Banana Patterns screen set: **VCP**, **Blue sky**, **Multi-year breakouts**, and **IPO base**. The same workflow exposes pivot/close entry, 3/5/8/10 position caps, 7/8/10% stops, 50-day or 30-week trailing exits (or +25%), risk per trade, and a 40%-above-200-day weak-market gate. Costs remain explicit assumptions; defaults are zero for reference-site comparison. Historical membership, RS ranking and broad liquid-universe coverage still need validation before claiming numeric parity.
 - Next-open entries use completed previous-session signals (including paper). Backtests also retain Banana pivot/close entry assumptions: pivot fills require the entry-session high to reach the trigger; close fills use the signal close. Daily bars cannot order an entry-session low around a pivot fill, so pivot/close stops start next session. Stops gap at the open where applicable. Closing-price trailing updates activate next session. Slippage and percentage costs apply to both sides. Trade R uses initial price-stop risk; sizing also allows for modeled costs.
 - One cash pool per run; no leverage. Simultaneous signals use the configured alphabetical or relative-strength priority. Open-time exits may fund entries; intraday stop proceeds cannot fund earlier open-time buys.

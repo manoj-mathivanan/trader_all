@@ -1,6 +1,7 @@
 """Explain a recorded trade using only its frozen inputs and saved configuration."""
 from bisect import bisect_left, bisect_right
 from types import SimpleNamespace
+from datetime import date
 from core.research.config import TradingConfig
 
 
@@ -54,6 +55,12 @@ def explain_trade(result, datasets, trade, bars, first, last):
                 row['chart_values'][key] = value
 
     if signal is not None:
+        if cfg.pattern == 'ipo':
+            metadata = bars[0].get('listing_metadata', {})
+            age = ((date.fromisoformat(signal['date']) - date.fromisoformat(metadata.get('ipo_date', metadata['listing_date']))).days
+                   if metadata.get('verified') is True and metadata.get('source') and metadata.get('ipo_verified') is True else None)
+            check('Verified listing age (calendar days)', age, f'0–{cfg.ipo_max_age_days}',
+                  0 <= age <= cfg.ipo_max_age_days if age is not None else False)
         sma = averages[cfg.sma_days][signal_idx]
         check('Price above trend average', signal['close'], f'> SMA {cfg.sma_days}: {sma:.2f}' if sma is not None else 'More history required', signal['close'] > sma if sma is not None else None)
         if ceiling is not None:
@@ -95,7 +102,7 @@ def explain_trade(result, datasets, trade, bars, first, last):
                     continue
                 if idx >= 126:
                     returns[symbol] = rows[idx]['close'] / rows[idx - 126]['close'] - 1
-                if idx >= 200:
+                if idx >= 199:
                     eligible += 1
                     above += rows[idx]['close'] > sum(b['close'] for b in rows[idx - 199:idx + 1]) / 200
             values = sorted(returns.values())
@@ -104,8 +111,11 @@ def explain_trade(result, datasets, trade, bars, first, last):
                 rating = (bisect_left(values, value) + bisect_right(values, value) - 1) / 2 / max(len(values) - 1, 1) * 100
                 check('126-session RS percentile', rating, f'≥ {cfg.min_rs_rating:g}' if cfg.min_rs_rating > 0 else 'No minimum; informational', rating >= cfg.min_rs_rating if cfg.min_rs_rating > 0 else None)
             if cfg.skip_weak_markets:
+                coverage = eligible / len(datasets) * 100 if datasets else 0
+                check('Breadth history coverage (%)', coverage, f'≥ {cfg.market_min_coverage_pct:g}',
+                      eligible > 0 and coverage >= cfg.market_min_coverage_pct)
                 check('Market breadth (%)', above / eligible * 100 if eligible else None,
-                      f'≥ {cfg.market_breadth_pct:g}; {eligible} eligible symbols', above / eligible * 100 >= cfg.market_breadth_pct if eligible else True)
+                      f'≥ {cfg.market_breadth_pct:g}; {eligible} eligible symbols', above / eligible * 100 >= cfg.market_breadth_pct if eligible else False)
 
     # This trace is reconstructed from recorded fills, not asserted to be a saved engine trace.
     stop, best = trade['entry'] * (1 - cfg.stop_pct / 100), trade['entry']
@@ -129,6 +139,12 @@ def explain_trade(result, datasets, trade, bars, first, last):
     series.append({'id': 'protective_stop', 'label': 'Reconstructed active stop', 'color': '#d34848'})
     notices = ['Indicators use the full saved history before the chart is cropped. Signal checks use only the completed signal session.',
                'The active stop is reconstructed from saved settings and fills; older engine versions may differ. BUY/SELL markers are the recorded ledger.']
+    if any(x.get('symbol') == trade['symbol'] and trade['entry_date'] < x['date'] <= trade['exit_date']
+           for x in result.get('corporate_actions', [])):
+        for row in enriched:
+            row['chart_values'].pop('protective_stop', None)
+        series = [x for x in series if x['id'] != 'protective_stop']
+        notices.append('This position crossed a share action. Original entry quantity and exit quantity differ; the reconstructed stop trace is omitted. Recorded cash P&L remains authoritative.')
     if any(c['passed'] is False for c in checks):
         notices.append('Some reconstructed checks fail. This historical run may use different engine rules; the explanation does not rewrite its ledger.')
     if early_stop:
