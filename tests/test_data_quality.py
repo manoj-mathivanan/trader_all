@@ -116,6 +116,8 @@ class DataQualityTests(unittest.TestCase):
             self.assertEqual(report['findings'][0]['symbol'], 'TEST')
             self.assertEqual(report['missing_symbols'], ['MISSING'])
             self.assertEqual(report['adjustment_status'], 'unverified')
+            self.assertEqual(report['listing_evidence']['total_symbols'], 2)
+            self.assertEqual(report['listing_evidence']['verified_ipo_symbols'], [])
             self.assertEqual(store.read('bars/INE000')['bars'], rows)
 
     def test_frozen_audit_replays_sourced_prelisting_fix_in_separate_artifact(self):

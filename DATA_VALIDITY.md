@@ -235,3 +235,18 @@ replays remained blocked. The current derived cache has 10 unresolved gaps after
 as profitable/unprofitable. Remaining names: ABREL, COHANCE, HEGAM, IIFL, NMDC,
 SIEMENS, TATACHEM, TATACOMM, TMPV and VEDL. These require event-specific evidence,
 especially demergers; a split/bonus factor is not a substitute.
+
+## Initial IPO evidence expansion — 5 October 2026
+
+Bundled initial IPO evidence now covers eight instruments. Added BAJAJHFL
+(16 September 2024), HYUNDAI (22 October 2024), SWIGGY (13 November 2024), and
+VMM (18 December 2024). Each record contains its issuer or NSE publication URL
+and evidence location. This changes eligibility evidence, not the IPO age,
+trend, liquidity or volume rules. The publications were reviewed retrospectively;
+this is not a point-in-time IPO discovery universe or an untouched holdout.
+
+The price-history audit now reports exchange-listing and initial-IPO evidence
+coverage separately. Counts include instruments without cached prices and do
+not imply eligible warmup, acceptable adjustment history or a qualifying signal.
+Unknown original IPO dates remain blocked. Exchange-master imports preserve the
+independent sourced IPO fields. Remaining data reconstruction work is unchanged.

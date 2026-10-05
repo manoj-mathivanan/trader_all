@@ -40,6 +40,46 @@
       "ipo_verified": true,
       "ipo_date": "2020-10-05",
       "ipo_source": "https://w3assets.angelone.in/wp-content/uploads/pdfs/Placement-Document.pdf"
+    },
+    "INE377Y01014": {
+      "symbol": "BAJAJHFL",
+      "listing_date": "2024-09-16",
+      "verified": true,
+      "source": "https://www.bajajhousingfinance.in/documents/37350/5948729/BHFL_Half%2BYearly%2BReport_2024-25.pdf",
+      "evidence": "Half Yearly Report 2024-25, update on key developments, page 2: IPO and exchange listing on 16 September 2024.",
+      "ipo_verified": true,
+      "ipo_date": "2024-09-16",
+      "ipo_source": "https://www.bajajhousingfinance.in/documents/37350/5948729/BHFL_Half%2BYearly%2BReport_2024-25.pdf"
+    },
+    "INE0V6F01027": {
+      "symbol": "HYUNDAI",
+      "listing_date": "2024-10-22",
+      "verified": true,
+      "source": "https://www.hyundai.com/content/dam/hyundai/in/en/images/investor-relations/annualreports/annual-report2024-25.pdf",
+      "evidence": "Annual Report 2024-25, material changes and commitments, page 94: initial public offer and NSE/BSE listing on October 22, 2024.",
+      "ipo_verified": true,
+      "ipo_date": "2024-10-22",
+      "ipo_source": "https://www.hyundai.com/content/dam/hyundai/in/en/images/investor-relations/annualreports/annual-report2024-25.pdf"
+    },
+    "INE00H001014": {
+      "symbol": "SWIGGY",
+      "listing_date": "2024-11-13",
+      "verified": true,
+      "source": "https://www.swiggy.com/corporate/wp-content/uploads/2025/11/Swiggy-Limited-Preliminary-Placement-Document.pdf",
+      "evidence": "Issuer placement document: pursuant to the IPO, shares listed on NSE and BSE on November 13, 2024.",
+      "ipo_verified": true,
+      "ipo_date": "2024-11-13",
+      "ipo_source": "https://www.swiggy.com/corporate/wp-content/uploads/2025/11/Swiggy-Limited-Preliminary-Placement-Document.pdf"
+    },
+    "INE01EA01019": {
+      "symbol": "VMM",
+      "listing_date": "2024-12-18",
+      "verified": true,
+      "source": "https://nsearchives.nseindia.com/web/sites/default/files/2024-12/PR_LIST_17122024.pdf",
+      "evidence": "NSE press release dated December 17, 2024, page 3: IPO admission from December 18, 2024, symbol VMM and ISIN INE01EA01019.",
+      "ipo_verified": true,
+      "ipo_date": "2024-12-18",
+      "ipo_source": "https://nsearchives.nseindia.com/web/sites/default/files/2024-12/PR_LIST_17122024.pdf"
     }
   },
   "quarantine": {
