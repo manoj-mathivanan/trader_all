@@ -22,6 +22,7 @@ vm.runInContext(`
   for(const k of ['require_long_trend','require_rising_long_trend']){properties[k]={type:'boolean',default:false};state.screens[0][k]=false;}
   properties.market_breadth_pct={type:'number',default:40};properties.market_min_coverage_pct={type:'number',default:80};properties.minimum_warmup_sessions={type:'integer',default:50};
   state.backtest_schema={properties};
+  properties.start.format='date';properties.end.format='date';
   const form={id:'backtest-form',elements:Object.fromEntries(Object.keys(properties).concat('screen').map(k=>[k,{value:'original',type:properties[k]?.type==='boolean'?'checkbox':'text',checked:false}]))};
   modal=(_title,body)=>{globalThis.body=body;};
   api=async path=>{globalThis.windowPath=path;return {start:'2020-01-01',end:'2025-12-31',history_start:'2019-01-01',history_end:'2025-12-31',ready_symbols:50,total_symbols:50};};
@@ -64,6 +65,12 @@ function changeScreen(value) {
   assert.match(context.body, /name="vcp_volume_multiple"[^>]*value="0.9"/);
   assert.match(context.body, /value="builtin:vcp" selected/);
   assert.match(context.body, /type="hidden" name="pattern" value="vcp"/);
+  for(const key of ['start','end'])assert.match(context.body,new RegExp(`name="${key}"[^>]*min="2019-01-01"[^>]*max="2025-12-31"`));
+  for(const dates of [{start:'2018-12-31',end:'2025-12-31'},{start:'2020-01-01',end:'2026-01-01'},{start:'2026-01-01',end:'2026-01-02'},{start:'2020-01-01',end:'2018-12-31'},{start:'2021-01-01',end:'2020-01-01'}]){
+    assert.throws(()=>vm.runInContext(`validateBacktestDates(${JSON.stringify(dates)},{history_start:'2019-01-01',end:'2025-12-31'})`,context));
+  }
+  assert.doesNotThrow(()=>vm.runInContext("validateBacktestDates({start:'2019-01-01',end:'2025-12-31'},{history_start:'2019-01-01',end:'2025-12-31'})",context));
+  assert.match(vm.runInContext("field('start',state.backtest_schema,'',backtestDateBounds({}))",context),/disabled/);
   assert.doesNotMatch(context.body, /<select name="pattern"/);
   await vm.runInContext("newBacktest({screen:'custom_test'})", context);
   assert.match(context.body, /value="custom_test" selected/);

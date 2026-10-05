@@ -230,6 +230,16 @@ The sidebar's **Explore the method** action opens a methodology dialog describin
 families, percent-risk sizing, initial protection, breakeven and winner exits, and the data/cost
 limitations. It is explanatory content, not a settings mutation or a strategy switch.
 
+Backtest date-picker limits (5 October 2026): both New backtest
+start/end inputs set HTML `min` to the available-window response's `history_start` (fallback
+`start`) and `max` to `end` (fallback `history_end`). This prevents choosing dates outside
+downloaded coverage in the calendar. The warmup-adjusted safe start remains a recommendation,
+not the minimum date. With no history boundaries, disable the date inputs. Do not constrain
+Market data settings, since those dates request additional history. Preserve cloned report
+dates, but block invalid values through native input validation and `validateBacktestDates`
+before submission; reject either date outside the bounds and start after end. Regression tests
+cover both limits, inclusive endpoints, reversed ranges and no-history disabled fields.
+
 Report shows return, drawdown, expectancy R, win rate, equity curve, fees, slippage, profit factor,
 skipped entries, expandable warnings/exclusions/full configuration, and the complete trade ledger.
 Trade headers sort symbol, entry date, quantity, P&L, R or exit reason; clicking again reverses.
