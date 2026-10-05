@@ -144,7 +144,7 @@ def merge_candles(existing, additions):
     return [merged[key] for key in sorted(merged)]
 
 
-def ingest(settings, log, *, universe=None):
+def ingest(settings, log, *, universe=None, extend_history=True):
     access_token = store.token()
     universe = universe or store.read("universes/" + settings.universe)
     if not universe:
@@ -163,7 +163,7 @@ def ingest(settings, log, *, universe=None):
                         [[f"{row['date']}T00:00:00+05:30", row['open'], row['high'], row['low'], row['close'], row['volume']]
                          for row in existing], date.fromisoformat(existing[0]['date']), date.fromisoformat(existing[-1]['date']))
                     first, last = date.fromisoformat(existing[0]["date"]), date.fromisoformat(existing[-1]["date"])
-                    if settings.start < first:
+                    if extend_history and settings.start < first:
                         end = min(settings.end, first - timedelta(days=1))
                         additions.extend(fetch_range(client, instrument, access_token, settings.start, end))
                         log(f"{symbol}: fetched earlier boundary {settings.start} to {end}.")
@@ -172,7 +172,7 @@ def ingest(settings, log, *, universe=None):
                         additions.extend(fetch_range(client, instrument, access_token, start, settings.end))
                         log(f"{symbol}: fetched later boundary {start} to {settings.end}.")
                     if not additions:
-                        record.update(requested_start=min(record.get('requested_start', str(settings.start)), str(settings.start)),
+                        record.update(requested_start=min(record.get('requested_start', str(settings.start)), str(settings.start)) if extend_history else record.get('requested_start', str(first)),
                                       requested_end=max(record.get('requested_end', str(settings.end)), str(settings.end)),
                                       fetched_at=store.now())
                         store.write('bars/' + instrument['isin'], record)
@@ -181,6 +181,8 @@ def ingest(settings, log, *, universe=None):
                         continue
                     candles = merge_candles(existing, additions)
                 else:
+                    if not extend_history:
+                        raise ValueError('Paper history is missing. Restore or fetch validated history before retrying.')
                     candles = fetch_range(client, instrument, access_token, settings.start, settings.end)
                     log(f"{symbol}: fetched initial range {settings.start} to {settings.end}.")
                 if not candles:
@@ -190,7 +192,7 @@ def ingest(settings, log, *, universe=None):
                     [[f"{row['date']}T00:00:00+05:30", row['open'], row['high'], row['low'], row['close'], row['volume']]
                      for row in candles], date.fromisoformat(candles[0]['date']), date.fromisoformat(candles[-1]['date']))
                 store.write("bars/" + instrument["isin"], {"instrument": instrument, "bars": candles,
-                            "fetched_at": store.now(), "source": "upstox_v3", "requested_start": str(settings.start),
+                            "fetched_at": store.now(), "source": "upstox_v3", "requested_start": str(settings.start) if extend_history else record.get('requested_start', existing[0]['date']),
                             "requested_end": str(settings.end), "adjustments": "unverified",
                             "verified_repairs": store.read('provider_overrides/' + instrument['isin'], {}).get('repairs', [])})
                 with store.LOCK:

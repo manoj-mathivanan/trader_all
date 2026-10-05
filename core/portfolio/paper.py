@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone, time, date
 from types import SimpleNamespace
 from pydantic import Field, model_validator
 from typing import Literal
-from core.research import store, backtest, upstox
+from core.research import store, backtest, upstox, data_quality, market_history, provenance
 from core.research.config import TradingConfig, Settings
 from core.portfolio import manager
 
@@ -15,6 +15,16 @@ KEY = 'portfolios/swing_patterns'
 
 def local_now():
     return datetime.now(IST)
+
+
+class PaperIngestionRange(Settings):
+    """A portfolio's fixed history grows beyond the research form's ten-year cap."""
+
+    @model_validator(mode='after')
+    def dates(self):
+        if self.start >= self.end:
+            raise ValueError('Paper history start must precede the completed-session cutoff.')
+        return self
 
 
 class PaperConfig(TradingConfig):
@@ -61,9 +71,11 @@ def cycle(log, job_id, *, ingest=True):
     instruments = portfolio['universe_snapshot']['instruments']
     if ingest:
         # Freeze membership per portfolio; research universe refreshes cannot remove positions.
-        settings = Settings(universe=portfolio['universe'], start=date.fromisoformat(portfolio['history_start']), end=through)
-        upstox.ingest(settings, log, universe=portfolio['universe_snapshot'])
+        settings = PaperIngestionRange(universe=portfolio['universe'], start=date.fromisoformat(portfolio['history_start']), end=through)
+        upstox.ingest(settings, log, universe=portfolio['universe_snapshot'], extend_history=False)
     datasets = {}
+    reference = market_history.evidence(snapshot=True)
+    histories = {}
     ledger = portfolio['ledger']
     last = ledger.get('last_session', '')
     for item in instruments:
@@ -74,8 +86,17 @@ def cycle(log, job_id, *, ingest=True):
         # Reconcile historical inputs before resuming; revisions require investigation.
         if last and digest(bars, last) != portfolio['fingerprints'].get(item['symbol']):
             raise ValueError(f"Processed candles changed for {item['symbol']}. Paper cycle halted; investigate before resuming.")
-        datasets[item['symbol']] = [b for b in bars if b['date'] <= through.isoformat()]
+        derived, history = market_history.prepare(item, record, reference=reference)
+        if not derived:
+            if item['symbol'] in ledger.get('positions', {}):
+                raise ValueError(f"Held instrument {item['symbol']} is quarantined. Paper cycle halted; ledger unchanged.")
+            log(f"Excluded {item['symbol']}: quarantined or no valid listed history.")
+            continue
+        datasets[item['symbol']] = [b for b in derived if b['date'] <= through.isoformat()]
+        histories[item['symbol']] = history
     # Process the common observed boundary; do not fabricate holidays or force a stale quote.
+    if not datasets:
+        raise ValueError('No eligible paper inputs after history checks; ledger unchanged.')
     end = min(bars[-1]['date'] for bars in datasets.values() if bars)
     start = max(portfolio['start_session'], (date.fromisoformat(last) + timedelta(days=1)).isoformat() if last else portfolio['start_session'])
     if end < start:
@@ -83,21 +104,31 @@ def cycle(log, job_id, *, ingest=True):
         return {'portfolio_id': portfolio['id'], 'sessions': 0}
     for symbol, bars in datasets.items():
         if sum(b['date'] < start for b in bars) < backtest.required_warmup(cfg):
-            raise ValueError(f'Insufficient indicator warmup for {symbol}. Fetch more history before the paper cycle.')
+            if symbol in ledger.get('positions', {}):
+                raise ValueError(f'Insufficient indicator warmup for held {symbol}. Paper cycle halted; ledger unchanged.')
+            log(f'{symbol}: entries wait for sufficient listed-history warmup; no candles invented.')
     simulation_cfg = SimpleNamespace(**cfg.model_dump(), start=start, end=end)
+    if cfg.pattern == 'ipo':
+        verified = sum(bars[0].get('listing_metadata', {}).get('ipo_verified') is True for bars in datasets.values())
+        log(f'IPO listing evidence: {verified}/{len(datasets)} symbols; missing evidence blocks new IPO entries.')
+    quality = data_quality.audit(datasets, start=start, end=end, after=last)
+    data_quality.require_no_anomalies(quality)
     log(f'Processing {start} through {end}; {portfolio["status"]} paper portfolio, next-open fills with costs.')
     result = backtest.simulate(datasets, simulation_cfg, state=ledger, liquidate=False,
-                               allow_entries=portfolio['status'] == 'active')
+                               allow_entries=portfolio['status'] == 'active', entry_warmup=backtest.required_warmup(cfg))
     new_ledger = result['state']
     new_orders = new_ledger['orders'][len(ledger.get('orders', [])):]
     for order in new_orders:
         order.update(portfolio_id=portfolio['id'], mode='paper', job_id=job_id)
-    portfolio.update(ledger=new_ledger, metrics=result['metrics'], updated_at=store.now())
-    portfolio['fingerprints'] = {symbol: digest(bars, new_ledger['last_session']) for symbol, bars in datasets.items()}
+    portfolio.update(ledger=new_ledger, metrics=result['metrics'], updated_at=store.now(), data_quality=quality)
+    # Fingerprints remain on source history, not the derived listing-filtered view.
+    portfolio['fingerprints'] = {item['symbol']: digest(store.read('bars/' + item['isin'])['bars'], new_ledger['last_session'])
+                                 for item in instruments}
     sessions = len(new_ledger['curve']) - len(ledger.get('curve', []))
     portfolio['cycles'].append({'job_id': job_id, 'at': store.now(), 'start': start, 'end': end,
                                 'sessions': sessions, 'config': cfg.model_dump(mode='json'),
                                 'order_count': len(new_orders), 'status': portfolio['status']})
+    portfolio['cycles'][-1].update(history_evidence=histories, provenance=provenance.capture())
     # Commit cash, positions, orders, trades and checkpoint together; retries are idempotent.
     store.write(KEY, portfolio)
     log(f'Committed {sessions} sessions, {len(new_orders)} simulated fills, {len(new_ledger["positions"])} open positions.')

@@ -1,4 +1,5 @@
 """Pure daily-bar pattern predicates. They do not size or execute trades."""
+from datetime import date
 
 
 def _trend_and_liquidity(bars, i, cfg):
@@ -72,7 +73,13 @@ def multiyear(bars, i, cfg):
 
 
 def ipo(bars, i, cfg):
-    """Banana's young-listing first-base screen, using the available symbol history."""
+    """Young-listing base; sourced listing age is required, first-base identity is not proven."""
+    metadata = bars[0].get('listing_metadata', {}) if bars else {}
+    if metadata.get('verified') is not True or not metadata.get('source') or metadata.get('ipo_verified') is not True:
+        return False
+    age = (date.fromisoformat(bars[i]['date']) - date.fromisoformat(metadata.get('ipo_date', metadata['listing_date']))).days
+    if not 0 <= age <= getattr(cfg, 'ipo_max_age_days', 730):
+        return False
     if i < max(cfg.base_days, cfg.sma_days, 50) or not _trend_and_liquidity(bars, i, cfg):
         return False
     prior = bars[i - cfg.base_days:i]

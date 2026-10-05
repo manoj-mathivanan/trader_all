@@ -42,6 +42,8 @@ class TradingConfig(BaseModel):
     winner_exit: Literal["trail_50d", "trail_30w", "take_25"] = Field("trail_50d", title="Winner exit")
     skip_weak_markets: bool = Field(False, title="Skip weak markets")
     market_breadth_pct: float = Field(40, ge=0, le=100, title="Minimum market breadth (%)")
+    market_min_coverage_pct: float = Field(80, gt=0, le=100, title="Minimum breadth history coverage (%)")
+    ipo_max_age_days: int = Field(730, ge=1, le=3653, title="Maximum IPO age (calendar days)")
     breakeven_r: float = Field(1, ge=0.1, le=10, title="Breakeven trigger (R)")
     trail_pct: float = Field(8, gt=0, le=50, title="Trail below best close (%)")
     max_positions: int = Field(5, ge=1, le=50, title="Maximum open positions")

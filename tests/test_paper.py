@@ -146,11 +146,80 @@ class PortfolioTests(unittest.TestCase):
             self.cycle()
         self.assertEqual(store.read(paper.KEY), saved)
 
+    def test_new_price_discontinuity_halts_without_ledger_change(self):
+        self.cycle()
+        saved = store.read(paper.KEY)
+        self.bars.append(candle('2026-01-03', 50, 50))
+        self.save_bars()
+        with patch.object(paper, 'local_now', return_value=datetime(2026, 1, 3, 17, tzinfo=paper.IST)):
+            with self.assertRaisesRegex(ValueError, 'Price discontinuity needs review'):
+                paper.cycle(lambda _: None, 'gap-cycle', ingest=False)
+        self.assertEqual(store.read(paper.KEY), saved)
+
+    def test_verified_raw_split_rebases_holding_without_rewriting_buy_or_duplicate_action(self):
+        self.cycle()
+        saved = store.read(paper.KEY)
+        before = saved['ledger']['positions']['TEST']
+        original_order = saved['ledger']['orders'][0]
+        self.bars.append(candle('2026-01-03', 50, 49))
+        self.save_bars()
+        store.write('metadata/corporate_actions', {'TEST00000001': [{
+            'id': 'unit-split', 'kind': 'split', 'ex_date': '2026-01-03', 'share_factor': 2,
+            'price_basis': 'raw', 'volume_basis': 'raw', 'verified': True,
+            'source': 'unit-test issuer', 'basis_source': 'unit-test exchange comparison'}]})
+        with patch.object(paper, 'local_now', return_value=datetime(2026, 1, 3, 17, tzinfo=paper.IST)):
+            paper.cycle(lambda _: None, 'split-cycle', ingest=False)
+            after = store.read(paper.KEY)
+            self.assertEqual(paper.cycle(lambda _: None, 'repeat', ingest=False)['sessions'], 0)
+        p = after['ledger']['positions']['TEST']
+        self.assertEqual(p['quantity'], before['quantity'] * 2)
+        self.assertEqual(p['entry_cost'], before['entry_cost'])
+        self.assertEqual(after['ledger']['orders'][0], original_order)
+        self.assertEqual(len(after['ledger']['corporate_actions']), 1)
+        self.assertEqual(store.read(paper.KEY), after)
+
+    def test_young_unheld_symbol_waits_for_warmup_without_blocking_other_positions(self):
+        portfolio = store.read(paper.KEY)
+        portfolio['universe_snapshot']['instruments'].append({'symbol':'YOUNG','isin':'YOUNG0000001'})
+        store.write(paper.KEY,portfolio)
+        store.write('bars/YOUNG0000001', {'bars':[candle('2026-01-01'),candle('2026-01-02')],
+                                         'requested_end':'2026-01-04'})
+        self.cycle()
+        positions = store.read(paper.KEY)['ledger']['positions']
+        self.assertIn('TEST',positions)
+        self.assertNotIn('YOUNG',positions)
+
     def test_partial_ingestion_does_not_commit(self):
         with patch.object(upstox, 'ingest', side_effect=ValueError('Partial ingestion')):
             with self.assertRaisesRegex(ValueError, 'Partial ingestion'):
                 paper.cycle(lambda _: None, 'failed')
         self.assertEqual(store.read(paper.KEY), self.portfolio)
+
+    def test_cycle_continues_beyond_research_history_limit_without_reset(self):
+        self.cycle()
+        saved = store.read(paper.KEY)
+        saved['history_start'] = '2015-09-01'
+        store.write(paper.KEY, saved)
+        # The same interval remains invalid for user-entered research settings.
+        with self.assertRaises(ValidationError):
+            Settings(start=saved['history_start'], end='2026-01-02')
+        with patch.object(paper, 'local_now', return_value=datetime(2026, 1, 2, 17, tzinfo=paper.IST)), \
+             patch.object(upstox, 'ingest') as ingest:
+            result = paper.cycle(lambda _: None, 'long-history')
+        requested = ingest.call_args.args[0]
+        self.assertEqual(requested.start, date(2015, 9, 1))
+        self.assertEqual(requested.end, date(2026, 1, 2))
+        self.assertEqual(ingest.call_args.kwargs['universe'], saved['universe_snapshot'])
+        self.assertFalse(ingest.call_args.kwargs['extend_history'])
+        self.assertEqual(result['sessions'], 0)
+        self.assertEqual(store.read(paper.KEY), saved)
+
+    def test_paper_ingestion_range_still_validates_dates_and_universe(self):
+        for start, end in [('2026-01-02', '2026-01-02'), ('2026-01-03', '2026-01-02')]:
+            with self.assertRaises(ValidationError):
+                paper.PaperIngestionRange(universe='nifty50', start=start, end=end)
+        with self.assertRaises(ValidationError):
+            paper.PaperIngestionRange(universe='unknown', start='2015-01-01', end='2026-01-02')
 
     def test_creation_and_update_guards(self):
         with self.assertRaisesRegex(ValueError, 'already has'):

@@ -1,0 +1,53 @@
+{
+  "version": 1,
+  "listings": {
+    "INE961O01016": {
+      "symbol": "RAINBOW",
+      "listing_date": "2022-05-10",
+      "verified": true,
+      "source": "https://www.rainbowhospitals.in/investor-relations/assets/pdf/1__Rainbow%20AR%202021-22_Color.pdf",
+      "evidence": "Listing ceremony caption, annual report 2021-22, page 49.",
+      "ipo_verified": true,
+      "ipo_date": "2022-05-10",
+      "ipo_source": "https://www.rainbowhospitals.in/investor-relations/assets/pdf/1__Rainbow%20AR%202021-22_Color.pdf"
+    },
+    "INE138Y01010": {
+      "symbol": "KFINTECH",
+      "listing_date": "2022-12-29",
+      "verified": true,
+      "source": "https://nsearchives.nseindia.com/corporate/KFINTECHNSE_06082025004838_Intimation.pdf",
+      "evidence": "Issuer filing states NSE and BSE listing effective 29 December 2022.",
+      "ipo_verified": true,
+      "ipo_date": "2022-12-29",
+      "ipo_source": "https://nsearchives.nseindia.com/corporate/KFINTECHNSE_06082025004838_Intimation.pdf"
+    },
+    "INE481N01025": {
+      "symbol": "HOMEFIRST",
+      "listing_date": "2021-02-03",
+      "verified": true,
+      "source": "https://www.bseindia.com/xml-data/corpfiling/Attachhis/fd6616ef-11e0-4619-a443-3edc7d5c0fc5.pdf",
+      "evidence": "Issuer filing states listing on NSE and BSE on 3 February 2021.",
+      "ipo_verified": true,
+      "ipo_date": "2021-02-03",
+      "ipo_source": "https://www.bseindia.com/xml-data/corpfiling/Attachhis/fd6616ef-11e0-4619-a443-3edc7d5c0fc5.pdf"
+    },
+    "INE732I01010": {
+      "symbol": "ANGELONE",
+      "listing_date": "2020-10-05",
+      "verified": true,
+      "source": "https://w3assets.angelone.in/wp-content/uploads/pdfs/Placement-Document.pdf",
+      "evidence": "Issuer placement document states NSE and BSE listing since 5 October 2020. Match by symbol if split changed ISIN.",
+      "ipo_verified": true,
+      "ipo_date": "2020-10-05",
+      "ipo_source": "https://w3assets.angelone.in/wp-content/uploads/pdfs/Placement-Document.pdf"
+    }
+  },
+  "quarantine": {
+    "INE959A01019": {
+      "symbol": "PRIVISCL",
+      "verified": true,
+      "source": "https://privi.com/Downloads/Annual-Reports/Privi-Speciality-Chemicals-Limited-AR-2020-21/192/",
+      "reason": "Cache contains penny-price history before a 351233% gap. Issuer documents a 2020 merger/demerger and name change; continuity remains unresolved. Exclude entire instrument pending reconstruction; do not infer a listing date or split factor."
+    }
+  }
+}

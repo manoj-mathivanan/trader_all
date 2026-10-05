@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const listeners = {};
 const context = vm.createContext({
-  document: {addEventListener: (event, handler) => {listeners[event] = handler;}},
+  document: {querySelector: selector => selector==='#modal'?{open:true}:null, addEventListener: (event, handler) => {listeners[event] = handler;}},
   FormData: class {
     constructor(form) {this.form = form;}
     get(key) {return this.form.elements[key]?.value ?? null;}
@@ -20,8 +20,9 @@ vm.runInContext(`
   for(const k of ['capital','risk_pct','stop_pct','breakeven_r','trail_pct','max_positions','max_hold_days','slippage_bps','buy_cost_bps','sell_cost_bps'])properties[k]={type:'number',default:10};
   for(const k of ['skip_weak_markets','acknowledge_limitations'])properties[k]={type:'boolean'};
   for(const k of ['require_long_trend','require_rising_long_trend']){properties[k]={type:'boolean',default:false};state.screens[0][k]=false;}
-  properties.market_breadth_pct={type:'number',default:40};properties.minimum_warmup_sessions={type:'integer',default:50};
+  properties.market_breadth_pct={type:'number',default:40};properties.market_min_coverage_pct={type:'number',default:80};properties.minimum_warmup_sessions={type:'integer',default:50};
   state.backtest_schema={properties};
+  properties.start.format='date';properties.end.format='date';
   const form={id:'backtest-form',elements:Object.fromEntries(Object.keys(properties).concat('screen').map(k=>[k,{value:'original',type:properties[k]?.type==='boolean'?'checkbox':'text',checked:false}]))};
   modal=(_title,body)=>{globalThis.body=body;};
   api=async path=>{globalThis.windowPath=path;return {start:'2020-01-01',end:'2025-12-31',history_start:'2019-01-01',history_end:'2025-12-31',ready_symbols:50,total_symbols:50};};
@@ -64,6 +65,12 @@ function changeScreen(value) {
   assert.match(context.body, /name="vcp_volume_multiple"[^>]*value="0.9"/);
   assert.match(context.body, /value="builtin:vcp" selected/);
   assert.match(context.body, /type="hidden" name="pattern" value="vcp"/);
+  for(const key of ['start','end'])assert.match(context.body,new RegExp(`name="${key}"[^>]*min="2019-01-01"[^>]*max="2025-12-31"`));
+  for(const dates of [{start:'2018-12-31',end:'2025-12-31'},{start:'2020-01-01',end:'2026-01-01'},{start:'2026-01-01',end:'2026-01-02'},{start:'2020-01-01',end:'2018-12-31'},{start:'2021-01-01',end:'2020-01-01'}]){
+    assert.throws(()=>vm.runInContext(`validateBacktestDates(${JSON.stringify(dates)},{history_start:'2019-01-01',end:'2025-12-31'})`,context));
+  }
+  assert.doesNotThrow(()=>vm.runInContext("validateBacktestDates({start:'2019-01-01',end:'2025-12-31'},{history_start:'2019-01-01',end:'2025-12-31'})",context));
+  assert.match(vm.runInContext("field('start',state.backtest_schema,'',backtestDateBounds({}))",context),/disabled/);
   assert.doesNotMatch(context.body, /<select name="pattern"/);
   await vm.runInContext("newBacktest({screen:'custom_test'})", context);
   assert.match(context.body, /value="custom_test" selected/);
@@ -74,5 +81,28 @@ function changeScreen(value) {
   await vm.runInContext("newBacktest({pattern:'vcp',base_days:25,volume_multiple:1.5,vcp_volume_multiple:.8})", context);
   assert.match(context.body, /name="base_days"[^>]*value="25"/);
   assert.match(context.body, /name="vcp_volume_multiple"[^>]*value="0.8"/);
-  console.log('Screen dropdown, form initialization, submitted filters and clone preservation passed.');
+  // The dialog appears before the slow date request resolves, and closing it cancels rendering.
+  vm.runInContext(`api=()=>new Promise(resolve=>{globalThis.resolveDates=resolve;});globalThis.modalOpen=true;document.querySelector=selector=>selector==='#modal'?{open:modalOpen}:null;`,context);
+  const opening=vm.runInContext('newBacktest()',context);
+  assert.match(context.body,/Checking downloaded history/);
+  vm.runInContext('modalOpen=false',context);
+  context.resolveDates({start:'2020-01-01',end:'2025-12-31'});
+  await opening;
+  assert.match(context.body,/Checking downloaded history/);
+  // An active job gets an explanation and polling can re-enable the existing form.
+  vm.runInContext(`
+    globalThis.submit={disabled:false};globalThis.availability={textContent:'',hidden:false};
+    globalThis.runtimeForm={dataset:{},querySelector:()=>submit};
+    document.querySelector=selector=>selector==='#backtest-form'?runtimeForm:selector==='#backtest-availability'?availability:null;
+    backtestWindow={start:'2020-01-01',missing_symbols:[]};state.jobs=[{type:'Backtest',status:'running'}];
+    updateBacktestAvailability();
+  `,context);
+  assert.equal(context.submit.disabled,true);
+  assert.match(context.availability.textContent,/Backtest is running/);
+  vm.runInContext('state.jobs=[];updateBacktestAvailability()',context);
+  assert.equal(context.submit.disabled,false);
+  vm.runInContext("backtestWindow.missing_symbols=['IDEA'];updateBacktestAvailability()",context);
+  assert.equal(context.submit.disabled,true);
+  assert.match(context.availability.textContent,/IDEA/);
+  console.log('Screen presets, immediate dialog, cancellation, job completion and missing-data explanations passed.');
 })().catch(error => {console.error(error);process.exitCode=1;});

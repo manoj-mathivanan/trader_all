@@ -5,7 +5,7 @@ from copy import deepcopy
 from types import SimpleNamespace
 from core.execution.paper import PaperBrokerAdapter
 from core.risk.position_sizer import percent_risk_size
-from core.research import store
+from core.research import store, data_quality, market_history, provenance, corporate_actions
 from strategies.swing_patterns.patterns.signals import matches
 
 
@@ -28,7 +28,7 @@ def required_warmup(cfg):
     return max(cfg.base_days, cfg.sma_days, 50, extra)
 
 
-def simulate(datasets, cfg, *, state=None, liquidate=True, allow_entries=True):
+def simulate(datasets, cfg, *, state=None, liquidate=True, allow_entries=True, entry_warmup=0):
     """One daily engine for research and durable paper sessions.
 
     State is copied: a failed cycle never mutates the last committed ledger.
@@ -51,6 +51,15 @@ def simulate(datasets, cfg, *, state=None, liquidate=True, allow_entries=True):
     total_fees, total_slippage, skipped = (state.get(k, 0) for k in ('total_fees', 'total_slippage', 'skipped'))
 
     market_cache = {}
+    context_cache = {}
+    action_log = state.get('corporate_actions', [])
+    applied = {x['id'] for x in action_log}
+
+    def context(symbol, day):
+        key = (symbol, day)
+        if key not in context_cache:
+            context_cache[key] = corporate_actions.adjusted_bars(datasets[symbol], day)
+        return context_cache[key]
     rs_enabled = getattr(cfg, 'min_rs_rating', 0) > 0 or getattr(cfg, 'candidate_rank', 'alphabetical') == 'rs_126'
     date_indices = {s: {b['date']: i for i, b in enumerate(bars)} for s, bars in datasets.items()} if cfg.skip_weak_markets or rs_enabled else {}
     rs_cache = {}
@@ -59,6 +68,7 @@ def simulate(datasets, cfg, *, state=None, liquidate=True, allow_entries=True):
         if day not in rs_cache:
             returns = {}
             for symbol, bars in datasets.items():
+                bars = context(symbol, day)
                 idx = date_indices[symbol].get(day)
                 if idx is not None and idx >= 126:
                     returns[symbol] = bars[idx]['close'] / bars[idx - 126]['close'] - 1
@@ -74,13 +84,16 @@ def simulate(datasets, cfg, *, state=None, liquidate=True, allow_entries=True):
             return market_cache[day]
         eligible = above = 0
         for symbol, bars in datasets.items():
+            bars = context(symbol, day)
             session = date_indices[symbol].get(day)
-            if session is None or session < 200:
+            if session is None or session < 199:
                 continue
             eligible += 1
             average = sum(row['close'] for row in bars[session - 199:session + 1]) / 200
             above += bars[session]['close'] > average
-        market_cache[day] = eligible == 0 or above / eligible >= getattr(cfg, 'market_breadth_pct', 40) / 100
+        coverage = eligible / len(datasets) * 100 if datasets else 0
+        market_cache[day] = (eligible > 0 and coverage >= getattr(cfg, 'market_min_coverage_pct', 80)
+                             and above / eligible >= getattr(cfg, 'market_breadth_pct', 40) / 100)
         return market_cache[day]
 
     def moving_average(bars, idx, length):
@@ -111,12 +124,26 @@ def simulate(datasets, cfg, *, state=None, liquidate=True, allow_entries=True):
                        'quantity': p['quantity'], 'price': fill, 'fees': fee, 'status': 'FILLED', 'reason': reason})
         pnl = fill * p['quantity'] - fee - p['entry_cost']
         trades.append({'symbol': symbol, 'entry_date': p['entry_date'], 'exit_date': day,
-                       'entry': p['entry'], 'exit': fill, 'quantity': p['quantity'],
+                       'entry': p.get('entry_fill', p['entry']), 'exit': fill,
+                       'quantity': p.get('entry_quantity', p['quantity']), 'exit_quantity': p['quantity'],
                        'pnl': pnl, 'r': pnl / p['initial_risk'], 'reason': reason,
                        'fees': p['entry_fee'] + fee})
 
     for day in sorted(events):
+        context_cache.clear()
         session = events[day]
+        # Rebase eligible holdings before checking their stop against the ex-date
+        # open. Original fills and cash remain untouched. Replay is idempotent.
+        for symbol in list(positions):
+            for action in corporate_actions.actions(datasets[symbol]):
+                action_id = symbol + ':' + action['id']
+                if (action_id in applied or action['price_basis'] != 'raw'
+                        or not positions[symbol]['entry_date'] < action['ex_date'] <= day):
+                    continue
+                positions[symbol], marks[symbol] = corporate_actions.rebase_position(positions[symbol], marks[symbol], action)
+                action_log.append({'id': action_id, 'symbol': symbol, 'date': action['ex_date'],
+                                   'kind': action['kind'], 'share_factor': action['share_factor'], 'source': action['source']})
+                applied.add(action_id)
         exited = set()
         entered_today = set()
         # Open-time exits precede entries; intraday proceeds cannot fund open-time buys.
@@ -142,7 +169,7 @@ def simulate(datasets, cfg, *, state=None, liquidate=True, allow_entries=True):
                 break
             i, b = session[symbol]
             signal_idx = i if cfg.entry_mode == 'close' and cfg.pattern != 'breakout' else i - 1
-            if symbol in positions or symbol in exited or (cfg.pattern == 'breakout' and i < 1) or signal_idx < 0 or not signal(datasets[symbol], signal_idx, cfg):
+            if symbol in positions or symbol in exited or (cfg.pattern == 'breakout' and i < 1) or signal_idx < entry_warmup or signal_idx < 0 or not signal(context(symbol, datasets[symbol][signal_idx]['date']), signal_idx, cfg):
                 continue
             signal_day = datasets[symbol][signal_idx]['date']
             if getattr(cfg, 'min_rs_rating', 0) > 0 and relative_strength(signal_day).get(symbol, (-1, 0))[0] < cfg.min_rs_rating:
@@ -157,7 +184,7 @@ def simulate(datasets, cfg, *, state=None, liquidate=True, allow_entries=True):
             if cfg.pattern != 'breakout' and cfg.entry_mode == 'close':
                 raw_fill = b['close']
             elif cfg.pattern != 'breakout' and cfg.entry_mode == 'pivot':
-                pivot = pivot_for(datasets[symbol], signal_idx, cfg)
+                pivot = pivot_for(context(symbol, day), signal_idx, cfg)
                 raw_fill = max(b['open'], pivot or b['open'])
                 if b['high'] < raw_fill:
                     skipped += 1
@@ -208,11 +235,11 @@ def simulate(datasets, cfg, *, state=None, liquidate=True, allow_entries=True):
                 if exit_cfg.pattern == 'breakout':
                     trailing = None
                 elif exit_cfg.winner_exit == 'trail_30w':
-                    trailing = moving_average(datasets[symbol], idx, 150)
+                    trailing = moving_average(context(symbol, day), idx, 150)
                 elif exit_cfg.winner_exit == 'take_25':
                     trailing = None
                 else:
-                    trailing = moving_average(datasets[symbol], idx, 50)
+                    trailing = moving_average(context(symbol, day), idx, 50)
                 if trailing is not None:
                     p['stop'] = max(p['stop'], breakeven, trailing)
                 elif exit_cfg.winner_exit == 'take_25' and b['close'] >= p['entry'] * 1.25:
@@ -229,8 +256,9 @@ def simulate(datasets, cfg, *, state=None, liquidate=True, allow_entries=True):
         max_dd = max(max_dd, (peak - equity) / peak * 100)
         curve.append({'date': day, 'equity': round(equity, 2), 'drawdown_pct': round((peak - equity) / peak * 100, 4)})
     wins, losses = [t for t in trades if t['pnl'] > 0], [t for t in trades if t['pnl'] < 0]
-    return {'trades': trades, 'curve': curve,
+    return {'trades': trades, 'curve': curve, 'corporate_actions': action_log,
         'state': {'cash': cash, 'positions': positions, 'marks': marks, 'trades': trades, 'curve': curve,
+                  'corporate_actions': action_log,
                   'orders': orders, 'last_session': curve[-1]['date'], 'peak': peak, 'max_dd': max_dd,
                   'total_fees': total_fees, 'total_slippage': total_slippage, 'skipped': skipped},
         'metrics': {
@@ -242,20 +270,47 @@ def simulate(datasets, cfg, *, state=None, liquidate=True, allow_entries=True):
         'modeled_fees': total_fees, 'modeled_slippage': total_slippage, 'skipped_entries': skipped}}
 
 
+_WINDOW_RECORDS = {}
+
+
 def available_window(settings, warmup=50):
-    """Suggest dates from actual sessions, including one signal session before entry."""
+    """Cache compact date metadata; never retain every symbol's OHLCV in memory."""
     universe = store.read('universes/' + settings.universe, {})
-    records = [store.read('bars/' + item['isin']) for item in universe.get('instruments', [])]
-    ready = [r['bars'] for r in records if r and len(r['bars']) > warmup + 2]
+    summaries, missing = [], []
+    for item in universe.get('instruments', []):
+        name = 'bars/' + item['isin']
+        path = store.DATA / (name + '.json')
+        try:
+            stat = path.stat()
+            signature = (stat.st_mtime_ns, stat.st_size)
+        except FileNotFoundError:
+            signature = None
+        cached = _WINDOW_RECORDS.get(str(path))
+        if cached and cached[0] == signature:
+            summary = cached[1]
+        else:
+            record = store.read(name)
+            bars = record.get('bars', []) if record else []
+            summary = {'dates': [b['date'] for b in bars],
+                       'requested_start': record.get('requested_start') if record else None,
+                       'requested_end': record.get('requested_end') if record else None}
+            if len(_WINDOW_RECORDS) >= 2048:
+                _WINDOW_RECORDS.clear()
+            _WINDOW_RECORDS[str(path)] = (signature, summary)
+        if not summary['dates']:
+            missing.append(item['symbol'])
+        summaries.append(summary)
+    ready = [r for r in summaries if len(r['dates']) > warmup + 2]
+    loaded = [r for r in summaries if r['dates']]
     result = {'start': None, 'end': None, 'warmup_sessions': warmup + 1,
-              'ready_symbols': len(ready), 'total_symbols': len(records),
-              'history_start': None, 'history_end': None}
-    loaded = [r['bars'] for r in records if r and r['bars']]
+              'ready_symbols': len(ready), 'total_symbols': len(summaries),
+              'history_start': None, 'history_end': None, 'missing_symbols': missing}
     if loaded:
-        result.update(history_start=min(b[0]['date'] for b in loaded),
-                      history_end=max(b[-1]['date'] for b in loaded))
-    if ready and all(records):
-        start, end = max(b[warmup + 1]['date'] for b in ready), min(b[-1]['date'] for b in ready)
+        result.update(history_start=min(r['dates'][0] for r in loaded),
+                      history_end=max(r['dates'][-1] for r in loaded))
+    if ready and not missing:
+        start = max(max(r['dates'][warmup + 1], r['requested_start'] or r['dates'][0]) for r in ready)
+        end = min(min(r['dates'][-1], r['requested_end'] or r['dates'][-1]) for r in loaded)
         if start < end:
             result.update(start=start, end=end)
     return result
@@ -266,6 +321,7 @@ def prepare(settings, cfg):
     if not universe:
         raise ValueError('Refresh the universe and fetch daily data first.')
     datasets, manifest, excluded = {}, [], []
+    reference = market_history.evidence(snapshot=True)
     warmup = max(required_warmup(cfg), getattr(cfg, 'minimum_warmup_sessions', 50))
     for item in universe['instruments']:
         record = store.read('bars/' + item['isin'])
@@ -274,8 +330,14 @@ def prepare(settings, cfg):
         if record['requested_end'] < str(cfg.end) or record['requested_start'] > str(cfg.start):
             raise ValueError(f"Your test requests {cfg.start} to {cfg.end}, but {item['symbol']} was downloaded for "
                              f"{record['requested_start']} to {record['requested_end']}. "
-                             "Use the available dates shown above, or fetch earlier history in Market data.")
-        bars = record['bars']
+                             "Use the available dates shown above, or extend the requested history in Settings and fetch missing data in Market data.")
+        bars, history = market_history.prepare(item, record, reference=reference)
+        if not bars:
+            excluded.append(item['symbol'])
+            continue
+        if cfg.pattern == 'ipo' and (not bars or bars[0].get('listing_metadata', {}).get('ipo_verified') is not True):
+            excluded.append(item['symbol'])
+            continue
         if len([b for b in bars if b['date'] < str(cfg.start)]) < warmup:
             excluded.append(item['symbol'])
             continue
@@ -283,11 +345,13 @@ def prepare(settings, cfg):
         manifest.append({'symbol': item['symbol'], 'source': record['source'], 'bars': len(bars),
                          'first': bars[0]['date'], 'last': bars[-1]['date'],
                          'verified_repairs': record.get('verified_repairs', []),
+                         'history_evidence': history,
                          'sha256': hashlib.sha256(json.dumps(bars, sort_keys=True).encode()).hexdigest()})
     if not datasets:
         window = available_window(settings, warmup)
         suggestion = f" Try {window['start']} to {window['end']}." if window['start'] else ' Fetch more history first.'
-        raise ValueError(f'No symbols have the required {warmup} sessions before the test start.' + suggestion)
+        reason = ' IPO screening also requires verified listing dates in metadata/listings.json.' if cfg.pattern == 'ipo' else ''
+        raise ValueError(f'No eligible symbols have the required {warmup} sessions before the test start.' + reason + suggestion)
     if not any(str(cfg.start) <= b['date'] <= str(cfg.end) for bars in datasets.values() for b in bars):
         raise ValueError('No actual candles fall within this test interval. Choose dates within downloaded history.')
     return universe, datasets, manifest, excluded
@@ -295,11 +359,16 @@ def prepare(settings, cfg):
 
 def run(settings, cfg, log, job_id):
     universe, datasets, manifest, excluded = prepare(settings, cfg)
-    log(f'Testing {len(datasets)} symbols with one cash balance; {len(excluded)} excluded for insufficient warmup.')
+    quality = data_quality.audit(datasets, end=cfg.end)
+    data_quality.require_no_anomalies(quality)
+    log(f'Testing {len(datasets)} symbols with one cash balance; {len(excluded)} excluded for warmup or IPO listing evidence.')
     result = simulate(datasets, cfg)
     result.pop('state')  # Persistent execution state belongs to paper portfolios only.
     result.update(id=job_id, created_at=store.now(), config=cfg.model_dump(mode='json'),
                   universe=settings.universe, universe_snapshot=universe, manifest=manifest, excluded=excluded,
+                  data_quality=quality,
+                  provenance=provenance.capture(),
+                  history_reference=market_history.evidence(snapshot=True),
                   warnings=['Current constituents only: survivorship bias remains. This is not an edge-validation result.',
                             'Corporate-action adjustments, exchange-calendar gaps and delisted history are not verified.',
                             'The Banana screen set and risk/exits are implemented, but historical membership and RS ranking still need a verified market-wide dataset.',

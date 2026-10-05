@@ -2,6 +2,6 @@
   "name": "trader-control-panel",
   "private": true,
   "version": "0.1.0",
-  "scripts": { "vendor": "node scripts/vendor.mjs", "check": "node --check dashboard/web/app.js", "test": "node tests/test_screen_presets.cjs" },
+  "scripts": { "vendor": "node scripts/vendor.mjs", "check": "node --check dashboard/web/app.js", "test": "node tests/test_screen_presets.cjs && node tests/test_trade_chart.cjs" },
   "dependencies": { "klinecharts": "9.8.12" }
 }
