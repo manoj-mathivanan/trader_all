@@ -422,6 +422,7 @@ JSON writes flush before atomic replacement. This protects individual files from
 | Loaded symbols excluded from backtest | Recent listings/shorter history can lack configured warmup; inspect report exclusions. |
 | Paper view absent / API 403 locally | Expected local research mode. Production explicitly enables paper. |
 | Automatic cycle failed | Fix the logged token/provider/data problem and retry manually. The scheduler attempts once per weekday. |
+| Paper is enabled but shows no trades | Check the newest **Paper daily cycle** job and Last processed session. A successful cycle can have zero orders or zero new sessions. Older failed jobs remain visible; failed research history fetches/backtests do not mean the paper portfolio is disabled. Do not reset the portfolio to make trades appear. |
 | Paper cycle rejects a history range over ten years | Fixed on 5 October 2026: internal paper ingestion preserves the original history start and allows the end to advance past the research form's ten-year limit. Deploy the `PaperIngestionRange` fix and retry; do not recreate the portfolio or shorten its history. |
 | Paper cycle fails while fetching older MAZDOCK history | Fixed on 5 October 2026: paper refresh appends later sessions without re-fetching before loaded history. Upstox's older zero-price rows remain invalid and are never accepted. Research backfills still validate and may fail on those provider rows. |
 | Processed-history change blocks paper | Investigate changed past candles; do not bypass fingerprints or rewrite accounting. |

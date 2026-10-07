@@ -506,6 +506,33 @@ Production verification on 5 October 2026: retry job `d76d640d8b2b` completed su
 Portfolio identity, creation date, history start, configuration and ledger matched the pre-fix
 backup. Both fixes are in shared source and were applied to production; no portfolio reset or
 local data transfer was used. Regression checks passed in the production image and local suite.
+Follow-up verification on 7 October 2026: the portfolio was already active with weekday automatic
+cycles enabled at 16:15 IST. Scheduled job `243bf09cc307` processed session 2026-10-06 successfully
+with zero orders. Manual verification job `43967c3da8be` also succeeded, returning sessions=0
+because that checkpoint was current for the common available history. Identity, capital,
+configuration and creation/history dates were preserved. The newer failed jobs were a research
+history fetch (invalid older MAZDOCK candles) and a backtest (historical price discontinuities),
+not new paper-cycle failures. No additional trading-code change or account reset was needed.
+The UI must distinguish job types: zero fills/new sessions on a successful cycle do not mean
+paper is disabled, and historical failed jobs remain visible after later successful retries.
+Read-only signal diagnosis on 7 October 2026 confirmed why this portfolio had no fills: its saved
+`skip_weak_markets=true` and `market_breadth_pct=60` blocked four otherwise qualifying Blue sky
+signals. These are observed portfolio choices, not new schema defaults. For entry session
+2026-10-05 (signal day 2026-10-01), STLTECH and WELSPUNLIV qualified; 187/489 breadth-eligible
+members were above their 200-session SMA (38.24%). For entry session 2026-10-06 (signal day
+2026-10-05), LGEINDIA and STLTECH qualified; 192/489 were above (39.26%). Both were below the
+configured 60% threshold. History coverage was 489/499=98%, exceeding the configured 80% coverage
+minimum, so coverage was not the blocker. Ledger skipped=4 and fills=0 matched this gate. The
+diagnosis evaluated the deployed predicates with cycle configuration snapshots, listing-filtered
+history and action-adjusted signal-date context; it did not edit settings or replay paper orders.
+Owner setting change on 8 October 2026: set the production Swing paper portfolio's
+`skip_weak_markets=false` through its validated PUT configuration API. The portfolio remains
+active with automatic weekday cycles enabled. Preserve the stored breadth/coverage thresholds,
+all other configuration, allocated capital, ledger, fingerprints and cycle history. With the
+gate disabled those breadth thresholds do not block new entries; ordinary screen, sizing,
+position-limit and execution checks still apply. The change is recorded in config_history and
+applies to subsequent unprocessed sessions, without replaying earlier skipped entries. No cycle
+was submitted merely by saving this setting, and global schema defaults were not changed.
 Require requested coverage for every symbol; hash prior processed OHLCV through last_session
 and halt if any processed data changed. Use minimum observed final date across symbols as end,
 max(start_session,last_session+one calendar day) as start; require per-symbol warmup. No new
