@@ -250,3 +250,16 @@ coverage separately. Counts include instruments without cached prices and do
 not imply eligible warmup, acceptable adjustment history or a qualifying signal.
 Unknown original IPO dates remain blocked. Exchange-master imports preserve the
 independent sourced IPO fields. Remaining data reconstruction work is unchanged.
+
+## Exact-row correction — 7 October 2026
+
+COHANCE's ten March 2020 BE candles were left raw while its adjacent EQ history
+was bonus adjusted. NSE daily files and issuer bonus evidence now support a
+derived-only correction with exact-row matching and immutable source checksums.
+The 60% false discontinuity becomes the actual 20% market opening decline.
+Original caches, reports and ledgers remain unchanged. Paper history using a newly
+changed repair policy must be reconciled before resuming. The unresolved gap
+count falls from ten to nine; this does not certify the rest of the history.
+
+See [CORPORATE_ACTION_REVIEW.md](CORPORATE_ACTION_REVIEW.md) for sources, scope,
+validation and remaining entitlement/accounting work for all ten investigations.

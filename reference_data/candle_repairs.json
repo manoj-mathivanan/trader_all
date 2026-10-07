@@ -1,0 +1,353 @@
+{
+  "INE03QK01018": {
+    "symbol": "COHANCE",
+    "rows": [
+      {
+        "id": "cohance-be-bonus-basis-2020-03-09",
+        "date": "2020-03-09",
+        "expected": {
+          "open": 321.0,
+          "high": 337.05,
+          "low": 321.0,
+          "close": 337.05,
+          "volume": 416907.0
+        },
+        "replacement": {
+          "open": 160.5,
+          "high": 168.525,
+          "low": 160.5,
+          "close": 168.525,
+          "volume": 833814.0
+        },
+        "source": "https://nsearchives.nseindia.com/content/historical/EQUITIES/2020/MAR/cm09MAR2020bhav.csv.zip",
+        "source_sha256": "07504b63776b00436073bed52dd24b23f01e94f40eecc3eb16f005bb143f5a07",
+        "basis_source": "https://nsearchives.nseindia.com/corporate/SUVENPHAR_06082021185831_SUVENPHARAGMNoticeAR06082021.pdf",
+        "reason": "NSE BE candle was left raw while adjacent EQ history is already adjusted for the sourced 1:1 September 2020 bonus. Normalize this exact verified row to the existing factor-two EQ basis."
+      },
+      {
+        "id": "cohance-be-bonus-basis-2020-03-11",
+        "date": "2020-03-11",
+        "expected": {
+          "open": 353.9,
+          "high": 353.9,
+          "low": 320.2,
+          "close": 322.7,
+          "volume": 875368.0
+        },
+        "replacement": {
+          "open": 176.95,
+          "high": 176.95,
+          "low": 160.1,
+          "close": 161.35,
+          "volume": 1750736.0
+        },
+        "source": "https://nsearchives.nseindia.com/content/historical/EQUITIES/2020/MAR/cm11MAR2020bhav.csv.zip",
+        "source_sha256": "c9d21e4b5b3a6119678926fc5414bfa7d0dc1ffc45b22503dda4ca0ea3c3d240",
+        "basis_source": "https://nsearchives.nseindia.com/corporate/SUVENPHAR_06082021185831_SUVENPHARAGMNoticeAR06082021.pdf",
+        "reason": "NSE BE candle was left raw while adjacent EQ history is already adjusted for the sourced 1:1 September 2020 bonus. Normalize this exact verified row to the existing factor-two EQ basis."
+      },
+      {
+        "id": "cohance-be-bonus-basis-2020-03-12",
+        "date": "2020-03-12",
+        "expected": {
+          "open": 306.6,
+          "high": 306.6,
+          "low": 306.6,
+          "close": 306.6,
+          "volume": 38619.0
+        },
+        "replacement": {
+          "open": 153.3,
+          "high": 153.3,
+          "low": 153.3,
+          "close": 153.3,
+          "volume": 77238.0
+        },
+        "source": "https://nsearchives.nseindia.com/content/historical/EQUITIES/2020/MAR/cm12MAR2020bhav.csv.zip",
+        "source_sha256": "687009a396b10c004eed8adb22cff0dcbf060f5b2fe33d759cf5c3562f0da8bb",
+        "basis_source": "https://nsearchives.nseindia.com/corporate/SUVENPHAR_06082021185831_SUVENPHARAGMNoticeAR06082021.pdf",
+        "reason": "NSE BE candle was left raw while adjacent EQ history is already adjusted for the sourced 1:1 September 2020 bonus. Normalize this exact verified row to the existing factor-two EQ basis."
+      },
+      {
+        "id": "cohance-be-bonus-basis-2020-03-13",
+        "date": "2020-03-13",
+        "expected": {
+          "open": 291.3,
+          "high": 309.0,
+          "low": 291.3,
+          "close": 291.3,
+          "volume": 255444.0
+        },
+        "replacement": {
+          "open": 145.65,
+          "high": 154.5,
+          "low": 145.65,
+          "close": 145.65,
+          "volume": 510888.0
+        },
+        "source": "https://nsearchives.nseindia.com/content/historical/EQUITIES/2020/MAR/cm13MAR2020bhav.csv.zip",
+        "source_sha256": "efce5c59f75c63f5289df4d8b9465741a73cf2d2f72f37cccaead79e8fd9f4e8",
+        "basis_source": "https://nsearchives.nseindia.com/corporate/SUVENPHAR_06082021185831_SUVENPHARAGMNoticeAR06082021.pdf",
+        "reason": "NSE BE candle was left raw while adjacent EQ history is already adjusted for the sourced 1:1 September 2020 bonus. Normalize this exact verified row to the existing factor-two EQ basis."
+      },
+      {
+        "id": "cohance-be-bonus-basis-2020-03-16",
+        "date": "2020-03-16",
+        "expected": {
+          "open": 276.75,
+          "high": 276.75,
+          "low": 276.75,
+          "close": 276.75,
+          "volume": 20636.0
+        },
+        "replacement": {
+          "open": 138.375,
+          "high": 138.375,
+          "low": 138.375,
+          "close": 138.375,
+          "volume": 41272.0
+        },
+        "source": "https://nsearchives.nseindia.com/content/historical/EQUITIES/2020/MAR/cm16MAR2020bhav.csv.zip",
+        "source_sha256": "ce8935c3da0f3d65ff4cd014732a8e3b304c7d22720acf8a91eff6df7f5a0fbe",
+        "basis_source": "https://nsearchives.nseindia.com/corporate/SUVENPHAR_06082021185831_SUVENPHARAGMNoticeAR06082021.pdf",
+        "reason": "NSE BE candle was left raw while adjacent EQ history is already adjusted for the sourced 1:1 September 2020 bonus. Normalize this exact verified row to the existing factor-two EQ basis."
+      },
+      {
+        "id": "cohance-be-bonus-basis-2020-03-17",
+        "date": "2020-03-17",
+        "expected": {
+          "open": 262.95,
+          "high": 275.5,
+          "low": 262.95,
+          "close": 268.75,
+          "volume": 190063.0
+        },
+        "replacement": {
+          "open": 131.475,
+          "high": 137.75,
+          "low": 131.475,
+          "close": 134.375,
+          "volume": 380126.0
+        },
+        "source": "https://nsearchives.nseindia.com/content/historical/EQUITIES/2020/MAR/cm17MAR2020bhav.csv.zip",
+        "source_sha256": "ba49fac1039b3efb5694bcef34d2eb0c01ce705cc0486a3f11085bf128088701",
+        "basis_source": "https://nsearchives.nseindia.com/corporate/SUVENPHAR_06082021185831_SUVENPHARAGMNoticeAR06082021.pdf",
+        "reason": "NSE BE candle was left raw while adjacent EQ history is already adjusted for the sourced 1:1 September 2020 bonus. Normalize this exact verified row to the existing factor-two EQ basis."
+      },
+      {
+        "id": "cohance-be-bonus-basis-2020-03-18",
+        "date": "2020-03-18",
+        "expected": {
+          "open": 261.0,
+          "high": 265.0,
+          "low": 255.35,
+          "close": 255.35,
+          "volume": 195605.0
+        },
+        "replacement": {
+          "open": 130.5,
+          "high": 132.5,
+          "low": 127.675,
+          "close": 127.675,
+          "volume": 391210.0
+        },
+        "source": "https://nsearchives.nseindia.com/content/historical/EQUITIES/2020/MAR/cm18MAR2020bhav.csv.zip",
+        "source_sha256": "255cb08713c72a5ce05058d4dbe472794d0083272b0696450a25ed86f67dcfbd",
+        "basis_source": "https://nsearchives.nseindia.com/corporate/SUVENPHAR_06082021185831_SUVENPHARAGMNoticeAR06082021.pdf",
+        "reason": "NSE BE candle was left raw while adjacent EQ history is already adjusted for the sourced 1:1 September 2020 bonus. Normalize this exact verified row to the existing factor-two EQ basis."
+      },
+      {
+        "id": "cohance-be-bonus-basis-2020-03-19",
+        "date": "2020-03-19",
+        "expected": {
+          "open": 242.6,
+          "high": 242.6,
+          "low": 242.6,
+          "close": 242.6,
+          "volume": 45229.0
+        },
+        "replacement": {
+          "open": 121.3,
+          "high": 121.3,
+          "low": 121.3,
+          "close": 121.3,
+          "volume": 90458.0
+        },
+        "source": "https://nsearchives.nseindia.com/content/historical/EQUITIES/2020/MAR/cm19MAR2020bhav.csv.zip",
+        "source_sha256": "9c590311f613e0c1f33d07ab52a3ba4426bd867ac3a258f7dce38748d6db55b7",
+        "basis_source": "https://nsearchives.nseindia.com/corporate/SUVENPHAR_06082021185831_SUVENPHARAGMNoticeAR06082021.pdf",
+        "reason": "NSE BE candle was left raw while adjacent EQ history is already adjusted for the sourced 1:1 September 2020 bonus. Normalize this exact verified row to the existing factor-two EQ basis."
+      },
+      {
+        "id": "cohance-be-bonus-basis-2020-03-20",
+        "date": "2020-03-20",
+        "expected": {
+          "open": 230.5,
+          "high": 230.5,
+          "low": 230.5,
+          "close": 230.5,
+          "volume": 15582.0
+        },
+        "replacement": {
+          "open": 115.25,
+          "high": 115.25,
+          "low": 115.25,
+          "close": 115.25,
+          "volume": 31164.0
+        },
+        "source": "https://nsearchives.nseindia.com/content/historical/EQUITIES/2020/MAR/cm20MAR2020bhav.csv.zip",
+        "source_sha256": "a57e2f64fce2422720800b1c058c8c452df9b7e0870cdc91428472b39e899128",
+        "basis_source": "https://nsearchives.nseindia.com/corporate/SUVENPHAR_06082021185831_SUVENPHARAGMNoticeAR06082021.pdf",
+        "reason": "NSE BE candle was left raw while adjacent EQ history is already adjusted for the sourced 1:1 September 2020 bonus. Normalize this exact verified row to the existing factor-two EQ basis."
+      },
+      {
+        "id": "cohance-be-bonus-basis-2020-03-23",
+        "date": "2020-03-23",
+        "expected": {
+          "open": 219.0,
+          "high": 219.0,
+          "low": 219.0,
+          "close": 219.0,
+          "volume": 13957.0
+        },
+        "replacement": {
+          "open": 109.5,
+          "high": 109.5,
+          "low": 109.5,
+          "close": 109.5,
+          "volume": 27914.0
+        },
+        "source": "https://nsearchives.nseindia.com/content/historical/EQUITIES/2020/MAR/cm23MAR2020bhav.csv.zip",
+        "source_sha256": "2806459732d60d63adf7d3340307aa257d3677593dc5f27d118f5af89e1a7d32",
+        "basis_source": "https://nsearchives.nseindia.com/corporate/SUVENPHAR_06082021185831_SUVENPHARAGMNoticeAR06082021.pdf",
+        "reason": "NSE BE candle was left raw while adjacent EQ history is already adjusted for the sourced 1:1 September 2020 bonus. Normalize this exact verified row to the existing factor-two EQ basis."
+      }
+    ],
+    "basis_checks": [
+      {
+        "date": "2020-03-24",
+        "source": "https://nsearchives.nseindia.com/content/historical/EQUITIES/2020/MAR/cm24MAR2020bhav.csv.zip",
+        "source_sha256": "ff601937cd8a1163081edc57d11e400a851e6f837bb0c1a7f3e2c02728a64c65",
+        "factor": 2,
+        "exchange": {
+          "SYMBOL": "SUVENPHAR",
+          "SERIES": "EQ",
+          "OPEN": "175.2",
+          "HIGH": "216.4",
+          "LOW": "175.2",
+          "CLOSE": "207.1",
+          "LAST": "208.85",
+          "PREVCLOSE": "219",
+          "TOTTRDQTY": "297777",
+          "TOTTRDVAL": "56114281.75",
+          "TIMESTAMP": "24-MAR-2020",
+          "TOTALTRADES": "4671",
+          "ISIN": "INE03QK01018",
+          "": ""
+        },
+        "cached": [
+          87.6,
+          108.2,
+          87.6,
+          103.55,
+          595554.0
+        ],
+        "price_tolerance": 0.026,
+        "volume_tolerance": 0
+      },
+      {
+        "date": "2020-03-25",
+        "source": "https://nsearchives.nseindia.com/content/historical/EQUITIES/2020/MAR/cm25MAR2020bhav.csv.zip",
+        "source_sha256": "83227df529d7d7ff2c2ceab8a891ddc55e66ccab2fce2cdecd1ba80ad0add243",
+        "factor": 2,
+        "exchange": {
+          "SYMBOL": "SUVENPHAR",
+          "SERIES": "EQ",
+          "OPEN": "188.1",
+          "HIGH": "236.5",
+          "LOW": "188.1",
+          "CLOSE": "226.85",
+          "LAST": "225",
+          "PREVCLOSE": "207.1",
+          "TOTTRDQTY": "121520",
+          "TOTTRDVAL": "26187418.35",
+          "TIMESTAMP": "25-MAR-2020",
+          "TOTALTRADES": "6803",
+          "ISIN": "INE03QK01018",
+          "": ""
+        },
+        "cached": [
+          94.05,
+          118.25,
+          94.05,
+          113.4,
+          243040.0
+        ],
+        "price_tolerance": 0.026,
+        "volume_tolerance": 0
+      },
+      {
+        "date": "2020-09-24",
+        "source": "https://nsearchives.nseindia.com/content/historical/EQUITIES/2020/SEP/cm24SEP2020bhav.csv.zip",
+        "source_sha256": "6888cf10e6efe0a8288e178a8ebfca19e66edfb88ae408a82692bcfe59db14a7",
+        "factor": 2,
+        "exchange": {
+          "SYMBOL": "SUVENPHAR",
+          "SERIES": "EQ",
+          "OPEN": "716.25",
+          "HIGH": "758.1",
+          "LOW": "716.25",
+          "CLOSE": "738.7",
+          "LAST": "738.95",
+          "PREVCLOSE": "734.05",
+          "TOTTRDQTY": "303374",
+          "TOTTRDVAL": "224511110.8",
+          "TIMESTAMP": "24-SEP-2020",
+          "TOTALTRADES": "13302",
+          "ISIN": "INE03QK01018",
+          "": ""
+        },
+        "cached": [
+          358.1,
+          379.05,
+          358.1,
+          369.35,
+          606748.0
+        ],
+        "price_tolerance": 0.026,
+        "volume_tolerance": 0
+      },
+      {
+        "date": "2020-09-29",
+        "source": "https://nsearchives.nseindia.com/content/historical/EQUITIES/2020/SEP/cm29SEP2020bhav.csv.zip",
+        "source_sha256": "a1650cc9d10bd122839a533a81f8a0c24ed1d64b27754512b91212460387ed52",
+        "factor": 1,
+        "exchange": {
+          "SYMBOL": "SUVENPHAR",
+          "SERIES": "EQ",
+          "OPEN": "399.25",
+          "HIGH": "403.9",
+          "LOW": "381.95",
+          "CLOSE": "389.4",
+          "LAST": "389",
+          "PREVCLOSE": "399.25",
+          "TOTTRDQTY": "267650",
+          "TOTTRDVAL": "104732068.5",
+          "TIMESTAMP": "29-SEP-2020",
+          "TOTALTRADES": "7474",
+          "ISIN": "INE03QK01018",
+          "": ""
+        },
+        "cached": [
+          399.25,
+          403.9,
+          381.95,
+          389.4,
+          267650.0
+        ],
+        "price_tolerance": 0.026,
+        "volume_tolerance": 0
+      }
+    ]
+  }
+}

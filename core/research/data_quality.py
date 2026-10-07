@@ -49,7 +49,7 @@ def audit_cached_universe(settings):
             continue
         report['raw_findings'].extend(audit({item['symbol']: record['bars']})['findings'])
         bars, history = market_history.prepare(item, record, reference=reference, fingerprint=False)
-        if history.get('quarantine') or history.get('removed_prelisting_bars'):
+        if history.get('quarantine') or history.get('removed_prelisting_bars') or history.get('candle_repairs'):
             report['history_changes'].append({'symbol': item['symbol'], **history})
         report['findings'].extend(audit({item['symbol']: bars})['findings'])
         report['symbols_scanned'] += 1

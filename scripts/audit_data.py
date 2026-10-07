@@ -75,7 +75,7 @@ def audit_frozen_runs(root, replay_dir=None):
                 derived[symbol] = bars
                 continue
             prepared, details = market_history.prepare(item, {'bars': bars}, reference=reference, fingerprint=False)
-            if details.get('removed_prelisting_bars') or details.get('quarantine'):
+            if details.get('removed_prelisting_bars') or details.get('quarantine') or details.get('candle_repairs'):
                 changes.append({'symbol': symbol, **details})
             if prepared:
                 derived[symbol] = prepared

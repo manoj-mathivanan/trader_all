@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone, time, date
 from types import SimpleNamespace
 from pydantic import Field, model_validator
 from typing import Literal
-from core.research import store, backtest, upstox, data_quality, market_history, provenance
+from core.research import store, backtest, upstox, data_quality, market_history, provenance, candle_repairs
 from core.research.config import TradingConfig, Settings
 from core.portfolio import manager
 
@@ -61,6 +61,28 @@ def digest(bars, through):
     return hashlib.sha256(json.dumps(rows, sort_keys=True).encode()).hexdigest()
 
 
+def repair_context_start(portfolio, bars, cfg):
+    """Conservative earliest input used by any saved cycle, including exit context."""
+    cycles = portfolio.get('cycles', [])
+    if not cycles or any(not c.get('config') or not c.get('start') for c in cycles):
+        return None  # Legacy ledgers without context evidence require full reconciliation.
+    configs = [cfg.model_dump(), *[c['config'] for c in cycles]]
+    lookback = 0
+    for values in configs:
+        historic = SimpleNamespace(**{**cfg.model_dump(), **values})
+        length = backtest.required_warmup(historic)
+        if historic.pattern == 'blue_sky':
+            length = max(length, historic.blue_sky_lookback_days)
+        if historic.skip_weak_markets:
+            length = max(length, 200)
+        if historic.winner_exit == 'trail_30w':
+            length = max(length, 150)
+        lookback = max(lookback, length)
+    first = min(portfolio['start_session'], *[c['start'] for c in cycles])
+    index = next((i for i, b in enumerate(bars) if b['date'] >= first), 0)
+    return bars[max(0, index - lookback - 1)]['date'] if bars else None
+
+
 def cycle(log, job_id, *, ingest=True):
     portfolio = store.read(KEY)
     if not portfolio:
@@ -75,6 +97,8 @@ def cycle(log, job_id, *, ingest=True):
         upstox.ingest(settings, log, universe=portfolio['universe_snapshot'], extend_history=False)
     datasets = {}
     reference = market_history.evidence(snapshot=True)
+    reconciliation = store.read('metadata/paper_repair_reconciliations', {}).get(portfolio['id'], {})
+    repair_reconciled = candle_repairs.reconciliation_matches(reconciliation, portfolio, reference)
     histories = {}
     ledger = portfolio['ledger']
     last = ledger.get('last_session', '')
@@ -87,6 +111,10 @@ def cycle(log, job_id, *, ingest=True):
         if last and digest(bars, last) != portfolio['fingerprints'].get(item['symbol']):
             raise ValueError(f"Processed candles changed for {item['symbol']}. Paper cycle halted; investigate before resuming.")
         derived, history = market_history.prepare(item, record, reference=reference)
+        if last and not repair_reconciled:
+            prior = (portfolio.get('cycles') or [{}])[-1].get('history_evidence', {}).get(item['symbol'], {})
+            candle_repairs.reconcile(prior, history, last,
+                                     relevant_from=repair_context_start(portfolio, bars, cfg))
         if not derived:
             if item['symbol'] in ledger.get('positions', {}):
                 raise ValueError(f"Held instrument {item['symbol']} is quarantined. Paper cycle halted; ledger unchanged.")
