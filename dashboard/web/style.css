@@ -21,6 +21,8 @@
 .saved-screen:hover{background:var(--bg);color:var(--green)}
 .saved-screen span{color:var(--green);font-size:15px}
 .saved-screen strong{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#bearish-screens .saved-screen span{color:var(--red)}
+@media(max-width:720px){#bearish-screens{display:flex;overflow-x:auto}#bearish-screens .saved-screen{width:auto;flex-shrink:0}}
 @media(max-width:720px){.saved-eyebrow,#saved-screens{display:none}}
 .field-label{display:flex;align-items:center;gap:6px;min-height:18px}
 .trade-chart-summary{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:15px;margin-bottom:20px;padding:16px;background:var(--soft);border-radius:8px}

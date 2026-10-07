@@ -19,6 +19,7 @@ class TradeChartTests(unittest.TestCase):
             trades = [{'symbol': 'TEST', 'entry_date': bars[a]['date'],
                        'exit_date': bars[b]['date'], 'entry': 101, 'exit': 109,
                        'quantity': 2, 'pnl': 16, 'reason': 'Stop'} for a, b in [(65, 70), (90, 100)]]
+            trades.append(dict(trades[0], symbol='OTHER'))
             store.write('runs/123456abcdef', {'config': {'end': bars[105]['date']}, 'trades': trades})
             store.write('run_data/123456abcdef', {'TEST': bars})
             store.write('bars/TEST00000001', {'bars': [{'close': 999}]})
@@ -26,11 +27,15 @@ class TradeChartTests(unittest.TestCase):
             data = client.get('/api/runs/123456abcdef/trades/1/chart').json()
             self.assertEqual(data['trade'], trades[1])
             self.assertEqual(data['source'], 'frozen_backtest_snapshot')
-            self.assertEqual([{k:v for k,v in b.items() if k != 'chart_values'} for b in data['bars']], bars[30:106])
-            self.assertIn('sma_50', data['bars'][30]['chart_values'])
+            self.assertEqual([t['trade_index'] for t in data['trades']], [0, 1])
+            self.assertEqual([{k:v for k,v in b.items() if k != 'chart_values'} for b in data['bars']], bars[5:106])
+            earlier = client.get('/api/runs/123456abcdef/trades/0/chart').json()
+            self.assertEqual(earlier['trades'], data['trades'])
+            self.assertEqual([b['date'] for b in earlier['bars']], [b['date'] for b in data['bars']])
+            self.assertIn('sma_50', data['bars'][44]['chart_values'])
             self.assertEqual(data['explanation']['signal']['date'], bars[89]['date'])
             self.assertEqual(client.get('/api/runs/123456abcdef/trades/-1/chart').status_code, 404)
-            self.assertEqual(client.get('/api/runs/123456abcdef/trades/2/chart').status_code, 404)
+            self.assertEqual(client.get('/api/runs/123456abcdef/trades/3/chart').status_code, 404)
             self.assertEqual(client.get('/api/runs/invalid/trades/0/chart').status_code, 404)
 
     def test_missing_snapshot_never_falls_back(self):

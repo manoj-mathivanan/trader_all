@@ -7,6 +7,7 @@ from core.execution.paper import PaperBrokerAdapter
 from core.risk.position_sizer import percent_risk_size
 from core.research import store, data_quality, market_history, provenance, corporate_actions
 from strategies.swing_patterns.patterns.signals import matches
+from core.research import bearish
 
 
 def signal(bars, i, cfg):
@@ -14,6 +15,8 @@ def signal(bars, i, cfg):
 
 
 def required_warmup(cfg):
+    if cfg.pattern in dict(bearish.SCREENS):
+        return bearish.required_history(cfg) - 1
     extra = 220 if getattr(cfg, 'require_rising_long_trend', False) else 200 if getattr(cfg, 'require_long_trend', False) else 0
     if getattr(cfg, 'min_rs_rating', 0) > 0 or getattr(cfg, 'candidate_rank', 'alphabetical') == 'rs_126':
         extra = max(extra, 126)
@@ -33,6 +36,15 @@ def simulate(datasets, cfg, *, state=None, liquidate=True, allow_entries=True, e
 
     State is copied: a failed cycle never mutates the last committed ledger.
     """
+    if getattr(cfg, 'execution_horizon', 'swing') == 'intraday':
+        raise ValueError('Intraday backtests require five-minute inputs. Use the backtest job workflow.')
+    if cfg.pattern in dict(bearish.SCREENS):
+        if state is not None or not liquidate or not allow_entries:
+            raise ValueError('Bearish backtests support isolated research runs only, not paper portfolios.')
+        from core.research.short_backtest import simulate as simulate_short
+        if getattr(cfg, 'execution_horizon', 'swing') == 'intraday':
+            raise ValueError('Intraday shorts require five-minute inputs. Use the backtest job workflow to fetch and audit them.')
+        return simulate_short(datasets, cfg, entry_warmup=entry_warmup)
     state = deepcopy(state or {})
     events = {}
     for symbol, bars in datasets.items():
@@ -216,6 +228,7 @@ def simulate(datasets, cfg, *, state=None, liquidate=True, allow_entries=True, e
             idx, b = session[symbol]
             p = positions[symbol]
             exit_cfg = SimpleNamespace(**p.get('exit_config', {k: getattr(cfg, k) for k in ('pattern', 'stop_pct', 'breakeven_r', 'winner_exit', 'trail_pct', 'max_hold_days')}))
+            target_pct = {'take_8': 8, 'take_15': 15, 'take_25': 25}.get(exit_cfg.winner_exit)
             if symbol in entered_today and cfg.pattern != 'breakout' and cfg.entry_mode in ('close', 'pivot'):
                 # Daily OHLC cannot locate the low relative to an intraday pivot fill.
                 # Activate protection next session instead of retroactively stopping out.
@@ -236,14 +249,14 @@ def simulate(datasets, cfg, *, state=None, liquidate=True, allow_entries=True, e
                     trailing = None
                 elif exit_cfg.winner_exit == 'trail_30w':
                     trailing = moving_average(context(symbol, day), idx, 150)
-                elif exit_cfg.winner_exit == 'take_25':
+                elif target_pct is not None:
                     trailing = None
                 else:
                     trailing = moving_average(context(symbol, day), idx, 50)
                 if trailing is not None:
                     p['stop'] = max(p['stop'], breakeven, trailing)
-                elif exit_cfg.winner_exit == 'take_25' and b['close'] >= p['entry'] * 1.25:
-                    close(symbol, b['close'], day, 'Take profit +25%')
+                elif target_pct is not None and b['close'] >= p['entry'] * (1 + target_pct / 100):
+                    close(symbol, b['close'], day, f'Take profit +{target_pct}%')
                     continue
                 else:
                     p['stop'] = max(p['stop'], breakeven, p['best_close'] * (1 - exit_cfg.trail_pct / 100))
@@ -317,6 +330,23 @@ def available_window(settings, warmup=50):
 
 
 def prepare(settings, cfg):
+    if getattr(cfg, 'comparison_run_id', None):
+        reference_run = store.read('runs/' + cfg.comparison_run_id)
+        datasets = store.read('run_data/' + cfg.comparison_run_id, {})
+        if not reference_run or not datasets:
+            raise ValueError('The comparison run or its frozen input snapshot is unavailable.')
+        if settings.universe != reference_run['universe']:
+            raise ValueError('Select the comparison run\'s universe before using its frozen inputs.')
+        if str(cfg.start) < reference_run['config']['start'] or str(cfg.end) > reference_run['config']['end']:
+            raise ValueError('Comparison dates must stay within the reference run\'s saved test window.')
+        warmup = max(required_warmup(cfg), cfg.minimum_warmup_sessions)
+        eligible = {s: bars for s, bars in datasets.items() if sum(b['date'] < str(cfg.start) for b in bars) >= warmup}
+        if not eligible:
+            raise ValueError('Frozen inputs do not have enough warmup for this bearish screen.')
+        extra = sorted(set(datasets) - set(eligible))
+        return (reference_run['universe_snapshot'], eligible,
+                [m for m in reference_run['manifest'] if m['symbol'] in eligible],
+                sorted(set(reference_run.get('excluded', []) + extra)))
     universe = store.read('universes/' + settings.universe)
     if not universe:
         raise ValueError('Refresh the universe and fetch daily data first.')
@@ -350,7 +380,7 @@ def prepare(settings, cfg):
     if not datasets:
         window = available_window(settings, warmup)
         suggestion = f" Try {window['start']} to {window['end']}." if window['start'] else ' Fetch more history first.'
-        reason = ' IPO screening also requires verified listing dates in metadata/listings.json.' if cfg.pattern == 'ipo' else ''
+        reason = ' IPO screening also requires verified listing dates in metadata/listings.json.' if cfg.pattern in ('ipo', 'ipo_breakdown') else ''
         raise ValueError(f'No eligible symbols have the required {warmup} sessions before the test start.' + reason + suggestion)
     if not any(str(cfg.start) <= b['date'] <= str(cfg.end) for bars in datasets.values() for b in bars):
         raise ValueError('No actual candles fall within this test interval. Choose dates within downloaded history.')
@@ -362,7 +392,16 @@ def run(settings, cfg, log, job_id):
     quality = data_quality.audit(datasets, end=cfg.end)
     data_quality.require_no_anomalies(quality)
     log(f'Testing {len(datasets)} symbols with one cash balance; {len(excluded)} excluded for warmup or IPO listing evidence.')
-    result = simulate(datasets, cfg)
+    intraday = getattr(cfg, 'execution_horizon', 'swing') == 'intraday'
+    minute_inputs = None
+    if intraday:
+        from core.research import intraday_short, intraday_long, intraday_data
+        engine = intraday_short if cfg.pattern in dict(bearish.SCREENS) else intraday_long
+        plan = engine.entry_plan(datasets, cfg)
+        minute_inputs = intraday_data.load_sessions(plan, universe, log)
+        result = engine.simulate(datasets, cfg, minute_inputs, plan=plan)
+    else:
+        result = simulate(datasets, cfg)
     result.pop('state')  # Persistent execution state belongs to paper portfolios only.
     result.update(id=job_id, created_at=store.now(), config=cfg.model_dump(mode='json'),
                   universe=settings.universe, universe_snapshot=universe, manifest=manifest, excluded=excluded,
@@ -375,6 +414,31 @@ def run(settings, cfg, log, job_id):
                             'All-in fee rates are your assumptions, not a verified historical tax/brokerage schedule.',
                             'No volume participation cap, circuit-limit or non-fill simulation; stops may fill worse in real markets.',
                             'This run is exploratory/in-sample. Reserve a later untouched period before judging the strategy.'])
+    if cfg.pattern in dict(bearish.SCREENS):
+        result['warnings'].extend([
+            'Hypothetical short research: stock-borrow availability, recalls, dividends owed, margin calls and circuit-limit fills are not modeled.',
+            '100% entry-notional collateral is reserved; short-sale proceeds cannot fund additional entries. This is a research capital constraint, not a broker margin schedule.',
+            f'Annual borrow cost assumption: {cfg.borrow_cost_bps_year:g} bps, accrued on calendar days at the last marked short liability. Zero excludes borrow costs.',
+            'Weak-market breadth and RS are computed on the prepared eligible universe; exclusions can change the cross-section.'
+        ])
+    if getattr(cfg, 'comparison_run_id', None):
+        reference_run = store.read('runs/' + cfg.comparison_run_id)
+        result['history_reference'] = reference_run.get('history_reference', {})
+        result['comparison'] = {'run_id': cfg.comparison_run_id, 'source': 'frozen_backtest_snapshot',
+                                'name': reference_run['config']['name']}
+        result['warnings'].append('Uses the reference run\'s frozen data, membership and history evidence; the full snapshot is audited again before simulation.')
+    if intraday:
+        result['warnings'] = [w for w in result['warnings'] if not any(term in w for term in ('stock-borrow availability', 'Annual borrow cost', 'short research:', 'collateral is reserved'))]
+        result['warnings'].extend([
+            f'Intraday only: prior completed daily signals; {"sell" if cfg.pattern in dict(bearish.SCREENS) else "buy"} at 09:15 IST; compulsory exit at {cfg.square_off_time} IST using that five-minute bar\'s open. No overnight positions.',
+            'Five-minute high/low do not reveal tick order. If both stop and target are hit in one bar, stop is assumed first. Stop/target exit times identify the candle, not the exact fill instant.',
+            'Broker-specific intraday eligibility, margin/leverage, auto-square-off charges, circuit limits and actual order fills are not verified. Capital is constrained to 1x entry notional.',
+            'Drawdown uses session-end equity and does not measure the worst intraday drawdown. Fixed percentage targets and stops are inherited research assumptions.'
+        ])
+        result['intraday_source'] = {'provider': 'Upstox historical V3', 'interval_minutes': 5,
+                                     'stock_sessions': sum(len(days) for days in minute_inputs.values()),
+                                     'square_off_time': cfg.square_off_time, 'timezone': 'Asia/Kolkata'}
+        store.write('run_intraday/' + job_id, minute_inputs)
     store.write('run_data/' + job_id, datasets)
     store.write('runs/' + job_id, result)
     with store.LOCK:

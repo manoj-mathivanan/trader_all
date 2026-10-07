@@ -248,7 +248,10 @@ presentation. Adjust & rerun preserves every explicit historical parameter and c
 to `<original> · revised`; acknowledgment resets. Export preserves the saved report as JSON.
 
 Clicking a stock name in a backtest trade row opens a **Trade chart** dialog for that specific
-ledger row. Sorting must retain the original trade-array index, including repeated trades in
+stock within the selected backtest, with every recorded buy/sell shown as numbered pairs.
+The clicked row selects the indicator/signal explanation; a stock-only ledger below the chart
+lets the user select another trade for its setup. Short entries/covers retain their proper sides.
+Sorting must retain the original trade-array index, including repeated trades in
 the same stock. The dialog displays daily candles plus volume, locked green BUY and red SELL
 markers at the saved entry/exit dates and execution prices (including modeled slippage), and
 buy/sell date/price, quantity, net P&L and exit reason summaries. A **Back to report** button
@@ -257,8 +260,8 @@ returns to the same run and preserves the current sort. The chart is 450 px tall
 
 `GET /api/runs/{run_id}/trades/{trade_index}/chart` validates the saved run and zero-based
 ledger index, reads candles exclusively from `run_data/{run_id}.json`, and returns run_id,
-trade_index, symbol, trade, bars and source=`frozen_backtest_snapshot`. Include up to 60 sessions
-before entry and 20 after exit, retaining every holding-session candle and clipping to the
+trade_index, symbol, selected trade, all same-symbol trades (with original trade_index), bars and source=`frozen_backtest_snapshot`. Include up to 60 sessions
+before the earliest stock entry and 20 after its latest exit, retaining every intervening candle and clipping to the
 backtest end. Reject missing snapshots or entry/exit dates with an actionable 404; never fall
 back to today's cache. Bind markers to the matching saved candle timestamps and trade prices.
 Fit the initial viewport to the trade/context interval, allow normal pan/zoom and resize, and
@@ -506,6 +509,33 @@ Production verification on 5 October 2026: retry job `d76d640d8b2b` completed su
 Portfolio identity, creation date, history start, configuration and ledger matched the pre-fix
 backup. Both fixes are in shared source and were applied to production; no portfolio reset or
 local data transfer was used. Regression checks passed in the production image and local suite.
+Follow-up verification on 7 October 2026: the portfolio was already active with weekday automatic
+cycles enabled at 16:15 IST. Scheduled job `243bf09cc307` processed session 2026-10-06 successfully
+with zero orders. Manual verification job `43967c3da8be` also succeeded, returning sessions=0
+because that checkpoint was current for the common available history. Identity, capital,
+configuration and creation/history dates were preserved. The newer failed jobs were a research
+history fetch (invalid older MAZDOCK candles) and a backtest (historical price discontinuities),
+not new paper-cycle failures. No additional trading-code change or account reset was needed.
+The UI must distinguish job types: zero fills/new sessions on a successful cycle do not mean
+paper is disabled, and historical failed jobs remain visible after later successful retries.
+Read-only signal diagnosis on 7 October 2026 confirmed why this portfolio had no fills: its saved
+`skip_weak_markets=true` and `market_breadth_pct=60` blocked four otherwise qualifying Blue sky
+signals. These are observed portfolio choices, not new schema defaults. For entry session
+2026-10-05 (signal day 2026-10-01), STLTECH and WELSPUNLIV qualified; 187/489 breadth-eligible
+members were above their 200-session SMA (38.24%). For entry session 2026-10-06 (signal day
+2026-10-05), LGEINDIA and STLTECH qualified; 192/489 were above (39.26%). Both were below the
+configured 60% threshold. History coverage was 489/499=98%, exceeding the configured 80% coverage
+minimum, so coverage was not the blocker. Ledger skipped=4 and fills=0 matched this gate. The
+diagnosis evaluated the deployed predicates with cycle configuration snapshots, listing-filtered
+history and action-adjusted signal-date context; it did not edit settings or replay paper orders.
+Owner setting change on 8 October 2026: set the production Swing paper portfolio's
+`skip_weak_markets=false` through its validated PUT configuration API. The portfolio remains
+active with automatic weekday cycles enabled. Preserve the stored breadth/coverage thresholds,
+all other configuration, allocated capital, ledger, fingerprints and cycle history. With the
+gate disabled those breadth thresholds do not block new entries; ordinary screen, sizing,
+position-limit and execution checks still apply. The change is recorded in config_history and
+applies to subsequent unprocessed sessions, without replaying earlier skipped entries. No cycle
+was submitted merely by saving this setting, and global schema defaults were not changed.
 Require requested coverage for every symbol; hash prior processed OHLCV through last_session
 and halt if any processed data changed. Use minimum observed final date across symbols as end,
 max(start_session,last_session+one calendar day) as start; require per-symbol warmup. No new

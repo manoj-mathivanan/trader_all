@@ -6,6 +6,9 @@ from core.research.config import TradingConfig
 
 
 def explain_trade(result, datasets, trade, bars, first, last):
+    if trade.get('direction') == 'short':
+        from core.research.short_trade_chart import explain_trade as explain_short
+        return explain_short(result, datasets, trade, bars, first, last)
     cfg = SimpleNamespace(**{**TradingConfig().model_dump(), **result['config']})
     signal_idx = first if cfg.entry_mode == 'close' and cfg.pattern != 'breakout' else first - 1
     signal = bars[signal_idx] if signal_idx >= 0 else None
@@ -44,8 +47,9 @@ def explain_trade(result, datasets, trade, bars, first, last):
               ('activation', 'Breakeven activation', trade['entry'] * (1 + cfg.stop_pct / 100 * cfg.breakeven_r), '#ac8c49')]
     if cfg.entry_mode == 'pivot' and pivot is not None and pivot != ceiling:
         levels.append(('pivot', 'Entry pivot', pivot, '#5965a9'))
-    if cfg.winner_exit == 'take_25':
-        levels.append(('target', '+25% profit target', trade['entry'] * 1.25, '#4b9b64'))
+    if cfg.winner_exit in ('take_8', 'take_15', 'take_25'):
+        target_pct = {'take_8': 8, 'take_15': 15, 'take_25': 25}[cfg.winner_exit]
+        levels.append(('target', f'+{target_pct}% profit target', trade['entry'] * (1 + target_pct / 100), '#4b9b64'))
     for key, label, value, color in levels:
         if value is None:
             continue
@@ -134,7 +138,7 @@ def explain_trade(result, datasets, trade, bars, first, last):
         best = max(best, bar['close'])
         if bar['close'] >= trade['entry'] * (1 + cfg.stop_pct / 100 * cfg.breakeven_r):
             length = 150 if cfg.winner_exit == 'trail_30w' else 50
-            trail = averages[length][i] if cfg.pattern != 'breakout' and cfg.winner_exit != 'take_25' else None
+            trail = averages[length][i] if cfg.pattern != 'breakout' and cfg.winner_exit not in ('take_8', 'take_15', 'take_25') else None
             stop = max(stop, breakeven, trail if trail is not None else best * (1 - cfg.trail_pct / 100))
     series.append({'id': 'protective_stop', 'label': 'Reconstructed active stop', 'color': '#d34848'})
     notices = ['Indicators use the full saved history before the chart is cropped. Signal checks use only the completed signal session.',

@@ -24,6 +24,22 @@ def candle(day, opening, high, low, close):
 
 
 class ExecutionTests(unittest.TestCase):
+    def test_15_percent_target_uses_close_and_preserves_25_percent_mode(self):
+        bars = [candle('2020-01-01', 100, 101, 99, 100),
+                candle('2020-01-02', 100, 116, 99, 100),
+                candle('2020-01-03', 110, 116, 109, 114),
+                candle('2020-01-04', 114, 117, 113, 116),
+                candle('2020-01-05', 116, 121, 115, 120)]
+        for mode, day, reason in [('take_8', '2020-01-03', 'Take profit +8%'),
+                                  ('take_15', '2020-01-04', 'Take profit +15%'),
+                                  ('take_25', '2020-01-05', 'End of available test data')]:
+            with self.subTest(mode=mode), patch('core.research.backtest.signal', side_effect=lambda rows, i, cfg: i == 0):
+                cfg = config(pattern='blue_sky', entry_mode='next_open', winner_exit=mode, slippage_bps=0)
+                result = simulate({'TEST': bars}, cfg)
+                self.assertEqual(len(result['trades']), 1)
+                self.assertEqual(result['trades'][0]['exit_date'], day)
+                self.assertEqual(result['trades'][0]['reason'], reason)
+
     def test_next_open_and_gap_stop_with_costs(self):
         bars = [candle('2020-01-01', 100, 105, 99, 104),
                 candle('2020-01-02', 110, 112, 109, 111),

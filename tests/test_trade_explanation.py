@@ -47,3 +47,19 @@ class TradeExplanationTests(unittest.TestCase):
         x=explain_trade(result,{'TEST':rows},trade,rows,220,230)
         self.assertEqual(x['signal']['date'],rows[220]['date'])
         self.assertEqual(x['bars'][220]['chart_values']['target'],140)
+
+    def test_15_percent_target_and_fixed_target_stop_trace(self):
+        rows,trade,result=self.fixture()
+        result['config'].update(winner_exit='take_15')
+        x=explain_trade(result,{'TEST':rows},trade,rows,221,230)
+        self.assertAlmostEqual(x['bars'][221]['chart_values']['target'],112*1.15)
+        self.assertEqual(next(s['label'] for s in x['series'] if s['id']=='target'), '+15% profit target')
+        self.assertAlmostEqual(x['bars'][223]['chart_values']['protective_stop'],125*.92)
+
+    def test_8_percent_target_label_and_price(self):
+        rows,trade,result=self.fixture()
+        result['config'].update(winner_exit='take_8',stop_pct=4)
+        x=explain_trade(result,{'TEST':rows},trade,rows,221,230)
+        self.assertAlmostEqual(x['bars'][221]['chart_values']['target'],112*1.08)
+        self.assertAlmostEqual(x['bars'][221]['chart_values']['initial_stop'],112*.96)
+        self.assertEqual(next(s['label'] for s in x['series'] if s['id']=='target'), '+8% profit target')

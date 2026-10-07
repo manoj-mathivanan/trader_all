@@ -16,6 +16,7 @@ This guide covers the published MVP. Enhancements being developed in other threa
 | Overview | Universe, downloaded coverage, run counts, latest report and recent jobs. |
 | Market data | Official Nifty 50 / Nifty 500 membership, ISIN matching, incremental daily-history downloads, company search, candlestick and volume charts. |
 | Screens | VCP, Blue sky, Multi-year breakouts and IPO base; configurable filters and named saved screens. |
+| Bearish screens | Completed-session downside watchlists: VCP breakdown, 52-week low, Multi-year breakdown and IPO base breakdown. |
 | Backtests | Dates, capital, signal priority, entry mode, risk sizing, position limits, stops, breakeven, winner exits, holding limits and explicit costs. |
 | Reports | Equity curve, return, drawdown, win rate, expectancy R, profit factor, fees, slippage, warnings, exclusions and sortable trade ledger. |
 | Comparisons | Adjust & rerun creates a separate experiment; JSON exports preserve reports. |
@@ -173,6 +174,20 @@ Requested coverage and observed candles are different: a recently listed company
 The safe-window suggestion accounts for downloaded history and warmup. Adjust & rerun preserves the historical experiment's explicit dates instead of silently changing them. A requested end beyond coverage needs a date correction or an extended history setting followed by a fetch.
 
 The Run button has a nearby explanation when disabled: an active job, missing symbols, insufficient history or a pending submission. Errors are visible on mobile too. Only one job runs at a time.
+
+### Scan bearish setups
+
+Long backtests, including Blue sky, also support **Intraday** in the holding-period selector. Use **Next session open**: the prior completed daily setup qualifies the stock, entry buys at 09:15 IST, and the position sells by the configured cutoff (15:00 IST by default). These runs use frozen five-minute candles, a 1x capital cap, stop-first handling for ambiguous candles, and session-end drawdown. Swing remains the default for long backtests. Changing the holding period does not automatically tune the daily strategy's stop or target.
+
+Choose a screen under **Bearish screens** in the sidebar, adjust its filters, then select **Scan bearish setups**. VCP breakdown looks for shrinking price ranges and volume followed by a close below support; 52-week low tests a close below the prior 252-session low; Multi-year breakdown tests a year-plus base floor; IPO base breakdown requires verified IPO metadata and a break below a young listing's base.
+
+Defaults require price below a falling 200-session SMA, a 126-session relative-strength percentile no greater than 30, and weak market breadth (no more than 40% above their 200-session SMA, with at least 80% universe history coverage). Volume and liquidity filters remain editable. All values are research assumptions, not validated profitability claims.
+
+Scans use the newest downloaded completed session before today in IST, report that date, and exclude symbols with stale or insufficient history. Existing listing and corporate-action handling applies. Results show broken support, close, volume ratio, relative strength and links to charts.
+
+Select **Backtest this screen** to run historical short research. New dialogs default to **Intraday**: qualify on the previous completed daily session, sell at the next regular-session 09:15 open, and buy back by **15:00 IST** (editable in five-minute steps). Historical Upstox five-minute candles are cached separately and frozen with each report. The cutoff cover uses its bar open; no future candle high, low or close affects that fill. Stops and targets execute intraday; ambiguous stop/target candles assume stop first. Missing regular-session or cutoff candles halt the run rather than substituting daily prices. Positions never carry overnight. Fees apply to their actual buy/sell side; capital remains constrained to 1x entry notional. Drawdown is measured at session end. Broker-specific eligibility, actual fills, margins and auto-square-off charges remain unverified. Paper trading remains long-only.
+
+Older **Swing** research reports remain available with their original holding rules. Swing mode assumes overnight borrowing and can model annual borrow costs; it is not suitable for a broker without stock borrowing. Use a saved `comparison_run_id` to reuse audited frozen daily inputs when comparing strategies. The reference snapshot is audited again; current provider data never replaces it silently.
 
 ### Review and compare
 
@@ -422,6 +437,7 @@ JSON writes flush before atomic replacement. This protects individual files from
 | Loaded symbols excluded from backtest | Recent listings/shorter history can lack configured warmup; inspect report exclusions. |
 | Paper view absent / API 403 locally | Expected local research mode. Production explicitly enables paper. |
 | Automatic cycle failed | Fix the logged token/provider/data problem and retry manually. The scheduler attempts once per weekday. |
+| Paper is enabled but shows no trades | Check the newest **Paper daily cycle** job and Last processed session. A successful cycle can have zero orders or zero new sessions. Older failed jobs remain visible; failed research history fetches/backtests do not mean the paper portfolio is disabled. Do not reset the portfolio to make trades appear. |
 | Paper cycle rejects a history range over ten years | Fixed on 5 October 2026: internal paper ingestion preserves the original history start and allows the end to advance past the research form's ten-year limit. Deploy the `PaperIngestionRange` fix and retry; do not recreate the portfolio or shorten its history. |
 | Paper cycle fails while fetching older MAZDOCK history | Fixed on 5 October 2026: paper refresh appends later sessions without re-fetching before loaded history. Upstox's older zero-price rows remain invalid and are never accepted. Research backfills still validate and may fail on those provider rows. |
 | Processed-history change blocks paper | Investigate changed past candles; do not bypass fingerprints or rewrite accounting. |

@@ -12,7 +12,8 @@ from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, SecretStr
 from core.research import store, jobs, upstox, backtest, data_quality
-from core.research.config import Settings, BacktestConfig
+from core.research.config import Settings, BacktestConfig, BearishBacktestConfig
+from core.research import bearish
 from core.portfolio import paper, scheduler, manager as portfolios, registry as paper_plugins
 from core.strategies.registry import all_strategies
 from strategies.swing_patterns.patterns.registry import definitions as pattern_definitions
@@ -119,6 +120,8 @@ def bootstrap():
         instruments.append({**item, **summary})
     return {'settings': cfg.model_dump(mode='json'), 'settings_schema': Settings.model_json_schema(),
             'backtest_schema': BacktestConfig.model_json_schema(), 'patterns': pattern_definitions(),
+            'bearish_schema': bearish.BearishConfig.model_json_schema(), 'bearish_screens': bearish.SCREENS,
+            'bearish_backtest_schema': BearishBacktestConfig.model_json_schema(),
             'environment': ENVIRONMENT, 'paper_enabled': PAPER_ENABLED,
             'paper_schema': paper.PaperConfig.model_json_schema(), 'paper_portfolio': store.read(paper.KEY) if PAPER_ENABLED else None,
             'paper_portfolios': {s['id']: portfolios.get(s['id']) for s in all_strategies()} if PAPER_ENABLED else {},
@@ -136,6 +139,11 @@ def save_settings(value: Settings):
         raise ValueError('Wait for the active job before changing the data settings.')
     store.write('settings', value.model_dump(mode='json'))
     return {'saved': True}
+
+
+@app.post('/api/bearish/scan')
+def scan_bearish(value: bearish.BearishConfig):
+    return bearish.scan(settings(), value)
 
 
 class TokenInput(BaseModel):
@@ -203,7 +211,7 @@ def ingest_job():
 
 
 @app.post('/api/jobs/backtest')
-def backtest_job(value: BacktestConfig):
+def backtest_job(value: BacktestConfig | BearishBacktestConfig):
     cfg = settings()
     backtest.prepare(cfg, value)  # Return actionable validation before creating a job.
     return jobs.submit('Backtest', lambda log, job_id: backtest.run(cfg, value, log, job_id), value.model_dump(mode='json'))
@@ -322,18 +330,46 @@ def trade_chart(run_id: str, trade_index: int):
     if trade_index < 0 or trade_index >= len(trades):
         raise HTTPException(404, 'Trade not found in this backtest.')
     trade = trades[trade_index]
+    stock_trades = [dict(t, trade_index=i) for i, t in enumerate(trades)
+                    if t['symbol'] == trade['symbol']]
     datasets = store.read('run_data/' + run_id, {})
     bars = [b for b in datasets.get(trade['symbol'], [])
             if b['date'] <= result['config']['end']]
     dates = {b['date']: i for i, b in enumerate(bars)}
-    if trade['entry_date'] not in dates or trade['exit_date'] not in dates:
+    if any(t['entry_date'] not in dates or t['exit_date'] not in dates for t in stock_trades):
         raise HTTPException(404, 'The saved candles for this trade are unavailable. No current-data substitute was used.')
     first, last = dates[trade['entry_date']], dates[trade['exit_date']]
     from core.research.trade_chart import explain_trade
     explanation = explain_trade(result, datasets, trade, bars, first, last)
+    if trade.get('execution_horizon') == 'intraday':
+        minute_inputs = store.read('run_intraday/' + run_id, {})
+        minutes = minute_inputs.get(trade['symbol'], {}).get(trade['entry_date'], [])
+        if not minutes:
+            raise HTTPException(404, 'Frozen five-minute candles are unavailable; daily candles cannot substitute.')
+        allowed = {'trigger','initial_stop','activation','target','protective_stop'}
+        explanation['series'] = [s for s in explanation['series'] if s['id'] in allowed]
+        for series in explanation['series']:
+            if series['id'] == 'protective_stop':
+                series['label'] = 'Recorded active stop'
+        explanation['notices'] = [n for n in explanation['notices'] if 'reconstructed stop' not in n.lower() and 'active stop is reconstructed' not in n.lower()]
+        levels = explanation.pop('bars')[first]['chart_values']
+        trace = {x['timestamp']:x['stop'] for x in trade.get('stop_trace', [])}
+        enriched = []
+        for b in minutes:
+            values = {k:v for k,v in levels.items() if k in allowed and k!='protective_stop'} if trade['entry_timestamp']<=b['timestamp']<=trade['exit_timestamp'] else {}
+            if b['timestamp'] in trace:
+                values['protective_stop'] = trace[b['timestamp']]
+            enriched.append(dict(b, chart_values=values))
+        explanation['notices'].append('Five-minute chart. Signal checks use the previous completed daily session; stop/target fills identify a candle interval. The cutoff exit uses its bar open.')
+        return {'run_id': run_id, 'trade_index': trade_index, 'symbol': trade['symbol'], 'trade': trade,
+                'bars': enriched, 'explanation': explanation, 'interval_minutes': 5,
+                'source': 'frozen_intraday_snapshot'}
     enriched = explanation.pop('bars')
+    earliest = min(dates[t['entry_date']] for t in stock_trades)
+    latest = max(dates[t['exit_date']] for t in stock_trades)
     return {'run_id': run_id, 'trade_index': trade_index, 'symbol': trade['symbol'],
-            'trade': trade, 'bars': enriched[max(0, first - 60):last + 21],
+            'trade': trade, 'trades': stock_trades,
+            'bars': enriched[max(0, earliest - 60):latest + 21],
             'explanation': explanation,
             'source': 'frozen_backtest_snapshot'}
 

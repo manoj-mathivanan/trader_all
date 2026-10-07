@@ -31,3 +31,15 @@ assert.equal(figures[0].styles().color,'#5879c6');
 const signal=context.marker.createPointFigures({coordinates:[{x:100,y:200}],bounding:{width:500},overlay:{extendData:{side:'signal',label:'SIGNAL'}}});
 assert.equal(signal[2].attrs.text,'SIGNAL');
 assert.equal(signal[2].attrs.y,152);
+
+const allMarkers=vm.runInContext("stockTradeMarkers({trades:[{entry_date:'2020-01-01',exit_date:'2020-01-02',entry:100,exit:90},{direction:'short',entry_date:'2020-02-01',exit_date:'2020-02-02',entry:90,exit:80}]})",context);
+assert.equal(allMarkers.length,4);
+assert.deepEqual(Array.from(allMarkers,m=>m.side),['buy','sell','sell','buy']);
+assert.match(allMarkers[0].label,/BUY #1/);
+assert.match(allMarkers[1].label,/SELL #1/);
+assert.match(allMarkers[2].label,/SHORT #2/);
+assert.match(allMarkers[3].label,/COVER #2/);
+const stockList=vm.runInContext("stockTradeList({symbol:'TEST',run_id:'run',trade_index:5,trades:[{trade_index:2,pnl:1},{trade_index:5,pnl:2}]})",context);
+assert.match(stockList,/data-trade="2"/);
+assert.match(stockList,/data-trade="5" aria-current="true"/);
+console.log('All stock fills receive matching trade numbers, including short and cover fills.');

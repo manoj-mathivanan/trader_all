@@ -22,6 +22,8 @@ vm.runInContext(`
   for(const k of ['require_long_trend','require_rising_long_trend']){properties[k]={type:'boolean',default:false};state.screens[0][k]=false;}
   properties.market_breadth_pct={type:'number',default:40};properties.market_min_coverage_pct={type:'number',default:80};properties.minimum_warmup_sessions={type:'integer',default:50};
   state.backtest_schema={properties};
+  properties.execution_horizon={type:'string',default:'swing',enum:['swing','intraday']};
+  properties.square_off_time={type:'string',default:'15:00'};
   properties.start.format='date';properties.end.format='date';
   const form={id:'backtest-form',elements:Object.fromEntries(Object.keys(properties).concat('screen').map(k=>[k,{value:'original',type:properties[k]?.type==='boolean'?'checkbox':'text',checked:false}]))};
   modal=(_title,body)=>{globalThis.body=body;};
@@ -58,6 +60,27 @@ function changeScreen(value) {
   form.elements.require_long_trend.checked=true;
   changeScreen('builtin:vcp');
   assert.equal(form.elements.require_long_trend.checked,false);
+
+  // Bearish research has a distinct schema and preserves portfolio assumptions.
+  vm.runInContext(`
+    state.bearish_screens=[['new_lows','52-week low'],['vcp_breakdown','VCP breakdown']];
+    state.bearish_schema={properties:{pattern:{type:'string',default:'new_lows'},require_falling_long_trend:{type:'boolean',default:true},require_weak_market:{type:'boolean',default:true},max_rs_rating:{type:'number',default:30},low_lookback_days:{type:'integer',default:252},max_market_breadth_pct:{type:'number',default:40},market_min_coverage_pct:{type:'number',default:80}}};
+    state.bearish_backtest_schema={...state.backtest_schema,properties:{...state.backtest_schema.properties,...state.bearish_schema.properties,borrow_cost_bps_year:{type:'number',default:0},execution_horizon:{type:'string',default:'swing',enum:['swing','intraday']},square_off_time:{type:'string',default:'15:00'}}};
+    for(const [k,v] of Object.entries(state.bearish_schema.properties))if(!form.elements[k])form.elements[k]={value:'',type:v.type==='boolean'?'checkbox':'text',checked:false};
+  `,context);
+  changeScreen('bearish:new_lows');
+  assert.equal(form.elements.pattern.value,'new_lows');
+  assert.equal(form.elements.require_falling_long_trend.checked,true);
+  assert.equal(form.elements.max_rs_rating.value,30);
+  assert.equal(form.elements.capital.value,'original');
+  await vm.runInContext("newBacktest({pattern:'new_lows',capital:100000,risk_pct:1,stop_pct:8,winner_exit:'take_15',minimum_warmup_sessions:260})",context);
+  assert.match(context.body,/value="bearish:new_lows" selected/);
+  assert.match(context.body,/name="borrow_cost_bps_year"/);
+  assert.match(context.body,/value="intraday" selected/);
+  assert.match(context.body,/name="square_off_time"[^>]*value="15:00"/);
+  assert.match(context.body,/name="require_falling_long_trend"[^>]*checked/);
+  assert.doesNotMatch(context.body,/name="require_long_trend"/);
+  assert.match(context.windowPath,/warmup=260$/);
 
   // A fresh dialog must apply VCP before rendering, without requiring a change event.
   await vm.runInContext('newBacktest()', context);
