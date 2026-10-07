@@ -41,6 +41,7 @@ def audit_cached_universe(settings):
     report.update(universe=settings.universe, symbols_scanned=0, missing_symbols=[],
                   raw_findings=[], history_changes=[])
     reference = market_history.evidence(snapshot=True)
+    report['listing_evidence'] = listing_evidence_coverage(universe.get('instruments', []), reference)
     for item in universe.get('instruments', []):
         record = store.read('bars/' + item['isin'], {})
         if not record.get('bars'):
@@ -48,11 +49,30 @@ def audit_cached_universe(settings):
             continue
         report['raw_findings'].extend(audit({item['symbol']: record['bars']})['findings'])
         bars, history = market_history.prepare(item, record, reference=reference, fingerprint=False)
-        if history.get('quarantine') or history.get('removed_prelisting_bars'):
+        if history.get('quarantine') or history.get('removed_prelisting_bars') or history.get('candle_repairs'):
             report['history_changes'].append({'symbol': item['symbol'], **history})
         report['findings'].extend(audit({item['symbol']: bars})['findings'])
         report['symbols_scanned'] += 1
     return report
+
+
+def listing_evidence_coverage(instruments, reference):
+    """Evidence coverage is separate from price quality and signal eligibility."""
+    from core.research import market_history
+    venue, ipo, missing = [], [], []
+    for item in instruments:
+        metadata = market_history.listing_for(item, reference.get('listings', {}))
+        if metadata and metadata.get('verified') is True and metadata.get('source'):
+            venue.append(item['symbol'])
+            # Reuse the same date/source validation as simulation input preparation.
+            with_listing_metadata([{'date': metadata['listing_date']}], metadata)
+            if metadata.get('ipo_verified') is True:
+                ipo.append(item['symbol'])
+                continue
+        missing.append(item['symbol'])
+    return {'total_symbols': len(instruments), 'verified_exchange_listing_symbols': sorted(venue),
+            'verified_ipo_symbols': sorted(ipo), 'missing_ipo_symbols': sorted(missing),
+            'notice': 'Listing evidence alone does not establish valid prices, warmup, IPO age or a qualifying signal.'}
 
 
 def with_listing_metadata(bars, metadata):

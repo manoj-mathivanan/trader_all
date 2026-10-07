@@ -4,7 +4,7 @@ import json
 from datetime import date
 from pathlib import Path
 
-from core.research import store, data_quality, corporate_actions
+from core.research import store, data_quality, corporate_actions, candle_repairs
 
 EVIDENCE_FILE = Path(__file__).resolve().parents[2] / 'reference_data/history_evidence.json'
 VERSION = 'history-evidence-v1'
@@ -12,6 +12,7 @@ VERSION = 'history-evidence-v1'
 
 def evidence(*, snapshot=False):
     ref = json.loads(EVIDENCE_FILE.read_text(encoding='utf-8'))
+    ref['candle_repairs'] = json.loads(EVIDENCE_FILE.with_name('candle_repairs.json').read_text(encoding='utf-8'))
     if snapshot:
         ref['listings'] = merge_listings(ref.get('listings', {}), store.read('metadata/listings', {}))
         ref['corporate_actions'] = store.read('metadata/corporate_actions', {})
@@ -56,10 +57,12 @@ def prepare(item, record, *, reference=None, fingerprint=True):
     if quarantine:
         details['quarantine'] = quarantine
         return [], details
+    bars, repairs = candle_repairs.apply(bars, ref.get('candle_repairs', {}).get(item['isin'], {}).get('rows', []))
+    details['candle_repairs'] = repairs
     if listing:
         # Validate before filtering. The original cache remains unchanged.
         data_quality.with_listing_metadata(raw, listing)
-        bars = [b for b in raw if b['date'] >= listing['listing_date']]
+        bars = [b for b in bars if b['date'] >= listing['listing_date']]
         details.update(listing=listing, removed_prelisting_bars=len(raw) - len(bars))
         bars = data_quality.with_listing_metadata(bars, listing)
     action_records = (ref.get('corporate_actions', {}) if ref.get('local_metadata_frozen')

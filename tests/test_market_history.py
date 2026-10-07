@@ -3,11 +3,29 @@ import unittest
 from copy import deepcopy
 from pathlib import Path
 from unittest.mock import patch
-from core.research import market_history, store, provenance
+from core.research import market_history, store, provenance, data_quality
 from scripts.refresh_listing_evidence import parse_master
 
 
 class MarketHistoryTests(unittest.TestCase):
+    def test_recent_ipo_proof_survives_exchange_master_and_coverage_keeps_unknowns(self):
+        item = {'isin': 'INE0V6F01027', 'symbol': 'HYUNDAI'}
+        venue = {'symbol': 'HYUNDAI', 'listing_date': '2024-10-22',
+                 'verified': True, 'source': 'official-exchange-master'}
+        ref = market_history.evidence()
+        ref['listings'] = market_history.merge_listings(ref['listings'], {item['isin']: venue,
+            'OTHER': {'symbol': 'SECONDARY', 'listing_date': '2024-10-22',
+                      'verified': True, 'source': 'official-exchange-master'}})
+        metadata = market_history.listing_for(item, ref['listings'])
+        self.assertTrue(metadata['ipo_verified'])
+        self.assertEqual(metadata['ipo_date'], '2024-10-22')
+        self.assertIn('hyundai.com', metadata['ipo_source'])
+        report = data_quality.listing_evidence_coverage([item, {'isin':'OTHER', 'symbol':'SECONDARY'},
+                                                        {'isin':'UNKNOWN', 'symbol':'UNKNOWN'}], ref)
+        self.assertEqual(report['verified_ipo_symbols'], ['HYUNDAI'])
+        self.assertEqual(report['verified_exchange_listing_symbols'], ['HYUNDAI', 'SECONDARY'])
+        self.assertEqual(report['missing_ipo_symbols'], ['SECONDARY', 'UNKNOWN'])
+
     def setUp(self):
         temp = tempfile.TemporaryDirectory(); self.addCleanup(temp.cleanup)
         self.context = patch.object(store, 'DATA', Path(temp.name)); self.context.start(); self.addCleanup(self.context.stop)
