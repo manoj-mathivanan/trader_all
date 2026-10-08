@@ -45,7 +45,7 @@ def match_constituents(rows, master):
     instruments, missing, excluded = [], [], []
     for row in rows:
         symbol, isin = row['Symbol'].strip(), row['ISIN Code'].strip()
-        if symbol.startswith('DUMMY') and isin.startswith('DUM'):
+        if symbol.startswith('DUMMY') and isin.startswith('DU') and row['Company Name'].lower().startswith('dummy'):
             excluded.append({'symbol': symbol, 'isin': isin,
                              'reason': 'Official index placeholder, no tradeable provider instrument.'})
             continue
