@@ -121,7 +121,9 @@ On Windows, run `start.ps1` from the repository root. The dashboard is loopback-
 - Upstox is the primary historical EOD source. The user has Upstox API access; never ask for or
   print access tokens in chat, logs, code, or reports.
 - The token is entered in each environment's Settings and saved as plaintext in its private file, with restricted filesystem permissions. It is never returned to the browser or logged. Legacy encrypted local records remain readable with the original key. Mutating requests require the existing `X-Trader-Request: local-ui` header in both environments; its name is a protocol marker, not authentication.
-- The API default universe is **Nifty 50**; the owner expanded this research to **Nifty 500**.
+- The API default universe is **Nifty 50**; the owner expanded research first to **Nifty 500**,
+  then to **Nifty Total Market (750)** on 8 October 2026. The existing paper portfolio retains
+  its frozen Nifty 500 membership.
   Both are implemented Settings choices. The full available 500-member provider universe has
   been fetched; broader NSE/BSE coverage and historical membership remain future work.
 - Settings currently use a maximum ten-year range. The validated working range is
@@ -506,6 +508,33 @@ this operation. Results contain symbols, bars, universe and total_members. Resea
 can be changed explicitly in Settings after the pull; standard refresh/ingestion/backtests
 then use the selected universe. Existing paper cycles continue to use their frozen snapshot.
 No broader-universe paper account or migration is implied by downloading these inputs.
+The official list observed on this date contained 755 rows: 750 tradeable stocks plus five
+temporary placeholders (DUMMYHEG, DUMMYINGL1, DUMMYINGL2, DUMMYINXGN, DUMMYTRVN).
+Placeholder exclusion requires a DUMMY-prefixed symbol, DU-prefixed synthetic ISIN and a
+company name beginning Dummy; numbered DU1/DU2 formats are included. Unmatched real ISINs
+still fail. Initial expansion job `6f2d88fdcda5` stopped before snapshot save because the two
+numbered placeholders were unrecognized. After this correction, retry `64b6e7a52d38`
+matched 750 tradeable members and selected exactly 250 additional ISINs. The requested
+history range was 2016-10-08 through 2026-10-08, within the research ten-year validation cap;
+actual bars begin at the provider's available/listed boundary. The deployment comprised
+`f2c0d09` and `e7031c6`, with 128 Python tests and frontend checks passing; both GitHub CI
+runs passed. Production was backed up before the deployment.
+Job `64b6e7a52d38` retained valid history for 249 additional symbols but failed SOUTHBANK:
+the provider returned 2,502 rows for 2,474 unique sessions, including 28 conflicting pairs
+from 2017-01-19 through 2017-05-29. Prices, volumes and timestamps differ, so do not deduplicate,
+aggregate or choose one without independent evidence. The invalid response was never saved.
+Recovery job `40c35221e01f` requests 2017-05-30 through 2026-10-07, reusing the other cached
+stocks while fetching SOUTHBANK's valid later history. This is an explicit shorter-history
+limitation for that stock, not repaired 2017 data or a verified listing date. Do not backfill
+its conflicting earlier provider history without sourced reconciliation.
+Recovery job `40c35221e01f` succeeded at 18:08 IST with all 250 additional stocks and
+425,976 saved candles; all observed final bars were 2026-10-07. Verified all additional files
+were nonempty and requested coverage reached that date. The paper portfolio and stored Nifty
+500 snapshot remained byte-for-byte unchanged against the preservation checkpoint. Research
+Settings were then explicitly saved as universe `niftytotalmarket`, start `2017-05-30`, end
+`2026-10-07` to avoid requesting SOUTHBANK's conflicting earlier data. Existing longer cached
+histories for other stocks remain intact. Website bootstrap reported 750 research members
+and 500 frozen paper members, with AETHER/BHEL/STLTECH positions and last_session 2026-10-07.
 
 Cycle ingests the frozen universe through today if IST time ≥16:00, otherwise yesterday.
 Use the internal `PaperIngestionRange(Settings)` model for this request. It overrides the named
@@ -880,7 +909,7 @@ them for new forms. This separation preserves older saved experiments.
 
 | Field | Type / allowed values / bounds | API default |
 |---|---|---|
-| `universe` | string: nifty50, nifty500 | "nifty50" |
+| `universe` | string: nifty50, nifty500, niftytotalmarket | "nifty50" |
 | `start` | date | "2018-10-01" |
 | `end` | date | "2026-10-01" |
 
