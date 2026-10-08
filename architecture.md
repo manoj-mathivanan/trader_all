@@ -788,6 +788,28 @@ no benchmark data, filling daily holes while retaining old history, merging minu
 removing older days, rejecting malformed minute batches before replacement, universe-only settings
 and attempts for both intervals across all 750 stocks despite authentication/unexpected failures.
 
+Execution verification for this policy (8 October 2026): source `ffcec25` was pushed to public
+GitHub main, GitHub checks succeeded, a production backup completed with Result=success and
+ExecMainStatus=0, and production was rebuilt from that commit. Local job `56e434656706`
+attempted both intervals for all 750 stocks; VEDPOWER daily failed after bounded connectivity
+retries but its five-minute fetch and the remaining stocks continued. A separate, serialized
+recovery job `2ae7c1e933a1` downloaded its 80 daily candles using the original frozen window,
+updated the latest market_fetch summary, and retained the original failed job for audit. The
+summary includes prior_failures and recovery_job_id for this one-off recovery; these are optional
+operational fields, not required by ordinary fetches. Production job `b3d48ec6e710` completed
+without failures. Final counts in **both** installations: 750 daily successes, 750 five-minute
+successes, 183,138 downloaded daily candles and 393,750 downloaded five-minute candles.
+Resolved windows: daily 2025-10-07 through 2026-10-07; five-minute 2026-09-28 through
+2026-10-07. These are observed provider windows, not hardcoded future fetch bounds.
+Local daily cache retained 961,472 candles, with 477 stocks extending before the rolling year,
+and 4,878 older five-minute session files remained. Production retained 1,428,687 daily candles,
+with 708 stocks extending before the rolling year. Research-universe selection and frozen
+paper membership were preserved. The isolated release passed 136 Python tests and existing
+frontend tests; the full concurrent local workspace passed 202 Python tests and its frontend
+suite. All 136 release tests also passed in the deployed production image using temporary
+isolated state and mounted test/scripts fixtures. Live production bootstrap and JavaScript
+rendering confirmed Universe-only settings, both resolved windows and progress/count display.
+
 ### API, security and persistence contract
 
 All routes use the same origin and optional Basic Auth (unset in the public MVP). Bind 127.0.0.1:8765 with one process, never reload/multiple workers. Local launch disables proxy headers. Production trusts proxy headers only from 127.0.0.1; Caddy removes X-Forwarded-For so the peer remains loopback. Accept loopback peers and localhost/loopback hosts (testclient/testserver in tests), plus the hostname of explicitly configured TRADER_PUBLIC_ORIGIN. Mutations require `X-Trader-Request: local-ui`; when Origin is present, require exact TRADER_PUBLIC_ORIGIN for the public host, otherwise exact base-origin match. These guards are not a login or authorization system. Security response headers: nosniff, DENY frames,
