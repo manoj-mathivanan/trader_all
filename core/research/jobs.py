@@ -39,7 +39,8 @@ def submit(kind, function, payload=None):
         update(job["id"], status="running", message=f"Started {kind}.")
         try:
             result = function(lambda message: update(job["id"], message=message), job["id"])
-            update(job["id"], status="success", message="Completed.", result=result)
+            update(job["id"], status="failed" if result and result.get("partial") else "success",
+                   message="Completed all stocks with failures; inspect the result and logs, then retry." if result and result.get("partial") else "Completed.", result=result)
         except ValueError as exc:
             update(job["id"], status="failed", message=str(exc))
         except Exception:

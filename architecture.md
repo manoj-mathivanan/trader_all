@@ -126,7 +126,7 @@ On Windows, run `start.ps1` from the repository root. The dashboard is loopback-
   its frozen Nifty 500 membership.
   Both are implemented Settings choices. The full available 500-member provider universe has
   been fetched; broader NSE/BSE coverage and historical membership remain future work.
-- Settings currently use a maximum ten-year range. The validated working range is
+- Historical setup used a maximum ten-year internal range. The rolling Market data fetch contract below supersedes editable dates. The validated working range is
   research initially used `2019-01-01` onward, then extended stored history to `2018-01-01`.
   Upstox returned actual trading candles through `2026-10-01`; requested end dates and observed
   last sessions are distinct. Do not overwrite other threads’ current Settings merely to
@@ -220,7 +220,7 @@ return to overview. Closing/changing views disposes charts and closes the modal.
 | Backtests | New backtest; newest-first run cards with name, universe, dates, IST creation time, return, drawdown, trades; open complete report; explanatory research text |
 | Paper trading | Strategy portfolio selector; Create/configure portfolio; pause/resume new entries; Run daily cycle; status/universe/start/last session/schedule; equity/cash/realized/unrealized cards; open positions, equity curve, closed trades, fills and full JSON export |
 | Jobs & logs | All returned jobs with type/time/status and View logs; pending-job link and manual Refresh; readable timestamped log in a modal |
-| Settings | Universe/history form; private plaintext-token connection form; token saved/replacement status; environment/authentication status; backtest configuration action |
+| Settings | Research-universe form (automatic history windows); private plaintext-token connection form; token saved/replacement status; environment/authentication status; backtest configuration action |
 
 Sidebar saved-screen buttons open New backtest seeded from that screen. Add new screen opens
 name, Base screen and all thirteen filters. New backtest groups fields into Experiment; Banana screen
@@ -718,6 +718,76 @@ lookup alone is insufficient. All API writes use JSON, Content-Type application/
 request header. The browser treats either a string detail or a 422 detail array as an actionable
 error. The token is sent only to /api/connection and is never part of sample config payloads.
 
+### Rolling market-data fetch — 8 October 2026
+
+This contract supersedes the previous editable history-range and missing-boundary behavior of
+Market data → Fetch. Settings shows only the research Universe dropdown and private connection
+controls. `DataPreferences` accepts only `universe` (nifty50/nifty500/niftytotalmarket; default
+nifty50), forbids extra fields, and is the schema returned as bootstrap.settings_schema and
+accepted by PUT /api/settings. Saving preserves existing internal start/end values and does
+not fetch. Legacy `Settings(DataPreferences)` still includes validated start/end for existing
+saved settings, frozen research/paper snapshots and the separate expansion API. Those legacy
+dates never determine the standard Market data fetch.
+
+POST /api/jobs/ingest requires the installation's saved token and queues `Fetch market history`
+through the existing single-worker queue. The job snapshots the policy (Total Market, rolling
+year, ten calendar days); dates are resolved when execution starts. Fetch is independent of the
+selected research universe and frozen paper membership: refresh the official Nifty Total Market
+list, match every tradeable constituent to an Upstox ISIN/key, and process the full matched list
+(750 stocks at implementation). Exclude documented official dummy placeholders; do not silently
+omit unmatched real members. The research universe dropdown continues to control scans/backtests.
+
+`core/research/market_data.py` defines these exact rules:
+1. Read current Asia/Kolkata time. Before 16:00 IST the latest eligible date is yesterday;
+   at/after 16:00 it is today. Request Nifty 50 daily history for the preceding 30 calendar days
+   through that date, using `NSE_INDEX|Nifty 50`. Its latest returned validated candle is the
+   last completed traded day. Holidays/weekends and historical-provider publication delays
+   follow actual returned data. No benchmark candles means an actionable failure before any
+   stock writes; never guess an anchor from stale local stock coverage.
+2. Daily start is the same calendar date in the preceding year (February 29 maps to February
+   28); end is the anchor, inclusive. Request Upstox V3 days/1 for that complete rolling window
+   on each stock, even if cached. This refreshes existing dates and fills interior gaps.
+3. Five-minute start is anchor minus nine calendar days; end is anchor, inclusive: **10 calendar
+   days, not ten trading sessions**. Request V3 minutes/5 once per stock for that range, within
+   the provider's one-month retrieval limit. Store only actual returned trading sessions;
+   weekends/holidays are not invented. An empty stock response is a failed download.
+4. Validate finite positive consistent OHLC, nonnegative volume, duplicate keys, explicit
+   intraday timezone and five-minute boundaries. Apply existing verified daily overrides.
+   Validate the complete minute response before writing its sessions. Merge daily candles by
+   date and same-day minute candles by timestamp, with newly validated candles taking precedence.
+   Retain all older daily candles and minute session files, plus older requested coverage.
+   Atomic replacement retains the old record if validation fails. Do not trim histories,
+   frozen run inputs, portfolios, universe snapshots or ledgers.
+5. For each constituent attempt daily and five-minute downloads independently, catching both
+   expected validation/provider errors and unexpected exceptions per interval. A stock's 401/403,
+   network error, malformed candle or write failure must not skip its other interval or later
+   stocks. Unexpected diagnostics include the exception class only, without raw text, request
+   headers or tokens. Reuse the provider helper's bounded retries. Sequential requests are paced
+   by 0.15 seconds after each interval; no parallel burst. Global prerequisite/manifest storage
+   failures can still fail the job. Logs show every stock's outcomes and final counts.
+6. Checkpoint non-secret `market_fetch.json` after each stock and at completion. Fields: job_id,
+   universe, daily_start, minute_start, end, started_at, completed_at when finished, total_symbols,
+   daily_symbols, minute_symbols, daily_bars/minute_bars (validated downloads in this window),
+   failures[{symbol,interval,message}], stocks[{symbol,isin,daily,minute}], partial boolean.
+   Each interval has status plus counts/coverage or a safe message. Bootstrap returns market_fetch;
+   the Market data screen shows resolved windows, counts, failures and completion/progress.
+   Daily data/catalog continue using bars/{ISIN}.json and bar_catalog.json. Five-minute sessions
+   use intraday/5m/{ISIN}/{YYYY-MM-DD}.json, shared with existing intraday and momentum loaders.
+7. `jobs.submit` persists the returned summary even when partial; a completed full-list attempt
+   with any interval failures is marked failed with an explicit partial-completion message.
+   Successful downloads remain available. Retry through the same Fetch button after fixing the
+   connection/provider issue. Do not describe a partial download as fully successful.
+
+Backtest date pickers still use saved actual coverage with required indicator warmup, not these
+rolling request dates; retained older data remains usable. All full-fetch state and tokens are
+independent locally and in production. Deploy shared code through GitHub, then trigger the job
+separately in each environment. Do not publish market data or copy local files onto production.
+The official endpoint contract is https://upstox.com/developer/api-documentation/v3/get-historical-candle-data/.
+Tests cover leap years, inclusive windows, provider holiday/delay anchors, unfinished-day exclusion,
+no benchmark data, filling daily holes while retaining old history, merging minute candles without
+removing older days, rejecting malformed minute batches before replacement, universe-only settings
+and attempts for both intervals across all 750 stocks despite authentication/unexpected failures.
+
 ### API, security and persistence contract
 
 All routes use the same origin and optional Basic Auth (unset in the public MVP). Bind 127.0.0.1:8765 with one process, never reload/multiple workers. Local launch disables proxy headers. Production trusts proxy headers only from 127.0.0.1; Caddy removes X-Forwarded-For so the peer remains loopback. Accept loopback peers and localhost/loopback hosts (testclient/testserver in tests), plus the hostname of explicitly configured TRADER_PUBLIC_ORIGIN. Mutations require `X-Trader-Request: local-ui`; when Origin is present, require exact TRADER_PUBLIC_ORIGIN for the public host, otherwise exact base-origin match. These guards are not a login or authorization system. Security response headers: nosniff, DENY frames,
@@ -727,11 +797,11 @@ no-referrer and no-store. Do not expose OpenAPI/docs endpoints. ValueError retur
 |---|---|
 | GET `/` and `/static/*` | HTML shell and static assets |
 | GET `/api/bootstrap` | settings/settings_schema, backtest_schema, patterns, screens, token_saved, instruments/catalog coverage, universe_updated, jobs (latest 100), runs, strategies, auth_enabled, environment, paper_enabled, remote_enabled, paper_schema/portfolio and generic paper_schemas/paper_portfolios |
-| PUT `/api/settings` | Settings; reject while job active; persist only, no implicit fetch |
+| PUT `/api/settings` | DataPreferences (universe only); reject while job active; preserve internal legacy dates; no implicit fetch |
 | PUT `/api/connection` | access_token 20–10000 chars after whitespace checks; save plaintext private file; saved status only |
 | POST `/api/screens` | name/pattern/thirteen filters; validate and persist resolved preset |
 | POST `/api/jobs/universe` | Queue constituent/instrument match job |
-| POST `/api/jobs/ingest` | Require saved token; queue missing-boundary ingestion |
+| POST `/api/jobs/ingest` | Require saved token; queue full 750-stock rolling daily + five-minute fetch |
 | POST `/api/jobs/backtest` | BacktestConfig; validate prepare before queuing; job result run_id |
 | GET `/api/backtest/window?warmup=50` | warmup integer50–2500; start/end, warmup_sessions, ready/total symbols, history_start/end |
 | GET `/api/bars/{isin}` | Full normalized bar record; ISIN alphanumeric length 12 |
@@ -815,7 +885,7 @@ Keep a status explanation next to the Run backtest button: name an active job, m
 or insufficient history. Refresh this status during normal bootstrap polling, so finishing an
 active job re-enables the existing form without reopening it. Preserve the disabled state while
 that form submits. Reject a chosen end after the safe available end locally with instructions
-to use available dates or extend Settings/history and fetch missing data. Scroll form errors
+to use available dates or fetch rolling market history (older saved history is retained). Scroll form errors
 into view on mobile. Backend date errors give the same earlier/later-history instruction.
 
 Observed production diagnosis: 499 of 500 Nifty 500 symbols had usable records; IDEA ingestion
@@ -901,11 +971,11 @@ history, or restore a secure backup. Never hardcode the historical metrics as da
 ### Schema reference and pinned local dependencies
 
 All monetary/numeric input models reject NaN/infinity and unknown fields. Dates must increase;
-Settings additionally limits the range to 3653 calendar days. Backtest/Paper acknowledgment must
+Internal legacy Settings additionally limits its range to 3653 calendar days; public DataPreferences has no date fields. Backtest/Paper acknowledgment must
 be true. Defaults below are **API/schema defaults**; the explicit UI screen seed above overrides
 them for new forms. This separation preserves older saved experiments.
 
-#### Settings
+#### Settings (internal legacy model; UI/API uses universe-only DataPreferences)
 
 | Field | Type / allowed values / bounds | API default |
 |---|---|---|
@@ -2101,7 +2171,7 @@ its existence does not enable a Git snapshot service. Do not install the abandon
 Confirm health using curl -fsS https://trader.manojmathivanan.com/api/bootstrap and Docker/Caddy
 logs. Expect environment=production, paper_enabled=true, auth_enabled=false; a fresh installation
 has token_saved=false, zero runs and zero loaded instruments. Defaults are schema settings, not
-downloaded history. In Settings save a production token and desired universe/history, then
+downloaded history. In Settings save a production token and desired research universe, then
 Refresh universe → Fetch missing data. Only after real coverage exists create a production
 paper portfolio with explicit capital/acknowledgment; enable auto_run only if chosen by the owner.
 No code deployment automatically allocates capital, creates a portfolio or enables automatic runs.

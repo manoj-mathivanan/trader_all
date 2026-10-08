@@ -4,9 +4,13 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from core.research.bearish import BearishConfig
 
 
-class Settings(BaseModel):
+class DataPreferences(BaseModel):
     model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
     universe: Literal["nifty50", "nifty500", "niftytotalmarket"] = Field("nifty50", title="Universe")
+
+
+class Settings(DataPreferences):
+    # Legacy/internal ranges are retained for frozen research and paper snapshots.
     start: date = Field(date(2018, 10, 1), title="History from")
     end: date = Field(date(2026, 10, 1), title="History through")
 

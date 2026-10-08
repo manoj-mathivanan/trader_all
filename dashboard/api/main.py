@@ -11,8 +11,8 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, SecretStr
-from core.research import store, jobs, upstox, backtest, data_quality
-from core.research.config import Settings, BacktestConfig, BearishBacktestConfig
+from core.research import store, jobs, upstox, backtest, data_quality, market_data
+from core.research.config import Settings, DataPreferences, BacktestConfig, BearishBacktestConfig
 from core.research import bearish
 from core.portfolio import paper, scheduler, manager as portfolios, registry as paper_plugins
 from core.strategies.registry import all_strategies
@@ -118,7 +118,8 @@ def bootstrap():
     for item in universe.get('instruments', []):
         summary = catalog.get(item['isin'], {'count': 0, 'first': None, 'last': None, 'close': None, 'change': None})
         instruments.append({**item, **summary})
-    return {'settings': cfg.model_dump(mode='json'), 'settings_schema': Settings.model_json_schema(),
+    return {'settings': cfg.model_dump(mode='json'), 'settings_schema': DataPreferences.model_json_schema(),
+            'market_fetch': store.read('market_fetch'),
             'backtest_schema': BacktestConfig.model_json_schema(), 'patterns': pattern_definitions(),
             'bearish_schema': bearish.BearishConfig.model_json_schema(), 'bearish_screens': bearish.SCREENS,
             'bearish_backtest_schema': BearishBacktestConfig.model_json_schema(),
@@ -134,10 +135,12 @@ def bootstrap():
 
 
 @app.put('/api/settings')
-def save_settings(value: Settings):
+def save_settings(value: DataPreferences):
     if any(j['status'] in ('queued', 'running') for j in store.read('jobs', [])):
         raise ValueError('Wait for the active job before changing the data settings.')
-    store.write('settings', value.model_dump(mode='json'))
+    saved = settings().model_dump(mode='json')
+    saved['universe'] = value.universe
+    store.write('settings', saved)
     return {'saved': True}
 
 
@@ -206,8 +209,8 @@ def audit_price_history():
 @app.post('/api/jobs/ingest')
 def ingest_job():
     store.token()
-    cfg = settings()
-    return jobs.submit('Fetch daily candles', lambda log, _: upstox.ingest(cfg, log), cfg.model_dump(mode='json'))
+    return jobs.submit('Fetch market history', lambda log, job_id: market_data.fetch(log, job_id),
+                       {'universe': 'niftytotalmarket', 'daily': 'rolling year', 'five_minute': '10 calendar days'})
 
 
 @app.post('/api/jobs/universe-expansion')

@@ -22,7 +22,7 @@ This guide covers the published MVP. Enhancements being developed in other threa
 | Comparisons | Adjust & rerun creates a separate experiment; JSON exports preserve reports. |
 | Production paper | Persistent strategy portfolio, daily cycles, optional weekday scheduling, pause/resume entries, positions, fills, accounting and exports. |
 | Jobs & logs | Timestamped progress and errors for downloads, backtests and paper cycles. |
-| Settings | Universe/history selection and installation-specific token replacement. |
+| Settings | Research universe selection and automatic history windows and installation-specific token replacement. |
 
 ## Guide contents
 
@@ -145,7 +145,7 @@ The chart bundle `dashboard/web/vendor/klinecharts.min.js` is tracked in Git. `n
 
 ### Configure data before research
 
-Set history dates and universe in Settings, refresh the universe, then fetch missing data. Saving Settings does not download anything. Start with Nifty 50 to exercise the workflow with less data; use Nifty 500 for broader research. The history settings require an increasing range of no more than ten years.
+Choose the research universe in Settings. Market data → Fetch always downloads daily candles for the last calendar year and five-minute candles for the last 10 calendar days, ending on Upstox's latest completed Nifty 50 trading day. It covers all 750 Nifty Total Market stocks, regardless of research-universe selection. Older daily and five-minute history stays available. Failures are reported per stock and interval while remaining downloads continue; partial jobs retain successful data and can be retried. Saving Settings does not download anything.
 
 The UI requests an **access token**, not an API key/client secret. The token expires daily in the current workflow: replace it in Settings and retry failed provider jobs. No code edit or server rebuild is necessary. “Saved” confirms storage, not validity; provider requests establish validity.
 
@@ -433,7 +433,7 @@ JSON writes flush before atomic replacement. This protects individual files from
 | IDEA invalid candle, 2024-08-30 | Upstox returned volume `-81259413`; verified NSE volume is `4213707883`. Use only the architecture's exact-match repair. Production retry completed 500/500 on 4 October 2026. |
 | Slow backtest popup initialization | Cold history checks read bar files; the popup displays loading immediately and unchanged-file metadata is cached afterward. |
 | Run disabled on mobile | Read the status next to Run. Finish the active job or fix missing history/warmup; reopen after newly fetched data. |
-| Dates exceed downloaded coverage | Use the available dates or extend Settings/history and fetch. Production on 4 October had coverage ending 1 October, so the 4th exceeded coverage. |
+| Dates exceed downloaded coverage | Use the available dates or fetch rolling market history. Production on 4 October had coverage ending 1 October, so the 4th exceeded coverage. |
 | Loaded symbols excluded from backtest | Recent listings/shorter history can lack configured warmup; inspect report exclusions. |
 | Paper view absent / API 403 locally | Expected local research mode. Production explicitly enables paper. |
 | Automatic cycle failed | Fix the logged token/provider/data problem and retry manually. The scheduler attempts once per weekday. |
