@@ -6,7 +6,7 @@ from core.research.bearish import BearishConfig
 
 class Settings(BaseModel):
     model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
-    universe: Literal["nifty50", "nifty500"] = Field("nifty50", title="Universe")
+    universe: Literal["nifty50", "nifty500", "niftytotalmarket"] = Field("nifty50", title="Universe")
     start: date = Field(date(2018, 10, 1), title="History from")
     end: date = Field(date(2026, 10, 1), title="History through")
 

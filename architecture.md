@@ -488,6 +488,25 @@ creation and updates while any job runs. Configuration history records each upda
 positions retain pattern/stop/breakeven/winner-exit/trail/holding settings captured at entry;
 fee/slippage assumptions use the current cycle config. Changes must not reset positions or cash.
 
+Universe expansion approved on 8 October 2026: support `niftytotalmarket` in Settings and the
+schema-driven research UI, displayed as Nifty Total Market (750). Fetch the official current
+list from `https://www.niftyindices.com/IndexConstituent/ind_niftytotalmarket_list.csv`; match by
+ISIN against the Upstox NSE master with existing ambiguity/dummy/duplicate checks, and require
+at least 700 tradeable constituents before replacing the snapshot. Existing minimums remain
+45 for Nifty 50 and 450 for Nifty 500. Membership remains a current snapshot, not verified
+historical membership.
+
+`POST /api/jobs/universe-expansion` accepts a validated Settings payload with universe
+`niftytotalmarket`, start and end. It requires the server's token and submits a normal tracked
+job named Fetch additional Total Market candles. `upstox.ingest_expansion` requires the stored
+Nifty 500 snapshot, refreshes Total Market, compares ISINs, and ingests only additional members.
+Normal validation, atomic per-symbol saves, partial-failure reporting and retry cache reuse
+apply. Do not rewrite the Nifty 500 snapshot/candles, settings or any paper portfolio during
+this operation. Results contain symbols, bars, universe and total_members. Research selection
+can be changed explicitly in Settings after the pull; standard refresh/ingestion/backtests
+then use the selected universe. Existing paper cycles continue to use their frozen snapshot.
+No broader-universe paper account or migration is implied by downloading these inputs.
+
 Cycle ingests the frozen universe through today if IST time ≥16:00, otherwise yesterday.
 Use the internal `PaperIngestionRange(Settings)` model for this request. It overrides the named
 `dates` validator to require start < end without the research form's 3653-day duration limit;

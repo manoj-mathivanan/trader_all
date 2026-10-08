@@ -210,6 +210,16 @@ def ingest_job():
     return jobs.submit('Fetch daily candles', lambda log, _: upstox.ingest(cfg, log), cfg.model_dump(mode='json'))
 
 
+@app.post('/api/jobs/universe-expansion')
+def universe_expansion_job(value: Settings):
+    if value.universe != 'niftytotalmarket':
+        raise ValueError('Universe expansion requires Nifty Total Market.')
+    store.token()
+    return jobs.submit('Fetch additional Total Market candles',
+                       lambda log, _: upstox.ingest_expansion(value, log),
+                       value.model_dump(mode='json'))
+
+
 @app.post('/api/jobs/backtest')
 def backtest_job(value: BacktestConfig | BearishBacktestConfig):
     cfg = settings()
