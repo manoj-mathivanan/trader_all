@@ -2510,13 +2510,21 @@ The pre-stop active-job check is not an atomic admission lock: avoid initiating 
 backup window; a job queued between the check and stop can be interrupted and recovered normally.
 
 For a consistent file copy, stop the trader container, install an EXIT trap to restart it, and
-export all non-secret JSON into /srv/trader/backup-state. Ignore any private path and .tmp file;
-reject other non-JSON input files. Hash exact JSON file bytes with SHA256. manifest.json is
-{version: 1, files: {relative_filename: lowercase_64_character_sha256}}; blobs/<sha>.json.gz holds
-the original bytes compressed with empty gzip filename and mtime=0. Identical input files share
-one blob. New blobs must parse as JSON and pass credential-key/JWT scans. Write blobs/manifest
-via temporary files and atomic replace; remove unreferenced blobs from the current staging set.
-These scans are safeguards, not a general guarantee that arbitrary JSON contains no sensitive data.
+export non-secret JSON and archived financial source HTML into /srv/trader/backup-state.
+Ignore private paths and ephemeral .tmp/.lock files. HTML is allowed only at
+company/filings/<sha256>.html and its bytes must match that filename; reject other file types.
+Hash exact file bytes with SHA256. manifest.json is
+{version: 2, files: {relative_filename: lowercase_64_character_sha256}}; blobs/<sha>.json.gz
+or blobs/<sha>.html.gz holds the original bytes compressed with empty gzip filename and mtime=0.
+Identical bytes of the same file type share one blob. JSON must parse; both types pass
+credential-key/JWT scans. Write blobs/manifest via temporary files and atomic replace; remove
+unreferenced blobs. Restore supports legacy version 1 JSON archives and version 2 mixed archives,
+requires an empty destination, confines paths, excludes private files and verifies every hash.
+These scans are safeguards, not a general guarantee that arbitrary text contains no sensitive data.
+The first backup after the October 9 fundamentals pull exposed the old JSON-only rejection of
+financial HTML. The version 2 format fixes that failure without changing live data formats.
+Regression tests cover mixed-file round trips, legacy restore, credentials, corrupt blobs,
+unsafe paths and invalid filing names/checksums.
 
 Archive that complete staging set to /srv/trader/backups/data-<UTC timestamp>.tar.gz. Cleanup
 removes matching archives older than seven days using find -mtime +7 (mtime-day semantics, not
@@ -2705,7 +2713,7 @@ find /srv/trader/backups -name 'data-*.tar.gz' -mtime +7 -delete
 #### deploy/data_snapshot.py
 
 ```python
-"""Content-addressed, compressed snapshots of non-secret Trader JSON state."""
+"""Compressed non-secret JSON state and content-addressed financial source filings."""
 import gzip
 import hashlib
 import json
@@ -2715,21 +2723,30 @@ import sys
 from pathlib import Path
 
 
+def filing_name(name):
+    return re.fullmatch(r'company/filings/([a-f0-9]{64})\.html', name)
+
+
 def snapshot(source, target):
     blobs = target / 'blobs'
     blobs.mkdir(parents=True, exist_ok=True)
     manifest = {}
     for path in sorted(source.rglob('*')):
-        if not path.is_file() or 'private' in path.relative_to(source).parts or path.suffix == '.tmp':
+        if not path.is_file() or 'private' in path.relative_to(source).parts or path.suffix in ('.tmp', '.lock'):
             continue
-        if path.suffix != '.json':
+        name = path.relative_to(source).as_posix()
+        filing = filing_name(name)
+        if path.suffix != '.json' and not filing:
             raise ValueError(f'Unexpected file: {path}')
         with path.open('rb') as stream:
             digest = hashlib.file_digest(stream, 'sha256').hexdigest()
-        blob = blobs / (digest + '.json.gz')
+        if filing and filing[1] != digest:
+            raise ValueError(f'Filing checksum mismatch: {path}')
+        blob = blobs / (digest + path.suffix + '.gz')
         if not blob.exists():
             raw = path.read_text(encoding='utf-8')
-            json.loads(raw)
+            if path.suffix == '.json':
+                json.loads(raw)
             if re.search(r'"(?:access_token|encrypted_token|api_key|api_secret|password|private_key)"\s*:', raw, re.I) or re.search(r'eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+', raw):
                 raise ValueError(f'Credential found: {path}')
             del raw
@@ -2738,31 +2755,32 @@ def snapshot(source, target):
                 with gzip.GzipFile(filename='', mode='wb', fileobj=dst, mtime=0) as compressed:
                     shutil.copyfileobj(src, compressed)
             pending.replace(blob)
-        manifest[path.relative_to(source).as_posix()] = digest
+        manifest[name] = digest
     target.mkdir(parents=True, exist_ok=True)
     pending = target / 'manifest.tmp'
-    pending.write_text(json.dumps({'version': 1, 'files': manifest}, indent=2) + '\n', encoding='utf-8')
+    pending.write_text(json.dumps({'version': 2, 'files': manifest}, indent=2) + '\n', encoding='utf-8')
     pending.replace(target / 'manifest.json')
-    used = set(manifest.values())
-    for blob in blobs.glob('*.json.gz'):
-        if blob.name.removesuffix('.json.gz') not in used:
+    used = {digest + Path(name).suffix + '.gz' for name,digest in manifest.items()}
+    for blob in blobs.glob('*.gz'):
+        if blob.name not in used:
             blob.unlink()
     print(f'Snapshot: {len(manifest)} files, {len(used)} unique blobs.')
 
 
 def restore(source, target):
     manifest = json.loads((source / 'manifest.json').read_text())
-    if manifest['version'] != 1:
+    if manifest['version'] not in (1, 2):
         raise ValueError('Unsupported snapshot version')
     if target.exists() and any(target.iterdir()):
         raise ValueError('Restore destination must be empty')
     target.mkdir(parents=True, exist_ok=True)
     for name, digest in manifest['files'].items():
         path = (target / name).resolve()
-        if not path.is_relative_to(target.resolve()) or 'private' in Path(name).parts or path.suffix != '.json' or not re.fullmatch('[a-f0-9]{64}', digest):
+        filing = filing_name(name) if manifest['version'] == 2 else None
+        if not path.is_relative_to(target.resolve()) or 'private' in Path(name).parts or (path.suffix != '.json' and not filing) or not re.fullmatch('[a-f0-9]{64}', digest) or (filing and filing[1] != digest):
             raise ValueError('Unsafe snapshot manifest')
         path.parent.mkdir(parents=True, exist_ok=True)
-        with gzip.open(source / 'blobs' / (digest + '.json.gz'), 'rb') as src, path.open('wb') as dst:
+        with gzip.open(source / 'blobs' / (digest + path.suffix + '.gz'), 'rb') as src, path.open('wb') as dst:
             shutil.copyfileobj(src, dst)
         with path.open('rb') as stream:
             if hashlib.file_digest(stream, 'sha256').hexdigest() != digest:
@@ -3473,3 +3491,8 @@ Broker API credentials belong in encrypted broker_accounts storage entered throu
 never this document, source, reports or a committed .env. Future production deployment needs
 durable Postgres/Redis volumes, secure key retention, portfolio/job/config/input-history migration,
 restart supervision and a recovery rehearsal. Retain the local .gitignore's broad data/key ignores.
+
+Final publication integrates the partial-refresh UI and backup support with main commit
+07f02c3, which separately published the momentum/scalping/research/paper features. The
+initial a658e1a data publication was scoped to fundamentals; later runtime sections and
+source are authoritative for those separately published features.
