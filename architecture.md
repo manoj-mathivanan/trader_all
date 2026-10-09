@@ -3496,3 +3496,16 @@ Final publication integrates the partial-refresh UI and backup support with main
 07f02c3, which separately published the momentum/scalping/research/paper features. The
 initial a658e1a data publication was scoped to fundamentals; later runtime sections and
 source are authoritative for those separately published features.
+
+Final verification, 9 October 2026: fa60f11 was pushed to main, passed GitHub CI and deployed.
+All 288 Python tests passed locally and in the production image; frontend checks passed.
+Production backup finished with Result=success/ExecMainStatus=0. A full restore of archive
+ data-20261009T085249Z.tar.gz into a fresh temporary directory verified all 12,345 files,
+including 2,129 archived source HTML files, with zero private or lock files. The archive
+includes unreferenced source downloads; validated coverage counts only the 2,103 referenced
+filings. Temporary restore files were removed after verification. Both APIs report 567
+validated snapshots and 2,103 supporting filings. Source/deployment changes do not copy
+local data into production.
+For container test execution, bind /opt/trader/tests to /app/tests, /opt/trader/scripts to
+/app/scripts and /opt/trader/deploy to /app/deploy (all read-only); run the unittest suite
+with TRADER_ENV=local, TRADER_DATA_DIR=/tmp/trader-test-data and TRADER_PRIVATE_DIR unset.
