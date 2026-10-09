@@ -1,5 +1,11 @@
 # Trader — research and paper workspace
 
+Company research now includes a **Fundamentals** page with technical candidate scans,
+experimental quality scores, and an optional LLM that finds filings and recent news on
+the web automatically. Select **Research stock**; no source uploads are required.
+Saved reviews preserve citations, risks, contradictions and unknowns. Server API
+configuration is required for live research. See [COMPANY_RESEARCH.md](COMPANY_RESEARCH.md).
+
 Trader is a browser-based workspace for researching Indian equity swing strategies and maintaining a simulated portfolio. The same shared application runs locally for research and on a Linux server for research plus persistent paper trading. Desktop and mobile browsers access the same dashboard. It does not place live broker orders.
 
 **Website:** [trader.manojmathivanan.com](https://trader.manojmathivanan.com)
@@ -22,7 +28,7 @@ This guide covers the published MVP. Enhancements being developed in other threa
 | Comparisons | Adjust & rerun creates a separate experiment; JSON exports preserve reports. |
 | Production paper | Persistent strategy portfolio, daily cycles, optional weekday scheduling, pause/resume entries, positions, fills, accounting and exports. |
 | Jobs & logs | Timestamped progress and errors for downloads, backtests and paper cycles. |
-| Settings | Universe/history selection and installation-specific token replacement. |
+| Settings | Research universe selection and automatic history windows and installation-specific token replacement. |
 
 ## Guide contents
 
@@ -43,7 +49,7 @@ This guide covers the published MVP. Enhancements being developed in other threa
 - [Repository structure and GitHub policy](#repository-structure-and-github-policy)
 
 
-A light cream-and-green control panel inspired by Banana Patterns. This first increment uses real Upstox daily data, not demo prices. It includes a configurable Nifty 50 / Nifty 500 universe, historical coverage, KLineChart candlesticks, persistent job logs and a parameterized daily breakout backtest. The backend registry already exposes Swing patterns as active and Intraday momentum / Scalping as planned plugins; the shared navigation reads this registry, while planned tabs remain visibly disabled until their data and execution modules are implemented.
+A light cream-and-green control panel inspired by Banana Patterns. This first increment uses real Upstox daily data, not demo prices. It includes a configurable Nifty 50 / Nifty 500 universe, historical coverage, KLineChart candlesticks, persistent job logs and a parameterized daily breakout backtest. The backend registry already exposes Swing patterns as active and Intraday momentum and Scalping as active research plugins; the shared navigation reads this registry, while planned tabs remain visibly disabled until their data and execution modules are implemented.
 
 ## Run on Windows
 
@@ -64,6 +70,33 @@ Open http://127.0.0.1:8765. Local mode supports research and backtests; paper tr
 3. Market data → Refresh universe. The app downloads the current official NSE constituents and matches ISINs against Upstox's instrument master. Network/provider failures are recorded as failed jobs, never replaced with fake data.
 4. Fetch missing data. The first run downloads the configured range. Later runs reuse complete local coverage and fetch only missing earlier/later boundary ranges, then merge and deduplicate candles. Existing valid data is retained if a provider request fails. Internal missing sessions are not inferred because exchange holidays and suspensions are valid gaps; provider coverage is validated when a range is fetched.
 5. Backtests → New backtest. Supply research capital and your all-in buy/sell cost assumptions. Adjust entry, stop, breakeven and trailing rules. The results preserve an input snapshot, configuration, costs, equity curve and complete trade ledger. Use Adjust & rerun to create a comparable new experiment, or export the JSON report.
+
+## Scalping research
+
+Open **Scalping → Scalping backtest** for completed one-minute pullback experiments.
+Five-minute EMAs establish trend; one-minute candles and an EMA touch identify the
+pullback and next-minute-open entry. Optional VWAP confirmation, fixed pullback stops,
+R targets, holding limits, cooldowns, daily loss pauses, cash limits and explicit costs
+are configurable. **Compare confirmations** retains candle-only, EMA and EMA + VWAP
+trials on identical frozen inputs. Minute coverage estimates include indicator warmup.
+**Forward scalping paper** runs separately using fresh Upstox bid/ask quotes and
+completed REST candles. Create a portfolio with explicit capital, then start its
+quote runner. Pause entries, request liquidation and stop, or export the durable
+fill ledger from the same page. Restart discards old signals and recovers saved
+exposure. Automatic startup is optional and off initially. Live orders remain unavailable.
+See [SCALPING_RESEARCH.md](SCALPING_RESEARCH.md) for exact rules and timing assumptions.
+
+## Intraday momentum research
+
+Momentum now supports a historical fundamentals gate before either position side. New dashboard forms enable it; **Test fundamentals filter** compares matched gate-on/off runs with frozen filing evidence. See [MOMENTUM_FUNDAMENTALS_RESEARCH.md](MOMENTUM_FUNDAMENTALS_RESEARCH.md) for rules, archive limitations and results.
+
+**Test EMA / MACD** runs seven declared trials using genuine completed 10-minute/hourly indicators derived from cached five-minute data. The optional filters and indicator timeframe are separate controls from breakout confirmation. See [MOMENTUM_INDICATOR_RESEARCH.md](MOMENTUM_INDICATOR_RESEARCH.md) for exact rules, warmup, sources, validation criteria and audit failures.
+
+Open **Momentum** in the strategy sidebar to backtest opening-range momentum. The form exposes opening range (5/15/30 minutes), same-clock relative-volume history/threshold, prior daily turnover and ATR filters, scan size, long/short direction, ATR stop, optional R target, risk/capital, entry deadline, mandatory same-day exit, fees and slippage. **Check minute coverage** estimates required stock-sessions before ingestion; **Fetch missing & backtest** reuses the shared five-minute cache and batches missing Upstox history. Reports preserve daily/minute inputs, input hashes, source provenance, daily volume selections, equity and trades. Trade charts show the frozen five-minute entry/exit candles and stop levels. Adjust & rerun keeps momentum settings.
+
+This India adaptation uses completed breakout closes followed by next-bar-open market fills, rather than the source paper's stop entries. Equal capital budgets are reserved per selected stock; there is no leverage, same-day capital recycling or overnight holding. Momentum is research-only; no momentum paper portfolio or streaming/live execution is enabled. Read [MOMENTUM_RESEARCH.md](MOMENTUM_RESEARCH.md) for research comparisons, assumptions and the first real-data experiment.
+
+The Momentum dashboard also shows modeled cost drag, long/short P&L, missed-breakout/VWAP diagnostics and earlier/later session results. Optional VWAP confirmation, ATR breakout buffers and next-bar breakeven stops are editable. **Compare refinements** saves all six declared trials on identical frozen candles and matched costs; **Adjust & rerun** preserves the reference inputs. Missing frozen history or changed hashes halt replay. The initial comparison reduced the sample loss to −0.56% with the 0.1 ATR buffer, but every trial remained negative; defaults are unchanged.
 
 ## Research boundaries
 
@@ -89,7 +122,7 @@ sufficient history coverage. Existing reports and ledgers are preserved.
 5. Inspect cash, marked equity, open positions/stops, realized and unrealized P&L, fees, slippage, equity curve, closed trades and every simulated fill. Export the full portfolio JSON for review; it includes configuration history and cycle snapshots. Fill rows link to job logs, including older jobs beyond the recent list.
 6. **Pause new entries** blocks buys while daily cycles keep managing open-position exits. New risk and exit settings apply to new positions. Existing positions keep their recorded exit rules; exit transaction costs use the current configured assumptions. Capital and the captured universe membership are fixed for this portfolio so later research settings cannot remove held instruments or rewrite accounting.
 
-Portfolio storage and APIs are scoped by strategy ID. Each strategy has exactly one portfolio at `data/portfolios/<strategy_id>.json`, with its own allocated capital, configuration, positions, cash, trades, equity and schedule checkpoint. The Paper trading strategy selector lists the implemented strategies; momentum/scalping stay disabled until their own execution plugin is registered in `core/portfolio/registry.py`. A new plugin provides its settings schema and cycle runner; the common UI renders its fields and the common scheduler dispatches its own jobs. No strategy can create a second portfolio or reset its existing one through the create action.
+Portfolio storage and APIs are scoped by strategy ID. Each strategy has exactly one portfolio at `data/portfolios/<strategy_id>.json`, with its own allocated capital, configuration, positions, cash, trades, equity and checkpoint. Swing uses production daily cycles; Scalping uses a separate market-hours quote runner available from the Scalping page locally and in production. Momentum paper remains pending. The registry distinguishes batch and streaming triggers so the daily scheduler never submits scalping EOD cycles. No strategy can create a second portfolio or reset its existing one through the create action.
 
 Server startup reads the existing files rather than initializing a new account. Interrupted jobs are marked failed, and interrupted automatic schedule claims are released so the scheduler can resume after restart. Already committed sessions are skipped; uncommitted sessions are replayed from the last durable checkpoint. Regular provider failures still need manual retry. Writes flush to disk before atomic replacement, so interruption during a write preserves the previous complete ledger. Keep the same `data/` directory (or `TRADER_DATA_DIR`) across restarts; the production container retains it on durable storage. Changing UI configuration preserves the ledger and creation date.
 
@@ -145,7 +178,7 @@ The chart bundle `dashboard/web/vendor/klinecharts.min.js` is tracked in Git. `n
 
 ### Configure data before research
 
-Set history dates and universe in Settings, refresh the universe, then fetch missing data. Saving Settings does not download anything. Start with Nifty 50 to exercise the workflow with less data; use Nifty 500 for broader research. The history settings require an increasing range of no more than ten years.
+Choose the research universe in Settings. Market data → Fetch always downloads daily candles for the last calendar year and five-minute candles for the last 10 calendar days, ending on Upstox's latest completed Nifty 50 trading day. It covers all 750 Nifty Total Market stocks, regardless of research-universe selection. Older daily and five-minute history stays available. Quarterly fundamentals for the same stocks are checked after candles, with validated snapshots and older versions retained. The Fundamentals page reports scored snapshot history separately from comparative source filings. Failures are reported per stock and interval while remaining downloads continue; partial jobs retain successful data and can be retried. Saving Settings does not download anything.
 
 The UI requests an **access token**, not an API key/client secret. The token expires daily in the current workflow: replace it in Settings and retry failed provider jobs. No code edit or server rebuild is necessary. “Saved” confirms storage, not validity; provider requests establish validity.
 
@@ -159,6 +192,10 @@ Requested coverage and observed candles are different: a recently listed company
 4. Choose entry mode, risk, maximum positions, initial stop, breakeven threshold, winner exit and holding limit.
 5. Set realistic charges and slippage for a costed experiment, or deliberately use zero costs for a reference comparison.
 6. Acknowledge the limitations, submit, follow Jobs & logs, then open the completed report.
+
+The base-and-pivot experiment was retired after failing its matched comparison.
+Its results and archived replay instructions remain in
+[BASE_PIVOT_RESEARCH.md](BASE_PIVOT_RESEARCH.md). Existing Blue sky paper rules remain unchanged.
 
 | Configuration | Interpretation |
 |---|---|
@@ -433,7 +470,7 @@ JSON writes flush before atomic replacement. This protects individual files from
 | IDEA invalid candle, 2024-08-30 | Upstox returned volume `-81259413`; verified NSE volume is `4213707883`. Use only the architecture's exact-match repair. Production retry completed 500/500 on 4 October 2026. |
 | Slow backtest popup initialization | Cold history checks read bar files; the popup displays loading immediately and unchanged-file metadata is cached afterward. |
 | Run disabled on mobile | Read the status next to Run. Finish the active job or fix missing history/warmup; reopen after newly fetched data. |
-| Dates exceed downloaded coverage | Use the available dates or extend Settings/history and fetch. Production on 4 October had coverage ending 1 October, so the 4th exceeded coverage. |
+| Dates exceed downloaded coverage | Use the available dates or fetch rolling market history. Production on 4 October had coverage ending 1 October, so the 4th exceeded coverage. |
 | Loaded symbols excluded from backtest | Recent listings/shorter history can lack configured warmup; inspect report exclusions. |
 | Paper view absent / API 403 locally | Expected local research mode. Production explicitly enables paper. |
 | Automatic cycle failed | Fix the logged token/provider/data problem and retry manually. The scheduler attempts once per weekday. |
@@ -480,3 +517,5 @@ Use a branch/PR when review is appropriate. Author routine changes in a developm
 Do not commit `.env`, tokens, private keys, `.local-key`, `data/`, research artifacts, portfolios, backups or virtual environments. Backtests are separate files but stay ignored, so running UI experiments does not cause Git merge conflicts under this policy. Do not force-add runtime state. Application backup and Git source history serve different purposes.
 
 Future plans include broader strategy plugins and database/queue infrastructure. The current application has no live broker execution, Telegram integration, shared local/remote database, external queue or off-server backup service. Working simulation and positive backtests do not by themselves establish a validated trading edge.
+
+Further intraday strategy research and the 24-trial timeframe/selection comparison are in [MOMENTUM_DEEP_RESEARCH.md](MOMENTUM_DEEP_RESEARCH.md). Momentum now separates the opening range from completed 5/10/15/30/60-minute confirmation; execution and protective exits retain five-minute resolution.

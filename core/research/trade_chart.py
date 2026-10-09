@@ -3,6 +3,7 @@ from bisect import bisect_left, bisect_right
 from types import SimpleNamespace
 from datetime import date
 from core.research.config import TradingConfig
+from core.research import store
 
 
 def explain_trade(result, datasets, trade, bars, first, last):
@@ -155,6 +156,15 @@ def explain_trade(result, datasets, trade, bars, first, last):
         notices.append(f'The reconstructed stop is reached on {early_stop}, earlier than the recorded exit. The stop trace ends there; it is not an exact historical engine trace.')
     if cfg.pattern == 'vcp':
         notices.append('The VCP signal uses its contraction-window high; pivot execution can use a different base-days high. VCP base-depth and market-cap filters are not enforced by this engine.')
+    if result.get('fundamental_reference'):
+        from core.research.fundamental_history import Scores
+        payload = store.read('run_fundamentals/'+result['id'])
+        if not payload or payload.get('sha256') != result['fundamental_reference']['sha256']:
+            raise ValueError('Frozen financial evidence is missing or changed.')
+        financial = Scores(payload, cfg.entry_mode)(trade['symbol'],trade['entry_date'])
+        check('Entry fundamental score / 100', financial['score'], 'Ranking context; higher first', None)
+        check('Fundamental evidence coverage (%)', financial['coverage_pct'], 'Tie-break context; higher first', None)
+        notices.append('Financial period: '+str(financial['period_end'])+'; evidence available: '+str(financial['available_at'])+'. '+result['fundamental_reference']['notice'])
     return {'bars': enriched, 'series': series, 'signal': {'date': signal['date'], 'timestamp': signal['timestamp'], 'price': signal['close']} if signal else None,
             'checks': checks, 'notices': notices, 'pattern': cfg.pattern, 'entry_mode': cfg.entry_mode,
             'candidate_rank': cfg.candidate_rank, 'winner_exit': cfg.winner_exit}

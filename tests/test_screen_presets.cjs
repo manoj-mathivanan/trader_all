@@ -104,6 +104,26 @@ function changeScreen(value) {
   await vm.runInContext("newBacktest({pattern:'vcp',base_days:25,volume_multiple:1.5,vcp_volume_multiple:.8})", context);
   assert.match(context.body, /name="base_days"[^>]*value="25"/);
   assert.match(context.body, /name="vcp_volume_multiple"[^>]*value="0.8"/);
+  // Full saved strategies retain allocation, ranking, risk, exits and costs.
+  vm.runInContext(`state.screens.push({id:'full_strategy',name:'Blue Sky Fundamental Ranking',pattern:'blue_sky',...builtinScreenFilters,minimum_warmup_sessions:260,trading_defaults:{name:'Blue Sky Fundamental Ranking',pattern:'blue_sky',capital:1000000,candidate_rank:'fundamental_score',max_positions:5,risk_pct:1.5,stop_pct:8,winner_exit:'take_25',entry_mode:'next_open',buy_cost_bps:35,sell_cost_bps:50,slippage_bps:10,skip_weak_markets:true}});`,context);
+  changeScreen('full_strategy');
+  assert.equal(form.elements.candidate_rank.value,'fundamental_score');
+  assert.equal(form.elements.max_positions.value,5);
+  assert.equal(form.elements.risk_pct.value,1.5);
+  assert.equal(form.elements.winner_exit.value,'take_25');
+  assert.equal(form.elements.buy_cost_bps.value,35);
+  assert.equal(form.elements.skip_weak_markets.checked,true);
+  form.id='paper-form';form.elements.capital.readOnly=true;form.elements.capital.value=250000;
+  changeScreen('full_strategy');
+  assert.equal(form.elements.capital.value,250000); // Existing allocation remains fixed.
+  assert.equal(form.elements.pattern.value,'blue_sky');
+  form.id='backtest-form';form.elements.capital.readOnly=false;
+  await vm.runInContext("newBacktest({screen:'full_strategy'})",context);
+  assert.match(context.body,/name="name"[^>]*value="Blue Sky Fundamental Ranking"/);
+  assert.match(context.body,/name="candidate_rank"[^>]*value="fundamental_score"/);
+  assert.match(context.body,/name="max_positions"[^>]*value="5"/);
+  assert.match(context.body,/name="buy_cost_bps"[^>]*value="35"/);
+  assert.match(context.windowPath,/warmup=260$/);
   // The dialog appears before the slow date request resolves, and closing it cancels rendering.
   vm.runInContext(`api=()=>new Promise(resolve=>{globalThis.resolveDates=resolve;});globalThis.modalOpen=true;document.querySelector=selector=>selector==='#modal'?{open:modalOpen}:null;`,context);
   const opening=vm.runInContext('newBacktest()',context);

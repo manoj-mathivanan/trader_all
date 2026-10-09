@@ -1,6 +1,8 @@
 """Atomic local research artifacts. Replace with Postgres/RQ for deployment."""
 import json
 import os
+import time
+from uuid import uuid4
 from pathlib import Path
 from threading import RLock
 from datetime import datetime, timezone
@@ -29,12 +31,26 @@ def write(name, value):
     with LOCK:
         path = DATA / (name + ".json")
         path.parent.mkdir(parents=True, exist_ok=True)
-        temp = path.with_suffix(".tmp")
-        with temp.open('w', encoding='utf-8') as pending:
-            json.dump(value, pending, allow_nan=False, indent=2)
-            pending.flush()
-            os.fsync(pending.fileno())
-        temp.replace(path)
+        temp = path.with_name(f'.{path.name}.{uuid4().hex}.tmp')
+        try:
+            with temp.open('x', encoding='utf-8') as pending:
+                json.dump(value, pending, allow_nan=False, indent=2)
+                pending.flush()
+                os.fsync(pending.fileno())
+            for attempt in range(5):
+                try:
+                    temp.replace(path)
+                    break
+                except PermissionError:
+                    if attempt == 4:
+                        raise
+                    # Windows readers/virus scanners can briefly deny replacement.
+                    time.sleep(.05 * 2 ** attempt)
+        finally:
+            try:
+                temp.unlink(missing_ok=True)
+            except OSError:
+                pass
 
 
 def cipher():

@@ -1,0 +1,27 @@
+const assert=require('node:assert/strict');
+const fs=require('node:fs');
+const vm=require('node:vm');
+const source=fs.readFileSync('dashboard/web/app.js','utf8');
+const context=vm.createContext({document:{addEventListener(){}}});
+vm.runInContext(source.slice(0,source.indexOf("$('#modal').addEventListener('close'")),context);
+vm.runInContext(`
+state={settings:{universe:'nifty500'},jobs:[],runs:[{id:'abc',strategy_id:'intraday_momentum',config:{name:'Baseline',start:'2026-08-26',end:'2026-09-04'},metrics:{trade_count:20,return_pct:-1}}],momentum_sources:[]};
+globalThis.view=momentumView();
+globalThis.markers=stockTradeMarkers({trade:{direction:'short',entry_date:'2026-09-01',exit_date:'2026-09-01',entry_timestamp:123,exit_timestamp:456,entry:100,exit:98},trade_index:0});
+`,context);
+assert.match(context.view,/Momentum backtest/);
+assert.match(context.view,/Baseline/);
+assert.equal(context.markers[0].timestamp,123);
+assert.equal(context.markers[1].timestamp,456);
+assert.match(source,/name="strategy_id" value="intraday_momentum"/);
+assert.match(source,/seed.strategy_id==='intraday_momentum'\)return newMomentum/);
+assert.match(source,/api\('jobs\/momentum','POST',cfg\)/);
+assert.match(context.view,/Modeled cost drag/);
+assert.match(context.view,/Compare refinements/);
+assert.match(context.view,/Research ideas/);
+assert.match(source,/'confirmation_minutes','require_vwap'/);
+const comparison=vm.runInContext(`momentumComparisonTable({start:'2026-08-26',end:'2026-09-04',notice:'All trials retained',trials:[{label:'VWAP & buffer',run_id:'abc',delta_return_pct:.5,metrics:{return_pct:-.56,max_drawdown_pct:1.14,trade_count:18},evaluation:{segments:[{return_pct:.49},{return_pct:-1.04}]}}]})`,context);
+assert.match(comparison,/VWAP &amp; buffer/);
+assert.match(comparison,/Earlier \/ later/);
+assert.match(comparison,/-0.56%/);
+console.log('Momentum page, rerun routing, strategy form and timed trade markers passed.');

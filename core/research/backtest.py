@@ -31,13 +31,15 @@ def required_warmup(cfg):
     return max(cfg.base_days, cfg.sma_days, 50, extra)
 
 
-def simulate(datasets, cfg, *, state=None, liquidate=True, allow_entries=True, entry_warmup=0):
+def simulate(datasets, cfg, *, state=None, liquidate=True, allow_entries=True, entry_warmup=0, entry_check=None, fundamental_scores=None):
     """One daily engine for research and durable paper sessions.
 
     State is copied: a failed cycle never mutates the last committed ledger.
     """
     if getattr(cfg, 'execution_horizon', 'swing') == 'intraday':
         raise ValueError('Intraday backtests require five-minute inputs. Use the backtest job workflow.')
+    if cfg.candidate_rank == 'fundamental_score' and fundamental_scores is None:
+        raise ValueError('Fundamental ranking requires dated financial evidence.')
     if cfg.pattern in dict(bearish.SCREENS):
         if state is not None or not liquidate or not allow_entries:
             raise ValueError('Bearish backtests support isolated research runs only, not paper portfolios.')
@@ -140,6 +142,8 @@ def simulate(datasets, cfg, *, state=None, liquidate=True, allow_entries=True, e
                        'quantity': p.get('entry_quantity', p['quantity']), 'exit_quantity': p['quantity'],
                        'pnl': pnl, 'r': pnl / p['initial_risk'], 'reason': reason,
                        'fees': p['entry_fee'] + fee})
+        if 'fundamentals' in p:
+            trades[-1]['fundamentals'] = p['fundamentals']
 
     for day in sorted(events):
         context_cache.clear()
@@ -170,12 +174,15 @@ def simulate(datasets, cfg, *, state=None, liquidate=True, allow_entries=True, e
         equity_at_open = cash + sum(p['quantity'] * (session[s][1]['open'] if s in session else marks[s]) for s, p in positions.items())
         # Ranking uses only the completed signal session, never the entry-day close.
         def priority(symbol):
+            if cfg.candidate_rank == 'fundamental_score':
+                from core.research.fundamental_history import rank_key
+                return rank_key(fundamental_scores(symbol, day), symbol)
             idx, _ = session[symbol]
             signal_idx = idx if cfg.entry_mode == 'close' and cfg.pattern != 'breakout' else idx - 1
             score = relative_strength(datasets[symbol][signal_idx]['date']).get(symbol, (-1, -1)) if signal_idx >= 0 else (-1, -1)
             return (-score[0], -score[1], symbol)
 
-        candidates = sorted(session, key=priority) if getattr(cfg, 'candidate_rank', 'alphabetical') == 'rs_126' else sorted(session)
+        candidates = sorted(session, key=priority) if cfg.candidate_rank in ('rs_126', 'fundamental_score') else sorted(session)
         for symbol in candidates:
             if not allow_entries:
                 break
@@ -184,6 +191,9 @@ def simulate(datasets, cfg, *, state=None, liquidate=True, allow_entries=True, e
             if symbol in positions or symbol in exited or (cfg.pattern == 'breakout' and i < 1) or signal_idx < entry_warmup or signal_idx < 0 or not signal(context(symbol, datasets[symbol][signal_idx]['date']), signal_idx, cfg):
                 continue
             signal_day = datasets[symbol][signal_idx]['date']
+            if entry_check is not None and not entry_check(symbol,day):
+                skipped += 1
+                continue
             if getattr(cfg, 'min_rs_rating', 0) > 0 and relative_strength(signal_day).get(symbol, (-1, 0))[0] < cfg.min_rs_rating:
                 skipped += 1
                 continue
@@ -216,10 +226,14 @@ def simulate(datasets, cfg, *, state=None, liquidate=True, allow_entries=True, e
             total_slippage += execution['slippage']
             orders.append({'id': f"{symbol}:{day}:buy", 'symbol': symbol, 'date': day, 'side': 'buy',
                            'quantity': qty, 'price': fill, 'fees': fee, 'status': 'FILLED', 'reason': 'Completed-bar signal'})
+            if fundamental_scores is not None:
+                orders[-1]['fundamentals'] = fundamental_scores(symbol, day)
             positions[symbol] = {'entry': fill, 'entry_date': day, 'entry_cost': qty * fill + fee,
                                  'entry_fee': fee, 'quantity': qty, 'stop': stop, 'best_close': fill,
                                  'initial_risk': qty * (fill - stop), 'age': 0,
                                  'exit_config': {k: getattr(cfg, k) for k in ('pattern', 'stop_pct', 'breakeven_r', 'winner_exit', 'trail_pct', 'max_hold_days')}}
+            if fundamental_scores is not None:
+                positions[symbol]['fundamentals'] = fundamental_scores(symbol, day)
             marks[symbol] = b['open']
             entered_today.add(symbol)
         for symbol in sorted(list(positions)):
@@ -295,7 +309,9 @@ def available_window(settings, warmup=50):
         path = store.DATA / (name + '.json')
         try:
             stat = path.stat()
-            signature = (stat.st_mtime_ns, stat.st_size)
+            # Atomic replacements may have the same size and timestamp on Windows.
+            # Include file identity so ingestion cannot reuse an obsolete summary.
+            signature = (stat.st_ino, stat.st_ctime_ns, stat.st_mtime_ns, stat.st_size)
         except FileNotFoundError:
             signature = None
         cached = _WINDOW_RECORDS.get(str(path))
@@ -387,21 +403,33 @@ def prepare(settings, cfg):
     return universe, datasets, manifest, excluded
 
 
-def run(settings, cfg, log, job_id):
+def run(settings, cfg, log, job_id, *, fundamental_evidence=None):
     universe, datasets, manifest, excluded = prepare(settings, cfg)
     quality = data_quality.audit(datasets, end=cfg.end)
     data_quality.require_no_anomalies(quality)
     log(f'Testing {len(datasets)} symbols with one cash balance; {len(excluded)} excluded for warmup or IPO listing evidence.')
     intraday = getattr(cfg, 'execution_horizon', 'swing') == 'intraday'
+    fundamental_scores = None
+    if fundamental_evidence is not None or cfg.candidate_rank == 'fundamental_score':
+        from core.research import fundamental_history
+        if fundamental_evidence is None and cfg.comparison_run_id:
+            reference = store.read('runs/'+cfg.comparison_run_id, {}).get('fundamental_reference')
+            if reference:
+                fundamental_evidence = store.read('run_fundamentals/'+cfg.comparison_run_id)
+                if not fundamental_evidence or fundamental_evidence.get('sha256') != reference['sha256']:
+                    raise ValueError('Frozen financial evidence is missing or changed.')
+        if fundamental_evidence is None:
+            fundamental_evidence = fundamental_history.capture(universe, log)
+        fundamental_scores = fundamental_history.Scores(fundamental_evidence, cfg.entry_mode)
     minute_inputs = None
     if intraday:
         from core.research import intraday_short, intraday_long, intraday_data
         engine = intraday_short if cfg.pattern in dict(bearish.SCREENS) else intraday_long
-        plan = engine.entry_plan(datasets, cfg)
+        plan = engine.entry_plan(datasets, cfg, fundamental_scores=fundamental_scores) if cfg.pattern not in dict(bearish.SCREENS) else engine.entry_plan(datasets, cfg)
         minute_inputs = intraday_data.load_sessions(plan, universe, log)
         result = engine.simulate(datasets, cfg, minute_inputs, plan=plan)
     else:
-        result = simulate(datasets, cfg)
+        result = simulate(datasets, cfg, fundamental_scores=fundamental_scores)
     result.pop('state')  # Persistent execution state belongs to paper portfolios only.
     result.update(id=job_id, created_at=store.now(), config=cfg.model_dump(mode='json'),
                   universe=settings.universe, universe_snapshot=universe, manifest=manifest, excluded=excluded,
@@ -410,7 +438,7 @@ def run(settings, cfg, log, job_id):
                   history_reference=market_history.evidence(snapshot=True),
                   warnings=['Current constituents only: survivorship bias remains. This is not an edge-validation result.',
                             'Corporate-action adjustments, exchange-calendar gaps and delisted history are not verified.',
-                            'The Banana screen set and risk/exits are implemented, but historical membership and RS ranking still need a verified market-wide dataset.',
+                            'Screens use independent research approximations inspired by Banana Patterns; detector parity is unverified and historical membership/market-wide RS need verified data.',
                             'All-in fee rates are your assumptions, not a verified historical tax/brokerage schedule.',
                             'No volume participation cap, circuit-limit or non-fill simulation; stops may fill worse in real markets.',
                             'This run is exploratory/in-sample. Reserve a later untouched period before judging the strategy.'])
@@ -421,6 +449,10 @@ def run(settings, cfg, log, job_id):
             f'Annual borrow cost assumption: {cfg.borrow_cost_bps_year:g} bps, accrued on calendar days at the last marked short liability. Zero excludes borrow costs.',
             'Weak-market breadth and RS are computed on the prepared eligible universe; exclusions can change the cross-section.'
         ])
+    if fundamental_evidence is not None:
+        store.write('run_fundamentals/'+job_id, fundamental_evidence)
+        result['fundamental_reference'] = {k: fundamental_evidence[k] for k in ('sha256','captured_at','method','notice')}
+        result['warnings'].append(fundamental_evidence['notice'])
     if getattr(cfg, 'comparison_run_id', None):
         reference_run = store.read('runs/' + cfg.comparison_run_id)
         result['history_reference'] = reference_run.get('history_reference', {})

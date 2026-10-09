@@ -142,8 +142,29 @@ def cycle(log, job_id, *, ingest=True):
     quality = data_quality.audit(datasets, start=start, end=end, after=last)
     data_quality.require_no_anomalies(quality)
     log(f'Processing {start} through {end}; {portfolio["status"]} paper portfolio, next-open fills with costs.')
+    from core.research import fundamentals
+    symbol_isins={item['symbol']:item['isin'] for item in instruments}
+    fundamental_screen=fundamentals.buy_screen('swing_patterns')
+    fundamental_checks=[]
+    fundamental_cache={}
+    def financial_check(symbol,day):
+        if (symbol,day) not in fundamental_cache:
+            fundamental_cache[symbol,day]=fundamentals.buy_check(symbol_isins[symbol],'swing_patterns',
+                at=datetime.fromisoformat(day+'T09:15:00+05:30'),screen=fundamental_screen)
+        return fundamental_cache[symbol,day]
+    def entry_check(symbol,day):
+        check=financial_check(symbol,day)
+        fundamental_checks.append(dict(symbol=symbol,day=day,buy_allowed=check['buy_allowed'],score=check['score'],
+                                      coverage_pct=check['coverage_pct'],reasons=check['block_reasons'],
+                                      snapshot_id=(check['snapshot'] or {}).get('id'),screen=check['screen']))
+        return check['buy_allowed']
+    def ranking_score(symbol,day):
+        check=financial_check(symbol,day)
+        return {k:check[k] for k in ('score','coverage_pct','flags','period_end') if k in check}
     result = backtest.simulate(datasets, simulation_cfg, state=ledger, liquidate=False,
-                               allow_entries=portfolio['status'] == 'active', entry_warmup=backtest.required_warmup(cfg))
+                               allow_entries=portfolio['status'] == 'active', entry_warmup=backtest.required_warmup(cfg),
+                               entry_check=entry_check,
+                               fundamental_scores=ranking_score if cfg.candidate_rank == 'fundamental_score' else None)
     new_ledger = result['state']
     new_orders = new_ledger['orders'][len(ledger.get('orders', [])):]
     for order in new_orders:
@@ -157,6 +178,7 @@ def cycle(log, job_id, *, ingest=True):
                                 'sessions': sessions, 'config': cfg.model_dump(mode='json'),
                                 'order_count': len(new_orders), 'status': portfolio['status']})
     portfolio['cycles'][-1].update(history_evidence=histories, provenance=provenance.capture())
+    portfolio['cycles'][-1]['fundamental_checks']=fundamental_checks
     # Commit cash, positions, orders, trades and checkpoint together; retries are idempotent.
     store.write(KEY, portfolio)
     log(f'Committed {sessions} sessions, {len(new_orders)} simulated fills, {len(new_ledger["positions"])} open positions.')

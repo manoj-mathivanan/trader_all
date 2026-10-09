@@ -1,8 +1,16 @@
 from concurrent.futures import ThreadPoolExecutor
 from uuid import uuid4
+from pathlib import Path
+import traceback
 from core.research import store
 
 POOL = ThreadPoolExecutor(max_workers=1, thread_name_prefix="research")
+
+
+def failure_detail(error):
+    frames = traceback.extract_tb(error.__traceback__)
+    location = f' at {Path(frames[-1].filename).name}:{frames[-1].lineno}' if frames else ''
+    return f'Unexpected failure ({type(error).__name__}{location}). Retry this job; valid saved data is retained. No credentials were logged.'
 
 
 def recover():
@@ -39,12 +47,13 @@ def submit(kind, function, payload=None):
         update(job["id"], status="running", message=f"Started {kind}.")
         try:
             result = function(lambda message: update(job["id"], message=message), job["id"])
-            update(job["id"], status="success", message="Completed.", result=result)
+            update(job["id"], status="failed" if result and result.get("partial") else "success",
+                   message="Completed all stocks with failures; inspect the result and logs, then retry." if result and result.get("partial") else "Completed.", result=result)
         except ValueError as exc:
             update(job["id"], status="failed", message=str(exc))
-        except Exception:
+        except Exception as exc:
             # Never persist HTTP request headers, tokens, or raw provider responses.
-            update(job["id"], status="failed", message="Unexpected failure. Check local data integrity and retry; no credentials were logged.")
+            update(job["id"], status="failed", message=failure_detail(exc))
 
     POOL.submit(execute)
     return job

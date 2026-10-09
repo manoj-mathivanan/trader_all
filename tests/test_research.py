@@ -88,7 +88,8 @@ class DataAndSecurityTests(unittest.TestCase):
         definitions = all_strategies()
         self.assertEqual([x['id'] for x in definitions], ['swing_patterns', 'intraday_momentum', 'scalping'])
         self.assertEqual(get_strategy('swing_patterns').backtest_engine, 'daily_breakout')
-        self.assertEqual(get_strategy('intraday_momentum').status, 'planned')
+        self.assertEqual(get_strategy('intraday_momentum').status, 'active')
+        self.assertEqual(get_strategy('intraday_momentum').backtest_engine, 'opening_range_momentum')
 
     def test_incremental_merge_preserves_existing_and_replaces_duplicate(self):
         old = [candle('2026-01-01', 100, 101, 99, 100), candle('2026-01-02', 100, 102, 99, 101)]

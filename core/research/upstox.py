@@ -11,7 +11,9 @@ from core.research import store
 
 INSTRUMENTS = "https://assets.upstox.com/market-quote/instruments/exchange/NSE.json.gz"
 UNIVERSES = {"nifty50": "https://www.niftyindices.com/IndexConstituent/ind_nifty50list.csv",
-             "nifty500": "https://www.niftyindices.com/IndexConstituent/ind_nifty500list.csv"}
+             "nifty500": "https://www.niftyindices.com/IndexConstituent/ind_nifty500list.csv",
+             "niftytotalmarket": "https://www.niftyindices.com/IndexConstituent/ind_niftytotalmarket_list.csv"}
+MIN_CONSTITUENTS = {"nifty50": 45, "nifty500": 450, "niftytotalmarket": 700}
 
 
 def get(client, url, *, headers=None):
@@ -43,7 +45,7 @@ def match_constituents(rows, master):
     instruments, missing, excluded = [], [], []
     for row in rows:
         symbol, isin = row['Symbol'].strip(), row['ISIN Code'].strip()
-        if symbol.startswith('DUMMY') and isin.startswith('DUM'):
+        if symbol.startswith('DUMMY') and isin.startswith('DU') and row['Company Name'].lower().startswith('dummy'):
             excluded.append({'symbol': symbol, 'isin': isin,
                              'reason': 'Official index placeholder, no tradeable provider instrument.'})
             continue
@@ -76,7 +78,7 @@ def refresh_universe(settings, log):
         raw = get(client, INSTRUMENTS).content
         master = json.loads(gzip.decompress(raw) if raw[:2] == b"\x1f\x8b" else raw)
     instruments, excluded = match_constituents(rows, master)
-    if len(instruments) < (45 if settings.universe == "nifty50" else 450):
+    if len(instruments) < MIN_CONSTITUENTS[settings.universe]:
         raise ValueError("Constituent count unexpectedly low. No universe was replaced.")
     record = {"name": settings.universe, "fetched_at": store.now(), "membership": "current_snapshot",
               "source": UNIVERSES[settings.universe], "instruments": instruments,
@@ -86,6 +88,21 @@ def refresh_universe(settings, log):
     for item in excluded:
         log(f"Excluded {item['symbol']}: {item['reason']}")
     return record
+
+
+def ingest_expansion(settings, log):
+    """Pull only members outside the stored Nifty 500; paper membership stays frozen."""
+    if settings.universe != "niftytotalmarket":
+        raise ValueError("Universe expansion requires Nifty Total Market.")
+    baseline = store.read("universes/nifty500")
+    if not baseline:
+        raise ValueError("Refresh Nifty 500 before pulling additional constituents.")
+    baseline_isins = {item["isin"] for item in baseline["instruments"]}
+    target = refresh_universe(settings, log)
+    additional = [item for item in target["instruments"] if item["isin"] not in baseline_isins]
+    log(f"Pulling {len(additional)} additional constituents; existing Nifty 500 candles and paper portfolio are untouched.")
+    result = ingest(settings, log, universe={**target, "instruments": additional})
+    return {**result, "universe": settings.universe, "total_members": len(target["instruments"])}
 
 
 def validate_candles(candles, start, end):

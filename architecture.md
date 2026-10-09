@@ -1,5 +1,13 @@
 # Trader — authoritative architecture and rebuild specification
 
+**Company research addition — 8 October 2026.** The Fundamentals page adds advisory
+technical candidate scans, sector-aware experimental quality scores and automatic LLM
+web research of company filings and recent news. Research runs through the existing
+job worker and preserves cited reviews. Users do not supply sources. The server needs
+`OPENAI_API_KEY` and `TRADER_NEWS_MODEL`; production paid actions require authentication.
+Backtest/paper entry rules are unchanged. The complete feature contract, storage and
+validation are documented in [COMPANY_RESEARCH.md](COMPANY_RESEARCH.md).
+
 **Reconciled with the application and owner decisions on 4 October 2026.**
 
 **Research thread reconciled — 4 October 2026.** The final refreshed custom Blue sky
@@ -52,18 +60,18 @@ New UI token saves use a plaintext private file with restricted filesystem permi
 
 | Area | Final decision / current status |
 |---|---|
-| Purpose | Personal rules-based equities research locally and in production; production-only simulated paper trading; no SaaS, multi-tenant service, tips or managed money |
+| Purpose | Personal rules-based equities research locally and in production; production Swing paper and local/production forward Scalping paper; no SaaS, multi-tenant service, tips or managed money |
 | Current market coverage | NSE cash equities matched to current Nifty 50 or Nifty 500 constituents; broad NSE/BSE support is a future target |
 | Product order | Dashboard first, real data and backtests next; production paper support is explicitly authorized before edge validation |
 | Visual direction | Light cream/green Banana-inspired design, optional persistent dark toggle; original source/assets only |
 | Strategy versus screen | One active Swing Patterns strategy with VCP, Blue sky, Multi-year and IPO screens; no separate parity strategy/profile |
-| Future strategies | intraday_momentum and scalping are registered as planned; options is a roadmap item, not a current registry entry |
+| Momentum research | intraday_momentum is active for five-minute opening-range backtests; momentum paper/streaming execution remains pending; scalping supports one-minute pullback research and forward quote paper (see SCALPING_RESEARCH.md); options is a roadmap item |
 | Portfolio ownership | Exactly one created portfolio per strategy ID, independent cash/capital/configuration/positions/history; no capital pooling |
 | Configurability | Research settings and paper screen/risk/exits/costs/schedule are editable in the UI; schema-defined fields, no deploy for routine tuning |
 | Accounting invariants | Paper capital and membership are fixed after creation; capital transfers/reallocation are not implemented; editing other settings never resets the ledger |
-| Execution | Simulated EOD long-only fills only; paper uses next_open; backtests also allow pivot/close; Upstox is currently data access, not an order broker |
+| Execution | Swing paper uses simulated EOD next_open fills; Scalping paper uses observed streamed bid/ask for long/short fills; Upstox supplies data only, with no broker orders |
 | Persistence | Durable per-strategy JSON ledger, atomic replacement and session checkpoint; startup restores history and retries interrupted scheduled work |
-| Runtime | One loopback FastAPI process and in-process job worker per environment; weekday paper scheduler starts only in production; no Postgres, Redis, RQ or separate runner |
+| Runtime | One loopback FastAPI process and in-process research job worker per environment; Swing weekday scheduler starts only in production; Scalping has a separate optional quote process with cross-process locks; no Postgres, Redis or RQ |
 | Data honesty | Real provider data only; tests may use isolated synthetic fixtures; no invented candles, prices, trades or performance |
 | Research gate | Edge is not validated; current constituents, adjustments, historical RS and listing history remain incomplete; live trading and the larger database/queue roadmap require research validation; current remote research/paper MVP is authorized |
 | Deployment | MVP deployed to DigitalOcean with Caddy HTTPS at trader.manojmathivanan.com; live mode remains unavailable |
@@ -73,7 +81,7 @@ New UI token saves use a plaintext private file with restricted filesystem permi
 Implemented: six production dashboard views (five locally), plaintext private token saves, real constituent matching/ingestion,
 coverage and candlestick charts, saved screens, costed backtests and complete sortable reports,
 jobs/logs, isolated paper portfolios, configurable paper UI, scheduling and restart recovery.
-Production MVP deployment is implemented. Database/queue/separate runners, Telegram, momentum/scalping/options execution,
+Production MVP deployment is implemented. Database/queue, Telegram, momentum paper/streaming and options execution,
 live broker accounts/orders/stops/reconciliation and unbiased edge validation remain pending.
 No account/portfolio or automatic paper schedule is created at installation. Deployment installs the separate nightly data-backup timer.
 
@@ -108,7 +116,7 @@ The shared file-based MVP is intentionally smaller than the future database/queu
 | `core/portfolio/scheduler.py` | Production-only weekday schedule, claims and restart recovery |
 | `core/risk/position_sizer.py` | Shared risk and cash sizing |
 | `core/execution/paper.py` | Shared simulated fills, fees and actual slippage |
-| `core/strategies/registry.py` | Active Swing Patterns strategy plus planned Intraday Momentum and Scalping entries |
+| `core/strategies/registry.py` | Active Swing Patterns, Intraday Momentum research and Scalping research entries |
 | `strategies/swing_patterns/patterns/registry.py` | Banana screen registry |
 | `strategies/swing_patterns/patterns/signals.py` | Pure daily-bar signal predicates |
 
@@ -121,10 +129,12 @@ On Windows, run `start.ps1` from the repository root. The dashboard is loopback-
 - Upstox is the primary historical EOD source. The user has Upstox API access; never ask for or
   print access tokens in chat, logs, code, or reports.
 - The token is entered in each environment's Settings and saved as plaintext in its private file, with restricted filesystem permissions. It is never returned to the browser or logged. Legacy encrypted local records remain readable with the original key. Mutating requests require the existing `X-Trader-Request: local-ui` header in both environments; its name is a protocol marker, not authentication.
-- The API default universe is **Nifty 50**; the owner expanded this research to **Nifty 500**.
+- The API default universe is **Nifty 50**; the owner expanded research first to **Nifty 500**,
+  then to **Nifty Total Market (750)** on 8 October 2026. The existing paper portfolio retains
+  its frozen Nifty 500 membership.
   Both are implemented Settings choices. The full available 500-member provider universe has
   been fetched; broader NSE/BSE coverage and historical membership remain future work.
-- Settings currently use a maximum ten-year range. The validated working range is
+- Historical setup used a maximum ten-year internal range. The rolling Market data fetch contract below supersedes editable dates. The validated working range is
   research initially used `2019-01-01` onward, then extended stored history to `2018-01-01`.
   Upstox returned actual trading candles through `2026-10-01`; requested end dates and observed
   last sessions are distinct. Do not overwrite other threads’ current Settings merely to
@@ -150,7 +160,7 @@ On Windows, run `start.ps1` from the repository root. The dashboard is loopback-
 
 - Use the shared dashboard for real-data research/backtests locally or in production; create and run paper portfolios only in production.
 - One Swing strategy owns four screen families; VCP is a screen, not another strategy. There is
-  no separate Banana parity profile. Intraday Momentum and Scalping are visibly planned.
+  no separate Banana parity profile. Intraday Momentum and Scalping have active research tabs; Scalping also supports a separately controlled forward quote paper runner. Momentum streaming paper remains pending.
 - Backtest and paper forms have exactly one **Screen** dropdown containing built-ins and saved
   screens. Store `pattern` as a hidden field updated by the selection. Do not add a second
   visible Banana screen selector. Only custom-screen creation has a **Base screen** selector.
@@ -218,7 +228,7 @@ return to overview. Closing/changing views disposes charts and closes the modal.
 | Backtests | New backtest; newest-first run cards with name, universe, dates, IST creation time, return, drawdown, trades; open complete report; explanatory research text |
 | Paper trading | Strategy portfolio selector; Create/configure portfolio; pause/resume new entries; Run daily cycle; status/universe/start/last session/schedule; equity/cash/realized/unrealized cards; open positions, equity curve, closed trades, fills and full JSON export |
 | Jobs & logs | All returned jobs with type/time/status and View logs; pending-job link and manual Refresh; readable timestamped log in a modal |
-| Settings | Universe/history form; private plaintext-token connection form; token saved/replacement status; environment/authentication status; backtest configuration action |
+| Settings | Research-universe form (automatic history windows); private plaintext-token connection form; token saved/replacement status; environment/authentication status; backtest configuration action |
 
 Sidebar saved-screen buttons open New backtest seeded from that screen. Add new screen opens
 name, Base screen and all thirteen filters. New backtest groups fields into Experiment; Banana screen
@@ -488,6 +498,52 @@ creation and updates while any job runs. Configuration history records each upda
 positions retain pattern/stop/breakeven/winner-exit/trail/holding settings captured at entry;
 fee/slippage assumptions use the current cycle config. Changes must not reset positions or cash.
 
+Universe expansion approved on 8 October 2026: support `niftytotalmarket` in Settings and the
+schema-driven research UI, displayed as Nifty Total Market (750). Fetch the official current
+list from `https://www.niftyindices.com/IndexConstituent/ind_niftytotalmarket_list.csv`; match by
+ISIN against the Upstox NSE master with existing ambiguity/dummy/duplicate checks, and require
+at least 700 tradeable constituents before replacing the snapshot. Existing minimums remain
+45 for Nifty 50 and 450 for Nifty 500. Membership remains a current snapshot, not verified
+historical membership.
+
+`POST /api/jobs/universe-expansion` accepts a validated Settings payload with universe
+`niftytotalmarket`, start and end. It requires the server's token and submits a normal tracked
+job named Fetch additional Total Market candles. `upstox.ingest_expansion` requires the stored
+Nifty 500 snapshot, refreshes Total Market, compares ISINs, and ingests only additional members.
+Normal validation, atomic per-symbol saves, partial-failure reporting and retry cache reuse
+apply. Do not rewrite the Nifty 500 snapshot/candles, settings or any paper portfolio during
+this operation. Results contain symbols, bars, universe and total_members. Research selection
+can be changed explicitly in Settings after the pull; standard refresh/ingestion/backtests
+then use the selected universe. Existing paper cycles continue to use their frozen snapshot.
+No broader-universe paper account or migration is implied by downloading these inputs.
+The official list observed on this date contained 755 rows: 750 tradeable stocks plus five
+temporary placeholders (DUMMYHEG, DUMMYINGL1, DUMMYINGL2, DUMMYINXGN, DUMMYTRVN).
+Placeholder exclusion requires a DUMMY-prefixed symbol, DU-prefixed synthetic ISIN and a
+company name beginning Dummy; numbered DU1/DU2 formats are included. Unmatched real ISINs
+still fail. Initial expansion job `6f2d88fdcda5` stopped before snapshot save because the two
+numbered placeholders were unrecognized. After this correction, retry `64b6e7a52d38`
+matched 750 tradeable members and selected exactly 250 additional ISINs. The requested
+history range was 2016-10-08 through 2026-10-08, within the research ten-year validation cap;
+actual bars begin at the provider's available/listed boundary. The deployment comprised
+`f2c0d09` and `e7031c6`, with 128 Python tests and frontend checks passing; both GitHub CI
+runs passed. Production was backed up before the deployment.
+Job `64b6e7a52d38` retained valid history for 249 additional symbols but failed SOUTHBANK:
+the provider returned 2,502 rows for 2,474 unique sessions, including 28 conflicting pairs
+from 2017-01-19 through 2017-05-29. Prices, volumes and timestamps differ, so do not deduplicate,
+aggregate or choose one without independent evidence. The invalid response was never saved.
+Recovery job `40c35221e01f` requests 2017-05-30 through 2026-10-07, reusing the other cached
+stocks while fetching SOUTHBANK's valid later history. This is an explicit shorter-history
+limitation for that stock, not repaired 2017 data or a verified listing date. Do not backfill
+its conflicting earlier provider history without sourced reconciliation.
+Recovery job `40c35221e01f` succeeded at 18:08 IST with all 250 additional stocks and
+425,976 saved candles; all observed final bars were 2026-10-07. Verified all additional files
+were nonempty and requested coverage reached that date. The paper portfolio and stored Nifty
+500 snapshot remained byte-for-byte unchanged against the preservation checkpoint. Research
+Settings were then explicitly saved as universe `niftytotalmarket`, start `2017-05-30`, end
+`2026-10-07` to avoid requesting SOUTHBANK's conflicting earlier data. Existing longer cached
+histories for other stocks remain intact. Website bootstrap reported 750 research members
+and 500 frozen paper members, with AETHER/BHEL/STLTECH positions and last_session 2026-10-07.
+
 Cycle ingests the frozen universe through today if IST time ≥16:00, otherwise yesterday.
 Use the internal `PaperIngestionRange(Settings)` model for this request. It overrides the named
 `dates` validator to require start < end without the research form's 3653-day duration limit;
@@ -536,6 +592,50 @@ gate disabled those breadth thresholds do not block new entries; ordinary screen
 position-limit and execution checks still apply. The change is recorded in config_history and
 applies to subsequent unprocessed sessions, without replaying earlier skipped entries. No cycle
 was submitted merely by saving this setting, and global schema defaults were not changed.
+
+Production incident on 8 October 2026: manual job `3e768f5a48a0` at 09:30 IST and scheduled
+job `0ca65d3e4e05` at 16:15 IST both completed ingestion but halted with
+`Derived candle repairs changed for processed history; paper cycle halted for reconciliation. Ledger unchanged.`
+The sourced COHANCE corrections were unchanged; disabling `skip_weak_markets` invalidated the
+previous reconciliation proof because its checkpoint digest includes current configuration.
+The checkpoint still ended on 2026-10-06 with two processed sessions and no orders. Recovery
+backed up the portfolio and reconciliation metadata on the server, then used
+`scripts/reconcile_candle_repairs.py` against production inputs. Both single-session cycles
+were replayed using their saved configuration/status, with original and corrected derived
+inputs across 499 eligible symbols. Raw processed OHLCV fingerprints were checked first.
+Original replay, corrected replay and saved ledger matched exactly, including every accounting
+field. Only then was `metadata/paper_repair_reconciliations.json` renewed for the exact current
+checkpoint and repair-policy digests. Portfolio cash, settings, orders and history were not
+rewritten. Retry job `153beb223ad5` succeeded at 17:50 IST after renewal, processing one
+session (2026-10-07, the common available completed boundary) and committing three simulated
+buy fills: AETHER 6 shares, BHEL 24 shares and STLTECH 11 shares. These remain three open
+positions. The checkpoint advanced from 2026-10-06 to 2026-10-07; identity, allocated capital,
+configuration, creation/history/start dates were verified against the pre-retry backup.
+The portfolio remains active with automatic weekday runs at 16:15 IST and
+`skip_weak_markets=false`. October 8 was not processed because the common observed boundary
+had not reached that date; do not fabricate a missing session or use future candles.
+
+Reconciliation operation contract: `candle_repairs.checkpoint_identity` binds portfolio ID,
+the SHA-256 of ledger/config/fingerprints/cycles/start_session/universe_snapshot, and the SHA-256
+of the sourced repair policy. Accept only `result=identical_ledgers` with all identities matching.
+Never copy an old digest onto a changed checkpoint or remove the reconciliation guard. The
+current replay helper supports evidenced single-session cycles with unchanged capital and no
+orders; it must reject broader or fill-bearing checkpoints pending a reconstruction that also
+verifies order metadata. Before publishing proof, ensure there are no active jobs and recheck
+that the portfolio has not changed during replay. A later committed cycle records current
+history evidence, allowing normal subsequent cycles to compare against that evidence.
+
+Universe discussion on 8 October 2026: widening membership does not resolve this failure.
+Before the subsequent expansion request, Settings/API supported `nifty50` and `nifty500` only.
+The owner then approved pulling additional research inputs; the implementation above adds
+`niftytotalmarket`. The wider research universe is:
+[Nifty Total Market](https://niftyindices.com/indices/equity/broad-based-indices/nifty-total-market),
+750 constituents comprising Nifty 500 plus Nifty Microcap 250. Compare matched periods and
+costs, liquidity, drawdowns and history coverage before considering paper adoption. Preserve
+the existing portfolio's frozen membership and accounting; any broader-universe paper trial
+requires explicitly designed separate portfolio support or a versioned migration, never a
+silent universe refresh or reset.
+
 Require requested coverage for every symbol; hash prior processed OHLCV through last_session
 and halt if any processed data changed. Use minimum observed final date across symbols as end,
 max(start_session,last_session+one calendar day) as start; require per-symbol warmup. No new
@@ -551,6 +651,10 @@ attempt per strategy/day. It waits while another job is active. A normal failed 
 automatically retried that day; manual retry is available. Startup first marks interrupted jobs
 failed, then releases missing/interrupted schedule claims. The production container must remain running; Docker restarts it after a process crash and Docker/Caddy start at boot. No exchange-holiday calendar or notifications are implemented. The systemd backup timer is separate from this in-process paper scheduler.
 
+### Intraday momentum research contract
+
+`core/research/momentum.py` declares `MomentumConfig`, the prior-session liquidity/ATR preselection, same-opening-interval relative-volume ranking, completed five-minute breakout-close signals, next-bar-open long/short simulation, ATR stops/optional R targets, reserved equal capital budgets, and same-day cutoff exits. It is independent of Swing screen/risk settings and paper execution. The dashboard renders its schema in the Momentum view and dispatches `/api/jobs/momentum`; `/api/momentum/coverage` reports required/cached/missing stock-sessions without fetching. `intraday_data.load_ranges` validates and reuses per-ISIN/session caches, downloads missing inputs in <=28-day V3 requests, and fails on missing expected sessions. Runs snapshot `run_data` and `run_intraday`, daily selections, input hashes, provenance and research references; charts read frozen five-minute inputs. Normal daily-history coverage/listing evidence and price-discontinuity checks remain enforced. Full behavior and the initial experiment are documented in `MOMENTUM_RESEARCH.md`.
+
 ### Strategy plugin and restart contracts
 
 There are two distinct registries. `core/strategies/registry.py` describes navigation and capability:
@@ -558,8 +662,8 @@ There are two distinct registries. `core/strategies/registry.py` describes navig
 | ID | Display name | Status | Granularity | Trigger | Current engine |
 |---|---|---|---|---|---|
 | swing_patterns | Swing patterns | active | daily | batch | daily_breakout |
-| intraday_momentum | Intraday momentum | planned | intraday_1m | streaming | null |
-| scalping | Scalping | planned | tick | streaming | null |
+| intraday_momentum | Intraday momentum | active research | intraday_5m | batch | opening_range_momentum |
+| scalping | Scalping | active research | intraday_1m | batch | scalping_pullback |
 
 Each definition exposes id/name/description/status/granularity/trigger_mode/backtest_engine.
 `core/portfolio/registry.py` maps implemented strategy IDs to `PaperPlugin(config_model, run_cycle)`.
@@ -670,6 +774,173 @@ lookup alone is insufficient. All API writes use JSON, Content-Type application/
 request header. The browser treats either a string detail or a 422 detail array as an actionable
 error. The token is sent only to /api/connection and is never part of sample config payloads.
 
+### Rolling market-data fetch — 8 October 2026
+
+This contract supersedes the previous editable history-range and missing-boundary behavior of
+Market data → Fetch. Settings shows only the research Universe dropdown and private connection
+controls. `DataPreferences` accepts only `universe` (nifty50/nifty500/niftytotalmarket; default
+nifty50), forbids extra fields, and is the schema returned as bootstrap.settings_schema and
+accepted by PUT /api/settings. Saving preserves existing internal start/end values and does
+not fetch. Legacy `Settings(DataPreferences)` still includes validated start/end for existing
+saved settings, frozen research/paper snapshots and the separate expansion API. Those legacy
+dates never determine the standard Market data fetch.
+
+POST /api/jobs/ingest requires the installation's saved token and queues `Fetch market history`
+through the existing single-worker queue. The job snapshots the policy (Total Market, rolling
+year, ten calendar days); dates are resolved when execution starts. Fetch is independent of the
+selected research universe and frozen paper membership: refresh the official Nifty Total Market
+list, match every tradeable constituent to an Upstox ISIN/key, and process the full matched list
+(750 stocks at implementation). Exclude documented official dummy placeholders; do not silently
+omit unmatched real members. The research universe dropdown continues to control scans/backtests.
+
+`core/research/market_data.py` defines these exact rules:
+1. Read current Asia/Kolkata time. Before 16:00 IST the latest eligible date is yesterday;
+   at/after 16:00 it is today. Request Nifty 50 daily history for the preceding 30 calendar days
+   through that date, using `NSE_INDEX|Nifty 50`. Its latest returned validated candle is the
+   last completed traded day. Holidays/weekends and historical-provider publication delays
+   follow actual returned data. No benchmark candles means an actionable failure before any
+   stock writes; never guess an anchor from stale local stock coverage.
+2. Daily start is the same calendar date in the preceding year (February 29 maps to February
+   28); end is the anchor, inclusive. Request Upstox V3 days/1 for that complete rolling window
+   on each stock, even if cached. This refreshes existing dates and fills interior gaps.
+3. Five-minute start is anchor minus nine calendar days; end is anchor, inclusive: **10 calendar
+   days, not ten trading sessions**. Request V3 minutes/5 once per stock for that range, within
+   the provider's one-month retrieval limit. Store only actual returned trading sessions;
+   weekends/holidays are not invented. An empty stock response is a failed download.
+4. Validate finite positive consistent OHLC, nonnegative volume, duplicate keys, explicit
+   intraday timezone and five-minute boundaries. Apply existing verified daily overrides.
+   Validate the complete minute response before writing its sessions. Merge daily candles by
+   date and same-day minute candles by timestamp, with newly validated candles taking precedence.
+   Retain all older daily candles and minute session files, plus older requested coverage.
+   Atomic replacement retains the old record if validation fails. Do not trim histories,
+   frozen run inputs, portfolios, universe snapshots or ledgers.
+5. For each constituent attempt daily and five-minute downloads independently, catching both
+   expected validation/provider errors and unexpected exceptions per interval. A stock's 401/403,
+   network error, malformed candle or write failure must not skip its other interval or later
+   stocks. Unexpected diagnostics include the exception class only, without raw text, request
+   headers or tokens. Reuse the provider helper's bounded retries. Sequential requests are paced
+   by 0.15 seconds after each interval; no parallel burst. Global prerequisite/manifest storage
+   failures can still fail the job. Logs show every stock's outcomes and final counts.
+6. Checkpoint non-secret `market_fetch.json` after each stock and at completion. Fields: job_id,
+   universe, daily_start, minute_start, end, started_at, completed_at when finished, total_symbols,
+   daily_symbols, minute_symbols, daily_bars/minute_bars (validated downloads in this window),
+   failures[{symbol,interval,message}], stocks[{symbol,isin,daily,minute}], partial boolean.
+   Each interval has status plus counts/coverage or a safe message. Bootstrap returns market_fetch;
+   the Market data screen shows resolved windows, counts, failures and completion/progress.
+   Daily data/catalog continue using bars/{ISIN}.json and bar_catalog.json. Five-minute sessions
+   use intraday/5m/{ISIN}/{YYYY-MM-DD}.json, shared with existing intraday and momentum loaders.
+7. `jobs.submit` persists the returned summary even when partial; a completed full-list attempt
+   with any interval failures is marked failed with an explicit partial-completion message.
+   Successful downloads remain available. Retry through the same Fetch button after fixing the
+   connection/provider issue. Do not describe a partial download as fully successful.
+
+Backtest date pickers still use saved actual coverage with required indicator warmup, not these
+rolling request dates; retained older data remains usable. All full-fetch state and tokens are
+independent locally and in production. Deploy shared code through GitHub, then trigger the job
+separately in each environment. Do not publish market data or copy local files onto production.
+The official endpoint contract is https://upstox.com/developer/api-documentation/v3/get-historical-candle-data/.
+Tests cover leap years, inclusive windows, provider holiday/delay anchors, unfinished-day exclusion,
+no benchmark data, filling daily holes while retaining old history, merging minute candles without
+removing older days, rejecting malformed minute batches before replacement, universe-only settings
+and attempts for both intervals across all 750 stocks despite authentication/unexpected failures.
+
+Execution verification for this policy (8 October 2026): source `ffcec25` was pushed to public
+GitHub main, GitHub checks succeeded, a production backup completed with Result=success and
+ExecMainStatus=0, and production was rebuilt from that commit. Local job `56e434656706`
+attempted both intervals for all 750 stocks; VEDPOWER daily failed after bounded connectivity
+retries but its five-minute fetch and the remaining stocks continued. A separate, serialized
+recovery job `2ae7c1e933a1` downloaded its 80 daily candles using the original frozen window,
+updated the latest market_fetch summary, and retained the original failed job for audit. The
+summary includes prior_failures and recovery_job_id for this one-off recovery; these are optional
+operational fields, not required by ordinary fetches. Production job `b3d48ec6e710` completed
+without failures. Final counts in **both** installations: 750 daily successes, 750 five-minute
+successes, 183,138 downloaded daily candles and 393,750 downloaded five-minute candles.
+Resolved windows: daily 2025-10-07 through 2026-10-07; five-minute 2026-09-28 through
+2026-10-07. These are observed provider windows, not hardcoded future fetch bounds.
+Local daily cache retained 961,472 candles, with 477 stocks extending before the rolling year,
+and 4,878 older five-minute session files remained. Production retained 1,428,687 daily candles,
+with 708 stocks extending before the rolling year. Research-universe selection and frozen
+paper membership were preserved. The isolated release passed 136 Python tests and existing
+frontend tests; the full concurrent local workspace passed 202 Python tests and its frontend
+suite. All 136 release tests also passed in the deployed production image using temporary
+isolated state and mounted test/scripts fixtures. Live production bootstrap and JavaScript
+rendering confirmed Universe-only settings, both resolved windows and progress/count display.
+
+### Fundamentals included in Market data fetch — 9 October 2026
+
+Market data → Fetch prices & fundamentals now runs three stages for the same current 750-stock
+Nifty Total Market universe: rolling-year daily candles, last-ten-calendar-day five-minute
+candles, then quarterly fundamentals. Candle windows and retention remain as specified above.
+The fundamentals stage uses the official NSE integrated-financials index and direct NSE Ind-AS
+HTML filings; no provider token, LLM or paid data key is needed for that stage. One failed
+stock must not abort the remaining fundamental checks. Unexpected per-stock exceptions expose
+only their class. A fundamentals-stage failure cannot undo saved candles. The market_fetch
+result has a nested fundamentals summary; any failed stage/stock marks the job partial/failed.
+Unsupported financial taxonomies are counted honestly, not turned into fabricated snapshots.
+
+Fundamentals implementation files: core/research/fundamentals.py (pull/lock/validation/coverage),
+core/research/official_filings.py (official index/parser/calculation), and core/research/company_review.py
+(validated input schema, deterministic scorer, source/date eligibility and company overview).
+The company API router and company-review.js make the existing Fundamentals page available in
+production. This publication adds the data fetch, evidence view and quality checks; it does not
+change existing production paper-entry predicates or historical backtest priority. Local paper
+and research experiments in other unfinished work retain their own separate scope.
+
+For each stock keep company, snapshot, score/checks, source documents, validation, latest indexed
+period, last_period_end, next_quarter_end, last_checked_at, last_attempted_at and last_pulled_at.
+Latest records live in company/fundamentals/{ISIN}.json; each successful version is also retained
+under company/fundamentals/{ISIN}/history/{snapshot_id}.json. Raw HTML and parsed financial facts
+are content-addressed in company/filings/{sha256}.html and .json. Validate exact identity, financial
+period/publication time, accounting basis, INR units, hashes and recomputed metrics before saving.
+Failed updates retain older validated snapshots. Never delete older versions or source files.
+
+Prefer consolidated filings for the newest indexed period, otherwise standalone. Query the NSE
+index for up to the preceding 800 calendar days, choosing up to eight latest revisions for the
+latest quarter, its prior-year quarter, the latest completed annual March period and its prior-year
+annual comparator. The 800-day search is **not** a promise of 800 days of stored quarterly history.
+Only those selected source periods are downloaded. Missing balance sheet/annual inputs stay unknown.
+Financial Services bank/NBFC adapters and other unsupported forms remain missing/unsupported.
+P/E, full promoter-pledge and governance research are not inferred from missing fields.
+
+Skip a stored snapshot covering the latest completed calendar quarter until the next quarter ends.
+Otherwise check the index at most once per UTC day; when the next quarter remains unpublished,
+retain the existing snapshot without redownloading its source filings. The explicit combined
+Market data fetch retries previously failed stocks even if checked today (`retry_failed=True`).
+Same-quarter revisions are not reingested by this policy. Standalone pull API/CLI retains its
+ordinary daily-skip behavior, with CLI --retry-failed for an explicit same-day retry.
+Use a cross-process filesystem lock so a standalone pull cannot overlap the combined pull.
+
+Scored nonfinancial fields: quarterly revenue growth YoY (15 points if >=10%), PAT growth YoY
+(20 if >=10%), ROE (15 if >=12%), ROCE (10 if >=15%), debt/equity (10 if <=1), interest coverage
+(5 if >=3), annual operating cash flow/PAT (5 if >=0.8), pledging (10 if <=5%), no auditor concern
+(5) and no governance concern (5). Missing metrics receive zero points and reduce evidence coverage.
+Financial-sector inputs have separate NPA/capital-adequacy rules, but the filing downloader does
+not yet populate them. Scores are experimental and must not be described as validated predictors.
+Financial periods older than 180 days are flagged stale; source publication and recorded time
+are both respected when choosing a snapshot for a given decision time.
+
+Progress/checkpoints: company/fundamentals_pull.json holds job_id, started_at, total_symbols,
+counts by status, stock results, completed_at, partial and coverage. The nested market_fetch
+fundamentals object returns this summary. company/fundamentals_coverage.json is measured at
+completion and distinguishes validated stocks, missing stocks, pull statuses, scored snapshot
+period counts, retained versions, distinct company-periods, stocks with multiple snapshot periods,
+unique comparative source filings, source period counts and first/last source publication.
+GET /api/company/fundamentals-history returns the cached measurement, computing it when absent.
+GET /api/company includes history_coverage. The Fundamentals page displays it separately from
+scores; Market data shows validated coverage, updated/failed/unsupported counts and the page link.
+The archive contains comparative quarterly and annual evidence, not a complete consecutive-quarter
+scored history; older filings may have been collected retrospectively. Current scores must never
+be substituted into historical decisions. company/fundamentals_validation.json separately records
+an offline audit of checksums, identity, periods and metric reconstruction.
+
+Operational commands: `python scripts/pull_fundamentals.py` (Total Market default),
+`--retry-failed`, `--symbols TCS STLTECH` for focused retries, and `--validate-only` for an offline
+source audit. Production runs the same command within its container/state mounts; tokens and
+all source/price/fundamental data remain installation-specific and excluded from Git/images.
+POST /api/company/fundamentals-pull queues a standalone fundamental refresh. Existing company
+quality-check APIs and source review routes use the shared origin/auth guards. Deploy source
+through GitHub after tests/backup, then trigger the combined job separately locally/production.
+
 ### API, security and persistence contract
 
 All routes use the same origin and optional Basic Auth (unset in the public MVP). Bind 127.0.0.1:8765 with one process, never reload/multiple workers. Local launch disables proxy headers. Production trusts proxy headers only from 127.0.0.1; Caddy removes X-Forwarded-For so the peer remains loopback. Accept loopback peers and localhost/loopback hosts (testclient/testserver in tests), plus the hostname of explicitly configured TRADER_PUBLIC_ORIGIN. Mutations require `X-Trader-Request: local-ui`; when Origin is present, require exact TRADER_PUBLIC_ORIGIN for the public host, otherwise exact base-origin match. These guards are not a login or authorization system. Security response headers: nosniff, DENY frames,
@@ -679,11 +950,11 @@ no-referrer and no-store. Do not expose OpenAPI/docs endpoints. ValueError retur
 |---|---|
 | GET `/` and `/static/*` | HTML shell and static assets |
 | GET `/api/bootstrap` | settings/settings_schema, backtest_schema, patterns, screens, token_saved, instruments/catalog coverage, universe_updated, jobs (latest 100), runs, strategies, auth_enabled, environment, paper_enabled, remote_enabled, paper_schema/portfolio and generic paper_schemas/paper_portfolios |
-| PUT `/api/settings` | Settings; reject while job active; persist only, no implicit fetch |
+| PUT `/api/settings` | DataPreferences (universe only); reject while job active; preserve internal legacy dates; no implicit fetch |
 | PUT `/api/connection` | access_token 20–10000 chars after whitespace checks; save plaintext private file; saved status only |
 | POST `/api/screens` | name/pattern/thirteen filters; validate and persist resolved preset |
 | POST `/api/jobs/universe` | Queue constituent/instrument match job |
-| POST `/api/jobs/ingest` | Require saved token; queue missing-boundary ingestion |
+| POST `/api/jobs/ingest` | Require saved token; queue full 750-stock rolling daily + five-minute fetch |
 | POST `/api/jobs/backtest` | BacktestConfig; validate prepare before queuing; job result run_id |
 | GET `/api/backtest/window?warmup=50` | warmup integer50–2500; start/end, warmup_sessions, ready/total symbols, history_start/end |
 | GET `/api/bars/{isin}` | Full normalized bar record; ISIN alphanumeric length 12 |
@@ -696,12 +967,43 @@ no-referrer and no-store. Do not expose OpenAPI/docs endpoints. ValueError retur
 | PUT `/api/strategies/{strategy_id}/paper/status` | Per-strategy active/paused |
 | POST `/api/strategies/{strategy_id}/paper/cycle` | Queue registered plugin cycle; reject unsupported strategy |
 
-Storage root defaults to repository/data; override with TRADER_DATA_DIR. Atomic JSON writes use
-UTF-8, reject NaN, write sibling .tmp, flush and os.fsync the temporary file, then atomically replace, guarded by an in-process RLock. This is not
+Storage root defaults to repository/data; override with TRADER_DATA_DIR. Atomic JSON writes through `store.write` use
+UTF-8, reject NaN, write a unique sibling `.{filename}.{uuid4hex}.tmp` in exclusive-create mode,
+flush and os.fsync the temporary file, then atomically replace, guarded by an in-process RLock.
+Retry replacement only on PermissionError, up to five attempts with delays 0.05, 0.10, 0.20
+and 0.40 seconds between attempts; permanent failure leaves the previous committed file intact.
+Best-effort remove the unique temporary file on either success or failure. This handles brief
+Windows reader/scanner locks and avoids shared temporary filename collisions. This is not
 a multi-process database. Store timestamps UTC ISO strings, display IST. No broker tokens appear
 in reports, logs or bootstrap. The private directory is TRADER_PRIVATE_DIR or DATA/private; new token records contain access_token and saved_at. Legacy encrypted_token records alone require Fernet .local-key (override TRADER_KEY_FILE). Keep legacy token/key together to restore them, or reconnect. No new encrypted records are written. Optional auth requires
 both DASHBOARD_ADMIN_USER and DASHBOARD_ADMIN_PASSWORD; supplying just one prevents startup.
 `.env` is not loaded automatically.
+
+Local ingestion incident on 8 October 2026: job `347f2f2fed9e` failed after CHENNPETRO's
+candle and catalog save while recording progress; a single-stock retry succeeded. The saved
+settings were Nifty 500, 2019-01-01 through 2026-10-08. Retry `f5eeba0be448` using the existing
+server also halted during progress recording after ADANIPOWER. The old catch-all discarded
+exception details, so the precise original exception class cannot be recovered from these
+logs. The stage implicates persistence; a transient Windows file lock is the working diagnosis,
+not a verified provider candle error. The atomic-write hardening above addresses file locks
+and temporary-name collisions. Unexpected job failures now record only exception class and
+the final source basename/line, never exception text, full paths, headers or raw responses.
+Three regression tests cover transient lock recovery, bounded permanent failure with the old
+checkpoint intact, and credential-safe diagnostics; the complete local Python suite passed
+191 tests. The existing API server had not loaded this source change. Automatic approval
+review blocked its restart command without a specific reason beyond blocked by policy.
+Recovery job `9abe7f797f1b` was submitted from a temporary standalone worker using the updated
+modules and the usual job registry/queue checks; progress remains visible in the local UI.
+Do not run another writer/job concurrently or confuse local Nifty 500 ingestion with the
+separate production 750-stock pull. Persistent files and credentials are independent.
+Recovery `9abe7f797f1b` completed successfully at 19:13 IST, refreshing all 500 stocks and
+retaining 900,816 candles. The requested cutoff was October 8; observed final bars were
+October 7. Research settings and universe were preserved. The temporary recovery worker
+exited after completion. The existing server initially still needed a restart to import the
+new atomic-write and error-diagnostic code. After the owner explicitly requested that restart,
+the local server was restarted through `start.ps1` at 19:20 IST. Verified the new listener,
+successful bootstrap, unchanged Nifty 500 settings, 500 cached stocks and the preserved
+successful recovery job with 900,816 candles. Ordinary UI jobs now load the updated code.
 
 | File under data/ | Contents |
 |---|---|
@@ -767,7 +1069,7 @@ Keep a status explanation next to the Run backtest button: name an active job, m
 or insufficient history. Refresh this status during normal bootstrap polling, so finishing an
 active job re-enables the existing form without reopening it. Preserve the disabled state while
 that form submits. Reject a chosen end after the safe available end locally with instructions
-to use available dates or extend Settings/history and fetch missing data. Scroll form errors
+to use available dates or fetch rolling market history (older saved history is retained). Scroll form errors
 into view on mobile. Backend date errors give the same earlier/later-history instruction.
 
 Observed production diagnosis: 499 of 500 Nifty 500 symbols had usable records; IDEA ingestion
@@ -853,15 +1155,15 @@ history, or restore a secure backup. Never hardcode the historical metrics as da
 ### Schema reference and pinned local dependencies
 
 All monetary/numeric input models reject NaN/infinity and unknown fields. Dates must increase;
-Settings additionally limits the range to 3653 calendar days. Backtest/Paper acknowledgment must
+Internal legacy Settings additionally limits its range to 3653 calendar days; public DataPreferences has no date fields. Backtest/Paper acknowledgment must
 be true. Defaults below are **API/schema defaults**; the explicit UI screen seed above overrides
 them for new forms. This separation preserves older saved experiments.
 
-#### Settings
+#### Settings (internal legacy model; UI/API uses universe-only DataPreferences)
 
 | Field | Type / allowed values / bounds | API default |
 |---|---|---|
-| `universe` | string: nifty50, nifty500 | "nifty50" |
+| `universe` | string: nifty50, nifty500, niftytotalmarket | "nifty50" |
 | `start` | date | "2018-10-01" |
 | `end` | date | "2026-10-01" |
 
@@ -1501,6 +1803,107 @@ run(settings,config,log,id) can use an explicit Settings snapshot while preservi
 
 ### Banana reference and matched comparisons
 
+#### Base-and-pivot experiment — retired by owner on 8 October 2026
+
+This is an archived research decision, not a feature to rebuild into the current
+application. After the matched experiment failed, the owner approved removing its
+UI option, configuration fields, validation branches, signal dispatch, simulator
+and trade-chart branches, active CLI and feature tests. BacktestConfig again uses
+the original TradingConfig pattern enum and has no base_pivot_max_days field.
+Keep the current paper portfolio and all pre-existing research features unchanged.
+Keep the more accurate warning that our screens are independent approximations
+inspired by Banana Patterns, with no verified detector parity.
+
+The experiment never reached production. Preserve all completed study reports,
+source/configuration/input hashes, curves, trades and frozen inputs under
+`artifacts/base-pivot-study-20261008/`. The original executable application is in
+its `code/` subdirectory; the final removed module, CLI and test source are also
+preserved in `retired-source/`. None of these archived modules are imported by the
+current application. Replay only with the isolated frozen code and data, never by
+adding experimental reports or schemas to the current application or rewriting the
+paper ledger. BASE_PIVOT_RESEARCH.md retains human-readable results and replay
+instructions. Artifacts stay ignored and local; they are not uploaded to production.
+
+Archived configuration used pattern=base_pivot, base_pivot_max_days=120 (validated
+15–250), base_days>=15 and <=maximum, swing holding and next_open execution only.
+Paper and saved-screen configurations never accepted this pattern. The historical
+CLI froze input membership/manifests/gap exclusions/source provenance and complete
+run configurations before observing metrics, used separate worker processes and
+asserted identical input hashes. Unresolved price gaps blocked by default; explicit
+exclusions removed every flagged symbol equally without repairing source prices.
+
+Archived detector (replay only): at completed signal
+index i, inspect only bars[max(0,i-blue_sky_lookback_days):i]. Pivot is the maximum
+prior close; anchor is its most recent equal-price touch. Age is i-anchor, excluding
+the signal bar, and floor is the minimum low over bars[anchor:i]. Qualify only if
+base_days<=age<=base_pivot_max_days and (pivot-floor)/pivot*100<=max_depth_pct.
+Require the existing common SMA/trend/liquidity predicate, signal close>pivot and
+signal volume>=volume_multiple times the prior 50-session mean. RS and breadth
+used the existing simulator rules. A new closing high resets the next base's
+anchor; an equal touch restarts its age. This is a deterministic closing-high base
+hypothesis, not a reproduction of Banana's proprietary base detector, ATR tests,
+RS recipe or full lifetime history. Do not label it reference-site parity.
+
+The first study fixes the current baseline's capital100000, next_open, risk1%,
+stop8%, take25, five positions, hold120, buy35/sell50/slippage10 bps, weak-market
+gate off and 260-session warmup. Compare Blue sky, base_pivot and base_pivot with
+only min_rs_rating raised to70; alphabetic candidate ordering stays unchanged.
+Use 2020-01-01–2025-12-31 and 2026-01-01–2026-10-01, with a common eligible cohort
+frozen from the first start. These historical periods have already been examined;
+they are diagnostic comparisons, not untouched validation. Before results, freeze
+a research-candidate rule: positive return and greater return than baseline in both
+windows, with drawdown<=20% in each. This heuristic is not an owner-approved live
+risk limit; no automatic promotion follows. Genuine untouched validation must come
+from later forward observations. Keep the existing production paper portfolio
+active and preserve its identity, capital, checkpoints and accounting.
+
+At implementation, regression checks covered wick/pivot differences, future-data
+invariance, base resets, qualification failures, next-open fills, chart consistency
+and paper rejection. Feature-specific tests were archived when the runtime feature
+was removed; normal application tests remain required after the removal.
+
+Completed first matched study: 347 common eligible symbols; nine unresolved-gap
+exclusions (ABREL, HEGAM, IIFL, NMDC, SIEMENS, TATACHEM, TATACOMM, TMPV, VEDL),
+plus 144 history/quarantine exclusions. This fixed retrospective cohort uses current
+membership and present-day gap information, including later information for earlier
+windows; selection/survivorship bias remains. Both windows were previously examined.
+The input hash for all six runs is `52dc9cc0075a849ae7a4f2c9c0ba878d0e183239561b6d1278390010739d2bbe`.
+
+| Window | Screen | Net return | Max drawdown | Trades | Run ID |
+|---|---|---:|---:|---:|---|
+| historical | blue_sky | +25.44% | 27.65% | 330 | `7fc90f9e42c2` |
+| historical | base_pivot | +24.60% | 31.66% | 242 | `a424d263580b` |
+| historical | base_pivot_rs70 | +25.04% | 22.93% | 288 | `1a3a958d1f8b` |
+| recent_2026 | blue_sky | -9.57% | 9.66% | 44 | `fedc63d0a1ee` |
+| recent_2026 | base_pivot | -15.49% | 15.49% | 42 | `a6647e40707c` |
+| recent_2026 | base_pivot_rs70 | -18.09% | 18.09% | 41 | `e3bb534623d6` |
+
+Both variants fail the frozen candidate gate: neither beats baseline in either
+window, both lose in 2026 and both exceed 20% historical drawdown. No parameter
+retuning, promotion, paper-account creation or production deployment was performed.
+RS70 reduced historical variant drawdown but worsened 2026 losses; a higher win rate
+or closer pattern interpretation does not imply better net performance. Baseline
+losses and drawdown also prevent an edge-validation claim. Preserve all isolated
+study plans, source hashes, manifests, gap findings and complete run snapshots under
+`artifacts/base-pivot-study-20261008/`; `BASE_PIVOT_RESEARCH.md` is the human-readable
+result record. Source data, shared runs history and the production paper portfolio
+were untouched. The experimental option and active engine support have been removed;
+only the archived study and its findings remain. Removal verification passed 171
+remaining Python tests and frontend checks; the current schema rejects the retired
+pattern and omits its maximum-age field. All six study reports and input snapshots
+were verified preserved.
+
+The read-only live-screen audit of 8 October 2026 is documented in
+`BANANA_PATTERN_COMPARISON.md`. Our active custom Blue sky rule did not match the
+reference site's displayed 1/5 October breakout-day lists: both universe membership
+and base-pivot versus loaded-history intraday-high predicates differ. CPPLUS and
+TDPOWERSYS specifically passed our volume/trend checks on 5 October but closed below
+their prior intraday highs. The reference lists were viewed in their 7 October stage
+state, not archived historical snapshots; no complete four-screen parity claim is
+made. Preserve these limitations and do not describe the existing implementation as
+an exact reproduction of Banana Patterns. This audit changed no trading rules or
+portfolio state.
+
 Local `Banana VCP comparison 2020-2025` ID `296f93e10b62` (and closest version `f9b80412c8b3`)
 is an approximation, not verified reference-site parity. Original rules: VCP with 10-session
 windows, base15/depth35, volume1/dry-up0.9, SMA50, turnover0 (closest version turnover50,000,000),
@@ -2053,7 +2456,7 @@ its existence does not enable a Git snapshot service. Do not install the abandon
 Confirm health using curl -fsS https://trader.manojmathivanan.com/api/bootstrap and Docker/Caddy
 logs. Expect environment=production, paper_enabled=true, auth_enabled=false; a fresh installation
 has token_saved=false, zero runs and zero loaded instruments. Defaults are schema settings, not
-downloaded history. In Settings save a production token and desired universe/history, then
+downloaded history. In Settings save a production token and desired research universe, then
 Refresh universe → Fetch missing data. Only after real coverage exists create a production
 paper portfolio with explicit capital/acknowledgment; enable auto_run only if chosen by the owner.
 No code deployment automatically allocates capital, creates a portfolio or enables automatic runs.

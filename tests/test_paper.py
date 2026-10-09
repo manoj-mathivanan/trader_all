@@ -28,6 +28,15 @@ def config(**kwargs):
 
 
 class EngineTests(unittest.TestCase):
+    def test_rejected_fundamentals_prevent_entry_without_changing_historical_default(self):
+        bars=[candle('2026-01-01'),candle('2026-01-02')]
+        cfg=BacktestConfig(start='2026-01-01',end='2026-01-03',pattern='vcp',entry_mode='next_open',acknowledge_limitations=True)
+        with patch.object(backtest,'signal',return_value=True):
+            allowed=backtest.simulate({'TEST':bars},cfg)
+            blocked=backtest.simulate({'TEST':bars},cfg,entry_check=lambda symbol,day:False)
+        self.assertTrue(allowed['trades'])
+        self.assertEqual(blocked['trades'],[])
+
     def test_final_close_entry_is_liquidated_with_both_costs(self):
         bars = [candle('2026-01-01'), candle('2026-01-02')]
         cfg = BacktestConfig(start='2026-01-01', end='2026-01-03', pattern='vcp', entry_mode='close',
@@ -106,6 +115,11 @@ class EngineTests(unittest.TestCase):
 
 class PortfolioTests(unittest.TestCase):
     def setUp(self):
+        from core.research import fundamentals
+        self.fundamental_gate=patch.object(fundamentals,'buy_check',return_value=dict(
+            buy_allowed=True,score=100,coverage_pct=100,block_reasons=[],snapshot={'id':'synthetic'},screen={}))
+        self.fundamental_gate.start()
+        self.addCleanup(self.fundamental_gate.stop)
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.patch = patch.object(store, 'DATA', Path(self.temp.name))
@@ -325,7 +339,8 @@ class PortfolioTests(unittest.TestCase):
             self.assertEqual(bootstrap['paper_portfolios']['intraday_momentum']['config']['momentum_threshold'], 5)
             self.assertIn('momentum_threshold', bootstrap['paper_schemas']['intraday_momentum']['properties'])
         with patch('dashboard.api.main.PAPER_ENABLED', True), TestClient(app) as client:
-            self.assertEqual(client.post('/api/strategies/scalping/paper/portfolio', headers=headers, json=payload).status_code, 400)
+            # Registered scalping rejects a different strategy's settings schema.
+            self.assertEqual(client.post('/api/strategies/scalping/paper/portfolio', headers=headers, json=payload).status_code, 422)
 
     def test_fresh_process_restores_portfolio_and_continues_new_session(self):
         self.cycle()

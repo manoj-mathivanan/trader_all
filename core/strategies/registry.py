@@ -24,8 +24,8 @@ class StrategyDefinition:
 
 REGISTRY = (
     StrategyDefinition("swing_patterns", "Swing patterns", "End-of-day · Indian equities", "active", "daily", "batch", "daily_breakout"),
-    StrategyDefinition("intraday_momentum", "Intraday momentum", "Minute bars · planned", "planned", "intraday_1m", "streaming"),
-    StrategyDefinition("scalping", "Scalping", "Ticks to minutes · planned", "planned", "tick", "streaming"),
+    StrategyDefinition("intraday_momentum", "Intraday momentum", "Opening range · relative volume · research", "active", "intraday_5m", "batch", "opening_range_momentum"),
+    StrategyDefinition("scalping", "Scalping", "One-minute pullbacks · EMA / VWAP · research", "active", "intraday_1m", "batch", "scalping_pullback"),
 )
 
 

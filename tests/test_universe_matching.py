@@ -22,6 +22,14 @@ class UniverseMatchingTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             match_constituents([self.row('REAL','INE1')],master)
 
+    def test_official_numbered_dummy_isins_are_excluded_but_real_isins_fail(self):
+        matched, excluded = match_constituents(
+            [self.row('DUMMYINGL1', 'DU1560A01023'), self.row('DUMMYINGL2', 'DU2560A01023')], [])
+        self.assertEqual(matched, [])
+        self.assertEqual(len(excluded), 2)
+        with self.assertRaises(ValueError):
+            match_constituents([self.row('DUMMYREAL', 'INE560A01023')], [])
+
     def test_eq_priority_and_other_exchange_not_substituted(self):
         master=[dict(isin='INE1',segment=segment,instrument_type=series,instrument_key=key)
                 for segment,series,key in [('NSE_EQ','BE','N1'),('NSE_EQ','EQ','N2'),('BSE_EQ','EQ','B1')]]
