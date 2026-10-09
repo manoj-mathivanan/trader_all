@@ -34,7 +34,7 @@ class TradingConfig(BaseModel):
     require_long_trend: bool = Field(False, title="Require price above 200-day SMA")
     require_rising_long_trend: bool = Field(False, title="Require rising 200-day SMA (20 sessions)")
     min_rs_rating: float = Field(0, ge=0, le=100, title="Minimum 126-session RS percentile (0 disables)")
-    candidate_rank: Literal['alphabetical', 'rs_126'] = Field('alphabetical', title="Simultaneous signal priority")
+    candidate_rank: Literal['alphabetical', 'rs_126', 'fundamental_score'] = Field('alphabetical', title="Simultaneous signal priority")
     min_turnover: float = Field(50000000, ge=0, le=1e12, title="Minimum average turnover (₹)")
     vcp_window_days: int = Field(10, ge=3, le=60, title="VCP contraction window (sessions)")
     vcp_volume_multiple: float = Field(0.8, gt=0, le=1, title="VCP final volume / 50-session mean")
@@ -93,6 +93,8 @@ class BearishBacktestConfig(BacktestConfig, BearishConfig):
 
     @model_validator(mode='after')
     def bearish_rules(self):
+        if self.candidate_rank == 'fundamental_score':
+            raise ValueError('Fundamental score priority is available for long buy candidates only.')
         if self.skip_weak_markets or self.require_long_trend or self.require_rising_long_trend or self.min_rs_rating > 0:
             raise ValueError('Use bearish trend, maximum RS and weak-market filters for a bearish backtest.')
         hour, minute = map(int, self.square_off_time.split(':'))

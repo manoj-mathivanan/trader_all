@@ -35,6 +35,16 @@
 .trade-line-controls label{display:flex;align-items:center;gap:5px;cursor:pointer}
 .trade-line-controls input{accent-color:var(--green)}
 .trade-signal-details{margin-top:20px}.trade-signal-details h3{margin-bottom:8px}
+.company-toolbar{flex-wrap:wrap}.company-toolbar .field{max-width:150px}.company-toolbar label{font-size:13px}
+.company-finding{padding:16px 0;border-bottom:1px solid var(--line)}.company-finding blockquote{padding:8px 16px;border-left:3px solid var(--green);margin:12px 0}
+.company-evidence-text{white-space:pre-wrap;overflow-wrap:anywhere}
+.momentum-steps{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:24px;margin-bottom:22px}
+.momentum-steps span{font-size:10px;font-weight:700;letter-spacing:1.2px;color:var(--green)}
+.momentum-steps h3{margin:8px 0}.momentum-method details p{margin:12px 0}
+.momentum-diagnostics{margin:24px 0}.momentum-diagnostics h3{margin:20px 0 12px}
+#momentum-form .checkbox{grid-column:1/-1}
+@media(max-width:720px){.momentum-steps{grid-template-columns:1fr;gap:16px}.momentum-method .actions{display:grid;gap:12px}.momentum-experiments .job-card{flex-wrap:wrap;padding:16px 0}.momentum-experiments .job-card .actions{width:100%;justify-content:space-between}}
+#company-financial-form textarea,#company-article-form textarea,#company-review-form textarea,#company-import-form textarea{width:100%;box-sizing:border-box;padding:12px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--ink);font:inherit}
 .trade-signal-details .table-wrap{margin-bottom:16px;border:1px solid var(--line);border-radius:8px}
 @media(max-width:720px){.trade-chart-summary{grid-template-columns:repeat(2,minmax(0,1fr))}.trade-chart-summary>div:last-child{grid-column:1/-1}.trade-chart{height:360px}}
 #paper-form .checkbox{grid-column:1/-1;min-width:0}

@@ -4,7 +4,9 @@ from core.execution.paper import PaperBrokerAdapter
 from core.research import corporate_actions, intraday_data
 
 
-def entry_plan(datasets,cfg,entry_warmup=0):
+def entry_plan(datasets,cfg,entry_warmup=0,*,fundamental_scores=None):
+    if cfg.candidate_rank == 'fundamental_score' and fundamental_scores is None:
+        raise ValueError('Fundamental ranking requires dated financial evidence.')
     from strategies.swing_patterns.patterns.signals import matches
     from bisect import bisect_left,bisect_right
     dates = {s:{b['date']:i for i,b in enumerate(rows)} for s,rows in datasets.items()}
@@ -44,7 +46,13 @@ def entry_plan(datasets,cfg,entry_warmup=0):
             if gate and (cfg.min_rs_rating<=0 or rank[0]>=cfg.min_rs_rating):
                 candidates.append(dict(symbol=symbol,signal_date=signal_day,signal_index=i-1,daily_index=i,rank=rank))
         if candidates:
-            plan[day] = sorted(candidates,key=lambda x:(-x['rank'][0],-x['rank'][1],x['symbol']) if cfg.candidate_rank=='rs_126' else (x['symbol'],))
+            from core.research.fundamental_history import rank_key
+            def priority(x):
+                if cfg.candidate_rank == 'fundamental_score':
+                    x['fundamentals'] = fundamental_scores(x['symbol'], day)
+                    return rank_key(x['fundamentals'], x['symbol'])
+                return (-x['rank'][0],-x['rank'][1],x['symbol']) if cfg.candidate_rank=='rs_126' else (x['symbol'],)
+            plan[day] = sorted(candidates,key=priority)
     return plan
 
 

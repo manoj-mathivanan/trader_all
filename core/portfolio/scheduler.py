@@ -33,6 +33,8 @@ def tick():
         if clock.weekday() >= 5:
             return
         for strategy_id, plugin in sorted(registry.PLUGINS.items()):
+            if plugin.trigger_mode != 'batch':
+                continue
             portfolio = manager.get(strategy_id)
             if not portfolio or not portfolio['config'].get('auto_run'):
                 continue

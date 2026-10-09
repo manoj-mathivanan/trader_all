@@ -1,3 +1,4 @@
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -23,5 +24,8 @@ class WindowTests(unittest.TestCase):
             with patch.object(store,'read', wraps=store.read) as read:
                 self.assertEqual(backtest.available_window(Settings(),3),second)
                 self.assertEqual([call.args[0] for call in read.call_args_list],['universes/nifty50'])
+            before = (Path(folder)/'bars/B.json').stat()
             store.write('bars/B',{**record,'requested_end':'2025-01-08'})
+            # Equal-length replacement with an equal timestamp must invalidate too.
+            os.utime(Path(folder)/'bars/B.json', ns=(before.st_atime_ns,before.st_mtime_ns))
             self.assertEqual(backtest.available_window(Settings(),3)['end'],'2025-01-08')

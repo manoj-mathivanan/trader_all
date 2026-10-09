@@ -11,13 +11,15 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, SecretStr
-from dashboard.api.company_review import router as company_review_router
 from core.research import store, jobs, upstox, backtest, data_quality, market_data
 from core.research.config import Settings, DataPreferences, BacktestConfig, BearishBacktestConfig
-from core.research import bearish
+from core.research import bearish, momentum, scalping, strategy_presets
+from core.research.strategy_presets import ScreenInput
 from core.portfolio import paper, scheduler, manager as portfolios, registry as paper_plugins
+from core.portfolio import scalping_paper, scalping_control
 from core.strategies.registry import all_strategies
 from strategies.swing_patterns.patterns.registry import definitions as pattern_definitions
+from dashboard.api.company_review import router as company_review_router
 
 WEB = Path(__file__).resolve().parents[1] / 'web'
 USER = os.environ.get('DASHBOARD_ADMIN_USER', '')
@@ -50,6 +52,7 @@ def authenticate(credentials: Annotated[HTTPBasicCredentials | None, Depends(sec
 @asynccontextmanager
 async def lifespan(app):
     jobs.recover()
+    scalping_control.autostart()
     stop, thread = None, None
     if PAPER_ENABLED:
         scheduler.recover_interrupted()
@@ -125,12 +128,18 @@ def bootstrap():
             'backtest_schema': BacktestConfig.model_json_schema(), 'patterns': pattern_definitions(),
             'bearish_schema': bearish.BearishConfig.model_json_schema(), 'bearish_screens': bearish.SCREENS,
             'bearish_backtest_schema': BearishBacktestConfig.model_json_schema(),
+            'momentum_schema': momentum.MomentumConfig.model_json_schema(), 'momentum_sources': momentum.SOURCES,
+            'scalping_schema': scalping.ScalpingConfig.model_json_schema(),
+            'scalping_paper_schema': scalping_paper.ScalpingPaperConfig.model_json_schema(),
+            'scalping_paper': scalping_paper.public_portfolio(), 'scalping_runner': scalping_control.status(),
+            'scalping_comparisons': store.read('scalping_comparisons_index', [])[:20],
+            'momentum_comparisons': store.read('momentum_comparisons_index',[])[:20],
             'environment': ENVIRONMENT, 'paper_enabled': PAPER_ENABLED,
             'paper_schema': paper.PaperConfig.model_json_schema(), 'paper_portfolio': store.read(paper.KEY) if PAPER_ENABLED else None,
-            'paper_portfolios': {s['id']: portfolios.get(s['id']) for s in all_strategies()} if PAPER_ENABLED else {},
+            'paper_portfolios': {s['id']: scalping_paper.public_portfolio() if s['id']=='scalping' else portfolios.get(s['id']) for s in all_strategies()} if PAPER_ENABLED else {},
             'paper_schemas': {strategy_id: plugin.config_model.model_json_schema()
                               for strategy_id, plugin in paper_plugins.PLUGINS.items()},
-            'screens': store.read('screens', []), 'token_saved': store.token_saved(), 'remote_enabled': bool(PUBLIC_ORIGIN),
+            'screens': strategy_presets.available(), 'token_saved': store.token_saved(), 'remote_enabled': bool(PUBLIC_ORIGIN),
             'instruments': instruments, 'universe_updated': universe.get('fetched_at'),
             'jobs': store.read('jobs', [])[:100], 'runs': store.read('runs_index', []),
             'strategies': all_strategies(), 'auth_enabled': bool(USER)}
@@ -162,26 +171,6 @@ def save_connection(value: TokenInput):
         raise ValueError('Enter a valid access token, not whitespace.')
     store.save_token(cleaned)
     return {'saved': True, 'message': 'Token saved on the server. It will be validated on the next data fetch.'}
-
-
-class ScreenInput(BaseModel):
-    model_config = ConfigDict(extra='forbid', allow_inf_nan=False)
-    name: str = Field(min_length=1, max_length=80)
-    pattern: Literal['vcp', 'blue_sky', 'multiyear', 'ipo'] = Field('vcp')
-    base_days: int = Field(25, ge=5, le=250)
-    max_depth_pct: float = Field(30, gt=0, le=80)
-    volume_multiple: float = Field(1.5, ge=0.1, le=10)
-    sma_days: int = Field(50, ge=5, le=250)
-    require_long_trend: bool = False
-    require_rising_long_trend: bool = False
-    min_rs_rating: float = Field(0, ge=0, le=100)
-    min_turnover: float = Field(50000000, ge=0, le=1e12)
-    vcp_window_days: int = Field(10, ge=3, le=60)
-    vcp_volume_multiple: float = Field(0.8, gt=0, le=1)
-    blue_sky_lookback_days: int = Field(5000, ge=50, le=5000)
-    multiyear_base_days: int = Field(260, ge=252, le=2500)
-    multiyear_max_depth_pct: float = Field(50, gt=0, le=90)
-    ipo_max_age_days: int = Field(730, ge=1, le=3653)
 
 
 @app.post('/api/screens')
@@ -237,6 +226,130 @@ def backtest_window(warmup: int = Query(50, ge=50, le=2500)):
     return backtest.available_window(settings(), warmup)
 
 
+@app.post('/api/jobs/momentum')
+def momentum_job(value: momentum.MomentumConfig):
+    cfg = settings()
+    momentum.prepare(cfg, value)
+    return jobs.submit('Momentum backtest', lambda log, job_id: momentum.run(cfg, value, log, job_id), value.model_dump(mode='json'))
+
+
+class MomentumComparisonInput(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    reference_id: str = Field(pattern=r'^[0-9a-f]{12}$')
+    suite: Literal['refinements','research','stronger','indicators','pullbacks','fundamentals'] = 'refinements'
+
+
+@app.post('/api/jobs/momentum-comparison')
+def momentum_comparison_job(value: MomentumComparisonInput):
+    cfg = settings()
+    reference = store.read('runs/'+value.reference_id)
+    if not reference or reference.get('strategy_id')!='intraday_momentum':
+        raise ValueError('Choose a saved momentum experiment.')
+    momentum.prepare(cfg,momentum.MomentumConfig(**{**reference['config'],'comparison_run_id':value.reference_id}))
+    return jobs.submit('Momentum comparison',lambda log,job_id:momentum.compare(cfg,value.reference_id,log,job_id,value.suite),value.model_dump())
+
+
+@app.post('/api/momentum/coverage')
+def momentum_coverage(value: momentum.MomentumConfig):
+    universe, datasets, _, excluded = momentum.prepare(settings(), value)
+    _, plan = momentum.entry_plan(datasets, value)
+    instruments = {x['symbol']:x for x in universe['instruments']}
+    requests = {(x['symbol'],d) for d, candidates in plan.items() for x in candidates}
+    if value.comparison_run_id:
+        frozen = store.read('run_intraday/'+value.comparison_run_id,{})
+        ready = sum(bool(frozen.get(s,{}).get(d)) for s,d in requests)
+    else:
+        ready = sum((store.DATA/(intraday_data_key(instruments[s]['isin'],d)+'.json')).exists() for s,d in requests)
+    return dict(stock_sessions=len(requests), cached=ready, missing=len(requests)-ready, excluded=excluded,
+                source='frozen reference' if value.comparison_run_id else 'shared cache')
+
+
+@app.post('/api/jobs/scalping')
+def scalping_job(value: scalping.ScalpingConfig):
+    cfg = settings()
+    scalping.prepare(cfg, value)
+    return jobs.submit('Scalping backtest', lambda log, job_id: scalping.run(cfg, value, log, job_id), value.model_dump(mode='json'))
+
+
+@app.post('/api/scalping/coverage')
+def scalping_coverage(value: scalping.ScalpingConfig):
+    return scalping.coverage(settings(), value)
+
+
+class ScalpingComparisonInput(BaseModel):
+    model_config = {'extra': 'forbid'}
+    reference_id: str = Field(..., pattern=r'^[0-9a-f]{12}$')
+
+
+@app.post('/api/jobs/scalping-comparison')
+def scalping_comparison_job(value: ScalpingComparisonInput):
+    cfg = settings()
+    reference = store.read('runs/'+value.reference_id)
+    if not reference or reference.get('strategy_id') != 'scalping':
+        raise ValueError('Choose a saved scalping experiment.')
+    scalping.prepare(cfg, scalping.ScalpingConfig(**{**reference['config'], 'comparison_run_id': value.reference_id}))
+    return jobs.submit('Scalping confirmation comparison', lambda log, job_id: scalping.compare(cfg, value.reference_id, log, job_id), value.model_dump())
+
+
+@app.get('/api/scalping/paper/portfolio')
+def get_scalping_paper():
+    return scalping_paper.public_portfolio()
+
+
+@app.get('/api/scalping/paper/export')
+def export_scalping_paper():
+    portfolio = portfolios.get('scalping')
+    if not portfolio:
+        raise HTTPException(404,'Create a scalping paper portfolio first.')
+    return portfolio
+
+
+@app.post('/api/scalping/paper/portfolio')
+def create_scalping_paper(value: scalping_paper.ScalpingPaperConfig):
+    scalping_paper.save(value,settings(),create=True)
+    if value.auto_run:
+        scalping_control.start()
+    return scalping_paper.public_portfolio()
+
+
+@app.put('/api/scalping/paper/portfolio')
+def update_scalping_paper(value: scalping_paper.ScalpingPaperConfig):
+    scalping_paper.save(value,settings())
+    if value.auto_run:
+        scalping_control.start()
+    return scalping_paper.public_portfolio()
+
+
+class ScalpingPaperStatus(BaseModel):
+    status: Literal['active','paused']
+
+
+@app.put('/api/scalping/paper/status')
+def scalping_status(value: ScalpingPaperStatus):
+    scalping_paper.set_status(value.status)
+    return scalping_paper.public_portfolio()
+
+
+@app.get('/api/scalping/paper/runner')
+def scalping_runner_status():
+    return scalping_control.status()
+
+
+@app.post('/api/scalping/paper/start')
+def start_scalping_runner():
+    return scalping_control.start()
+
+
+@app.post('/api/scalping/paper/stop')
+def stop_scalping_runner():
+    return scalping_control.stop()
+
+
+def intraday_data_key(isin, day):
+    from core.research.intraday_data import cache_key
+    return cache_key(isin, day)
+
+
 @app.post('/api/paper/portfolio')
 def create_paper(value: paper.PaperConfig):
     return paper.save(value, settings(), create=True)
@@ -282,18 +395,24 @@ def get_strategy_portfolio(strategy_id: str):
 @app.post('/api/strategies/{strategy_id}/paper/portfolio')
 def create_strategy_portfolio(strategy_id: str, value: dict):
     config = paper_config(strategy_id, value)
+    if strategy_id=='scalping':
+        return create_scalping_paper(config)
     return portfolios.save(strategy_id, config, settings(), create=True, clock=paper.local_now())
 
 
 @app.put('/api/strategies/{strategy_id}/paper/portfolio')
 def update_strategy_portfolio(strategy_id: str, value: dict):
     config = paper_config(strategy_id, value)
+    if strategy_id=='scalping':
+        return update_scalping_paper(config)
     return portfolios.save(strategy_id, config, settings(), clock=paper.local_now())
 
 
 @app.put('/api/strategies/{strategy_id}/paper/status')
 def update_strategy_status(strategy_id: str, value: PaperStatus):
     paper_plugins.get_plugin(strategy_id)
+    if strategy_id=='scalping':
+        return scalping_status(ScalpingPaperStatus(status=value.status))
     return portfolios.set_status(strategy_id, value.status)
 
 
@@ -345,6 +464,20 @@ def trade_chart(run_id: str, trade_index: int):
     if trade_index < 0 or trade_index >= len(trades):
         raise HTTPException(404, 'Trade not found in this backtest.')
     trade = trades[trade_index]
+    if result.get('strategy_id') == 'scalping':
+        sessions = store.read('run_intraday/'+run_id)
+        if not sessions or scalping.digest(sessions) != result['intraday_source']['sha256']:
+            raise HTTPException(404, 'Frozen scalping candles are unavailable or changed.')
+        return {'run_id':run_id, 'trade_index':trade_index, 'symbol':trade['symbol'], 'trade':trade,
+                'trades':[dict(t, trade_index=i) for i, t in enumerate(trades) if t['symbol'] == trade['symbol'] and t['entry_date'] == trade['entry_date']],
+                'interval_minutes':1, 'source':'frozen_intraday_snapshot', **scalping.trade_chart(result, trade, sessions)}
+    if result.get('strategy_id') == 'intraday_momentum':
+        minutes = store.read('run_intraday/' + run_id, {}).get(trade['symbol'], {}).get(trade['entry_date'], [])
+        if not minutes:
+            raise HTTPException(404, 'Frozen momentum candles are unavailable.')
+        return {'run_id':run_id, 'trade_index':trade_index, 'symbol':trade['symbol'], 'trade':trade,
+                'trades':[dict(trade, trade_index=trade_index)], 'interval_minutes':5,
+                'source':'frozen_intraday_snapshot', **momentum.trade_chart(result, trade, minutes)}
     stock_trades = [dict(t, trade_index=i) for i, t in enumerate(trades)
                     if t['symbol'] == trade['symbol']]
     datasets = store.read('run_data/' + run_id, {})
