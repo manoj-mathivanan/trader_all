@@ -3,7 +3,7 @@ from datetime import date, datetime, timedelta
 from urllib.parse import quote
 import time
 import httpx
-from core.research import store, upstox, intraday_data
+from core.research import store, upstox, intraday_data, fundamentals
 from core.research.config import Settings
 
 BENCHMARK = {'key': 'NSE_INDEX|Nifty 50', 'isin': 'NIFTY50', 'symbol': 'NIFTY50'}
@@ -122,7 +122,15 @@ def fetch(log, job_id=None):
             result['partial'] = bool(result['failures'])
             store.write('market_fetch', result)
             log(f"{index}/{result['total_symbols']} · {item['symbol']}: daily {stock['daily']['status']}, five-minute {stock['minute']['status']}.")
+        log('Market candles saved. Checking quarterly fundamentals for the same stock universe.')
+        try:
+            result['fundamentals'] = fundamentals.pull(universe['instruments'], log, job_id, retry_failed=True)
+        except Exception as exc:
+            result['fundamentals'] = {'status':'failed', 'message':error_detail(exc)}
+            log('Fundamentals stage failed; saved market candles retained.')
+        result['partial'] = bool(result['failures'] or result['fundamentals'].get('partial') or
+                                 result['fundamentals'].get('status') == 'failed')
         result['completed_at'] = store.now()
         store.write('market_fetch', result)
-        log(f"Finished all {result['total_symbols']} stocks: daily {result['daily_symbols']}, five-minute {result['minute_symbols']}; {len(result['failures'])} failures. Older history retained.")
+        log(f"Finished all {result['total_symbols']} stocks: daily {result['daily_symbols']}, five-minute {result['minute_symbols']}; {len(result['failures'])} candle failures. Quarterly fundamentals checked; inspect the fundamentals result for coverage and failures. Older history retained.")
         return result

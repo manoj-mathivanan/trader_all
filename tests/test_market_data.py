@@ -92,11 +92,12 @@ class MarketFetchTests(unittest.TestCase):
         with patch.object(market, 'last_traded_day', return_value=date(2026,10,7)), \
              patch.object(market.upstox, 'refresh_universe', return_value=universe) as refresh, \
              patch.object(market, 'save_daily', daily), patch.object(market, 'save_minutes', minute), \
-             patch.object(market.time, 'sleep'), patch.object(store, 'write'):
+             patch.object(market.time, 'sleep'), patch.object(market.fundamentals, 'pull', return_value={'counts':{}}) as fundamental_pull, patch.object(store, 'write'):
             result = market.fetch(lambda _: None, 'test-job')
         self.assertEqual(refresh.call_args.args[0].universe, 'niftytotalmarket')
         self.assertEqual(daily.call_count, 750)
         self.assertEqual(minute.call_count, 750)
+        self.assertEqual(len(fundamental_pull.call_args.args[0]),750)
         self.assertEqual(result['daily_symbols'], 748)
         self.assertEqual(result['minute_symbols'], 750)
         self.assertTrue(result['partial'])

@@ -11,6 +11,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, SecretStr
+from dashboard.api.company_review import router as company_review_router
 from core.research import store, jobs, upstox, backtest, data_quality, market_data
 from core.research.config import Settings, DataPreferences, BacktestConfig, BearishBacktestConfig
 from core.research import bearish
@@ -63,6 +64,7 @@ async def lifespan(app):
 
 app = FastAPI(title='Trader research', docs_url=None, redoc_url=None, openapi_url=None,
               dependencies=[Depends(authenticate)], lifespan=lifespan)
+app.include_router(company_review_router)
 
 
 @app.middleware('http')

@@ -145,7 +145,7 @@ The chart bundle `dashboard/web/vendor/klinecharts.min.js` is tracked in Git. `n
 
 ### Configure data before research
 
-Choose the research universe in Settings. Market data → Fetch always downloads daily candles for the last calendar year and five-minute candles for the last 10 calendar days, ending on Upstox's latest completed Nifty 50 trading day. It covers all 750 Nifty Total Market stocks, regardless of research-universe selection. Older daily and five-minute history stays available. Failures are reported per stock and interval while remaining downloads continue; partial jobs retain successful data and can be retried. Saving Settings does not download anything.
+Choose the research universe in Settings. Market data → Fetch always downloads daily candles for the last calendar year and five-minute candles for the last 10 calendar days, ending on Upstox's latest completed Nifty 50 trading day. It covers all 750 Nifty Total Market stocks, regardless of research-universe selection. Older daily and five-minute history stays available. Quarterly fundamentals for the same stocks are checked after candles, with validated snapshots and older versions retained. The Fundamentals page reports scored snapshot history separately from comparative source filings. Failures are reported per stock and interval while remaining downloads continue; partial jobs retain successful data and can be retried. Saving Settings does not download anything.
 
 The UI requests an **access token**, not an API key/client secret. The token expires daily in the current workflow: replace it in Settings and retry failed provider jobs. No code edit or server rebuild is necessary. “Saved” confirms storage, not validity; provider requests establish validity.
 

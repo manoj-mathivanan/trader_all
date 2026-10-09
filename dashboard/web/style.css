@@ -46,3 +46,8 @@
 .info-button .field-tooltip{position:absolute;z-index:20;left:22px;top:-7px;width:260px;padding:10px 12px;border:1px solid var(--line);border-radius:7px;background:var(--ink);color:var(--panel);font:400 11px/1.5 'DM Sans',sans-serif;text-align:left;white-space:normal;opacity:0;visibility:hidden;pointer-events:none;box-shadow:0 8px 24px #15261930}
 .info-button:hover .field-tooltip,.info-button:focus-visible .field-tooltip{opacity:1;visibility:visible}
 @media(max-width:720px){.info-button .field-tooltip{position:fixed;left:18px;right:18px;top:auto;bottom:18px;width:auto}}
+
+.company-toolbar{flex-wrap:wrap}.company-toolbar .field{max-width:150px}.company-toolbar label{font-size:13px}
+.company-finding{padding:16px 0;border-bottom:1px solid var(--line)}.company-finding blockquote{padding:8px 16px;border-left:3px solid var(--green);margin:12px 0}
+.company-evidence-text{white-space:pre-wrap;overflow-wrap:anywhere}
+#company-financial-form textarea,#company-article-form textarea,#company-review-form textarea,#company-import-form textarea{width:100%;box-sizing:border-box;padding:12px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--ink);font:inherit}
