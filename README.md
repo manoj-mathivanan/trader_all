@@ -1,26 +1,51 @@
 # Trader — research and paper workspace
 
-Company research now includes a **Fundamentals** page with technical candidate scans,
-experimental quality scores, and an optional LLM that finds filings and recent news on
-the web automatically. Select **Research stock**; no source uploads are required.
-Saved reviews preserve citations, risks, contradictions and unknowns. Server API
-configuration is required for live research. See [COMPANY_RESEARCH.md](COMPANY_RESEARCH.md).
+Reconciled with the local checkout on **9 October 2026 (IST)**. Local/uncommitted changes are not proof of production deployment. Trader sends no live broker orders.
+
+## Documentation policy
+
+Keep only README.md and architecture.md as project Markdown documentation. README covers setup and operation; architecture holds detailed contracts, schemas, research results, sources and deployment instructions. Do not create or update documentation during routine coding, testing, research or deployment unless the user explicitly asks. Research scripts export Markdown only with an explicit --markdown path. Saved JSON reports/charts remain runtime artifacts. Read only relevant architecture sections for routine work. Temporary exception during this cleanup: INTRADAY_SELECTION_RESEARCH.md is required by an already-running worker with preloaded code. Its plan is consolidated into architecture; remove the temporary file only after the worker completes and its final evidence is retained. Future script invocations no longer require it.
+
+Current source, runtime schemas, dependency locks and deployment files define behavior. Dated experiments describe frozen historical snapshots, not current defaults. Local/uncommitted changes do not prove deployment. Proposed restructuring is not implemented by this cleanup or standing authorization to deploy/trade/modify user data.
 
 Trader is a browser-based workspace for researching Indian equity swing strategies and maintaining a simulated portfolio. The same shared application runs locally for research and on a Linux server for research plus persistent paper trading. Desktop and mobile browsers access the same dashboard. It does not place live broker orders.
 
 **Website:** [trader.manojmathivanan.com](https://trader.manojmathivanan.com)
 **Repository:** [manoj-mathivanan/trader_all](https://github.com/manoj-mathivanan/trader_all)
-**Complete implementation and rebuild specification:** [architecture.md](architecture.md)
-**Short deployment reference:** [deploy/README.md](deploy/README.md)
+**Implementation contracts and research record:** [architecture.md](architecture.md)
+**Short deployment reference:** [Deployment summary](architecture.md#deploy-readme)
 
-This guide covers the published MVP. Enhancements being developed in other threads become production features only after their code is merged and deployed. The future database/queue sections in architecture.md are a roadmap; current storage is independent JSON files in each environment.
+**Shared market-data database:** [PostgreSQL setup and import notes](architecture.md#deploy-market-data-readme).
+The separate database mirrors existing market inputs; application/backtest readers still use their JSON storage until the next migration phase.
+
+This guide covers the published MVP. Enhancements being developed in other threads become production features only after their code is merged and deployed. Trader application storage remains independent JSON in each environment. Separate PostgreSQL import/archive provisioning is present; completed local and production market refreshes sync automatically. Trader readers remain on JSON. Redis/RQ remains a roadmap item.
+
+## Current workflow and environment boundaries — 9 October 2026
+
+The UI now includes Overview, Market data, Fundamentals, Backtests, Momentum, Scalping, production Paper trading, Jobs & logs and Settings. Settings exposes the research universe only; internal legacy dates remain for frozen research/paper. Fetch prices & fundamentals refreshes all 750 Total Market stocks with daily last-calendar-year and five-minute last-ten-calendar-day history through the latest completed available session, retaining older candles. One-minute history is fetched separately for Scalping. Rolling windows do not guarantee multi-year/indicator warmup; check coverage.
+
+Bulk fundamentals uses direct official NSE Ind-AS HTML, no LLM key, and retains raw/checksummed calculation evidence. Unsupported metrics remain unknown. Prospective buy screens default to score >=60, coverage >=80%, financial period age <=180 days and no scorer flags. Historical ranking/gates use publication-time archived filings, never today's cache. New long Swing UI defaults use five positions and fundamental_score priority; legacy API defaults stay alphabetical.
+
+Windows optional web research setup: run ./setup-research.ps1, then restart through ./start.ps1. Connection is stored outside Git with Windows DPAPI/ACLs; setup defaults to gpt-5.4-mini. Process OPENAI_API_KEY/TRADER_NEWS_MODEL overrides saved values. Setup checks model access, not billing/search success. Production paid actions require Basic Auth.
+
+Swing paper is production-only. Separate Scalping quote paper works locally and in production: explicitly create it, start its runner and inspect durable fills. Automatic startup is off. Fresh regular-session books are required; stale/closed-market/outage conditions can leave exposure needing attention. Pausing new entries retains exits. Momentum paper/live remains unimplemented.
+
+Optional long Swing sector filters now support completed-session trend/relative-strength checks, explicit fetch/audit/comparison and paper observation before enforcement. They default off; current sector membership is retrospectively biased. See [sector contracts](architecture.md#sector-filter-implementation).
+
+The PostgreSQL 17 market import/archive service is independent and loopback-only; it preserves original source blobs/manifests/revisions. Application readers, portfolios/settings/jobs/report outputs still use JSON. No scheduled database Upstox ingestion/shared HTTPS market API exists. Its backup timer is 02:30 IST with about three-day dump retention; application backup is separate, around 01:30 IST with seven-day retention. Both remain on-server pending off-server storage.
+
+Details: [quarterly fundamentals](architecture.md#fundamentals-pull), [exact schemas](architecture.md#exact-configuration-schemas-9-october-2026), [PostgreSQL operations](architecture.md#deploy-market-data-readme), [proposed UI/module restructuring](architecture.md#proposed-restructuring-and-future-scope-not-implemented). Proposed restructuring is not implemented by this cleanup. No strategy has established a deployable edge.
+
+Cost sensitivity now includes 21 full frozen-input simulations with original/zero/public-fee/stress assumptions and independently sized long/short portfolios. Nonlinear fee research is optional; trading defaults remain unchanged. See [full cost diagnosis](architecture.md#intraday-cost-diagnosis).
+
+The ongoing [selection study](architecture.md#intraday-selection-research) declares scan sizes 50/200 across three inspected months, directions and cost assumptions; results remain provisional until completion.
 
 ## Features at a glance
 
 | Area | Features |
 |---|---|
 | Overview | Universe, downloaded coverage, run counts, latest report and recent jobs. |
-| Market data | Official Nifty 50 / Nifty 500 membership, ISIN matching, incremental daily-history downloads, company search, candlestick and volume charts. |
+| Market data | Official Nifty 50/500/Total Market membership, ISIN matching, rolling daily/five-minute refresh, quarterly fundamentals, company search and charts. |
 | Screens | VCP, Blue sky, Multi-year breakouts and IPO base; configurable filters and named saved screens. |
 | Bearish screens | Completed-session downside watchlists: VCP breakdown, 52-week low, Multi-year breakdown and IPO base breakdown. |
 | Backtests | Dates, capital, signal priority, entry mode, risk sizing, position limits, stops, breakeven, winner exits, holding limits and explicit costs. |
@@ -29,27 +54,6 @@ This guide covers the published MVP. Enhancements being developed in other threa
 | Production paper | Persistent strategy portfolio, daily cycles, optional weekday scheduling, pause/resume entries, positions, fills, accounting and exports. |
 | Jobs & logs | Timestamped progress and errors for downloads, backtests and paper cycles. |
 | Settings | Research universe selection and automatic history windows and installation-specific token replacement. |
-
-## Guide contents
-
-- [Run on Windows](#run-on-windows)
-- [First real-data run](#first-real-data-run)
-- [Research boundaries](#research-boundaries)
-- [Paper trading in production](#paper-trading-in-production)
-- [Independent file storage and security](#independent-file-storage-and-security)
-- [Verify](#verify)
-- [Local prerequisites and Linux/macOS setup](#local-prerequisites-and-linuxmacos-setup)
-- [Dashboard workflow and interpreting results](#dashboard-workflow-and-interpreting-results)
-- [Deployment architecture](#deployment-architecture)
-- [Deploy to a fresh Ubuntu server](#deploy-to-a-fresh-ubuntu-server)
-- [Server operation and code updates](#server-operation-and-code-updates)
-- [Backups and restore](#backups-and-restore)
-- [Configuration reference](#configuration-reference)
-- [Troubleshooting](#troubleshooting)
-- [Repository structure and GitHub policy](#repository-structure-and-github-policy)
-
-
-A light cream-and-green control panel inspired by Banana Patterns. This first increment uses real Upstox daily data, not demo prices. It includes a configurable Nifty 50 / Nifty 500 universe, historical coverage, KLineChart candlesticks, persistent job logs and a parameterized daily breakout backtest. The backend registry already exposes Swing patterns as active and Intraday momentum and Scalping as active research plugins; the shared navigation reads this registry, while planned tabs remain visibly disabled until their data and execution modules are implemented.
 
 ## Run on Windows
 
@@ -61,14 +65,14 @@ npm.cmd run vendor
 .venv/Scripts/python.exe -m uvicorn dashboard.api.main:app --host 127.0.0.1 --port 8765 --no-proxy-headers
 ```
 
-Open http://127.0.0.1:8765. Local mode supports research and backtests; paper trading and its automatic scheduler run only in production. Keep the terminal running. Use one server process, without `--reload` or multiple workers: the research worker runs in that process.
+Open http://127.0.0.1:8765. Local mode supports research/backtests and separate Scalping quote paper. Generic Swing paper and its scheduler run only in production. Keep the terminal running. Use one server process, without `--reload` or multiple workers: the research worker runs in that process.
 
 ## First real-data run
 
 1. Settings → save an Upstox **access token** (not API key/secret). New saves are plaintext in the private `upstox.json` file, protected by filesystem permissions and excluded from Git. Existing encrypted records remain readable for migration. A saved token is not necessarily valid; ingestion checks it. Replace expired tokens through the same form.
-2. Select Nifty 50 and the history interval. Nifty 500 can be selected later. Saving settings does not fetch anything automatically.
+2. Select Nifty 50, Nifty 500 or Nifty Total Market as the research universe. Saving settings does not fetch anything automatically; rolling fetch windows are automatic.
 3. Market data → Refresh universe. The app downloads the current official NSE constituents and matches ISINs against Upstox's instrument master. Network/provider failures are recorded as failed jobs, never replaced with fake data.
-4. Fetch missing data. The first run downloads the configured range. Later runs reuse complete local coverage and fetch only missing earlier/later boundary ranges, then merge and deduplicate candles. Existing valid data is retained if a provider request fails. Internal missing sessions are not inferred because exchange holidays and suspensions are valid gaps; provider coverage is validated when a range is fetched.
+4. Fetch prices & fundamentals. The rolling job covers all 750 Total Market stocks, merges/deduplicates missing daily/five-minute boundary history and retains older valid coverage; quarterly financial evidence follows. Existing valid files survive failures. Internal missing sessions are not inferred from holidays/suspensions.
 5. Backtests → New backtest. Supply research capital and your all-in buy/sell cost assumptions. Adjust entry, stop, breakeven and trailing rules. The results preserve an input snapshot, configuration, costs, equity curve and complete trade ledger. Use Adjust & rerun to create a comparable new experiment, or export the JSON report.
 
 ## Scalping research
@@ -84,26 +88,26 @@ completed REST candles. Create a portfolio with explicit capital, then start its
 quote runner. Pause entries, request liquidation and stop, or export the durable
 fill ledger from the same page. Restart discards old signals and recovers saved
 exposure. Automatic startup is optional and off initially. Live orders remain unavailable.
-See [SCALPING_RESEARCH.md](SCALPING_RESEARCH.md) for exact rules and timing assumptions.
+See [SCALPING_RESEARCH.md](architecture.md#scalping-research) for exact rules and timing assumptions.
 
 ## Intraday momentum research
 
-Momentum now supports a historical fundamentals gate before either position side. New dashboard forms enable it; **Test fundamentals filter** compares matched gate-on/off runs with frozen filing evidence. See [MOMENTUM_FUNDAMENTALS_RESEARCH.md](MOMENTUM_FUNDAMENTALS_RESEARCH.md) for rules, archive limitations and results.
+Momentum now supports a historical fundamentals gate before either position side. New dashboard forms enable it; **Test fundamentals filter** compares matched gate-on/off runs with frozen filing evidence. See [MOMENTUM_FUNDAMENTALS_RESEARCH.md](architecture.md#momentum-fundamentals-research) for rules, archive limitations and results.
 
-**Test EMA / MACD** runs seven declared trials using genuine completed 10-minute/hourly indicators derived from cached five-minute data. The optional filters and indicator timeframe are separate controls from breakout confirmation. See [MOMENTUM_INDICATOR_RESEARCH.md](MOMENTUM_INDICATOR_RESEARCH.md) for exact rules, warmup, sources, validation criteria and audit failures.
+**Test EMA / MACD** runs seven declared trials using genuine completed 10-minute/hourly indicators derived from cached five-minute data. The optional filters and indicator timeframe are separate controls from breakout confirmation. See [MOMENTUM_INDICATOR_RESEARCH.md](architecture.md#momentum-indicator-research) for exact rules, warmup, sources, validation criteria and audit failures.
 
 Open **Momentum** in the strategy sidebar to backtest opening-range momentum. The form exposes opening range (5/15/30 minutes), same-clock relative-volume history/threshold, prior daily turnover and ATR filters, scan size, long/short direction, ATR stop, optional R target, risk/capital, entry deadline, mandatory same-day exit, fees and slippage. **Check minute coverage** estimates required stock-sessions before ingestion; **Fetch missing & backtest** reuses the shared five-minute cache and batches missing Upstox history. Reports preserve daily/minute inputs, input hashes, source provenance, daily volume selections, equity and trades. Trade charts show the frozen five-minute entry/exit candles and stop levels. Adjust & rerun keeps momentum settings.
 
-This India adaptation uses completed breakout closes followed by next-bar-open market fills, rather than the source paper's stop entries. Equal capital budgets are reserved per selected stock; there is no leverage, same-day capital recycling or overnight holding. Momentum is research-only; no momentum paper portfolio or streaming/live execution is enabled. Read [MOMENTUM_RESEARCH.md](MOMENTUM_RESEARCH.md) for research comparisons, assumptions and the first real-data experiment.
+This India adaptation uses completed breakout closes followed by next-bar-open market fills, rather than the source paper's stop entries. Equal capital budgets are reserved per selected stock; there is no leverage, same-day capital recycling or overnight holding. Momentum is research-only; no momentum paper portfolio or streaming/live execution is enabled. Read [Momentum contracts](architecture.md#momentum-research) for research comparisons, assumptions and the first real-data experiment.
 
 The Momentum dashboard also shows modeled cost drag, long/short P&L, missed-breakout/VWAP diagnostics and earlier/later session results. Optional VWAP confirmation, ATR breakout buffers and next-bar breakeven stops are editable. **Compare refinements** saves all six declared trials on identical frozen candles and matched costs; **Adjust & rerun** preserves the reference inputs. Missing frozen history or changed hashes halt replay. The initial comparison reduced the sample loss to −0.56% with the 0.1 ATR buffer, but every trial remained negative; defaults are unchanged.
 
 ## Research boundaries
 
 New data-validity safeguards and the first local audit are documented in
-[DATA_VALIDITY.md](DATA_VALIDITY.md). Market data → **Audit price history** lists
+[DATA_VALIDITY.md](architecture.md#data-validity). Market data → **Audit price history** lists
 large discontinuities. New backtests and paper sessions halt on suspect gaps;
-IPO entries require verified listing dates, and the enabled breadth gate requires
+IPO entries require verified original IPO dates, distinct from NSE venue listing dates, and the enabled breadth gate requires
 sufficient history coverage. Existing reports and ledgers are preserved.
 
 - Swing backtests follow the Banana Patterns screen set: **VCP**, **Blue sky**, **Multi-year breakouts**, and **IPO base**. The same workflow exposes pivot/close entry, 3/5/8/10 position caps, 7/8/10% stops, 50-day or 30-week trailing exits (or +25%), risk per trade, and a 40%-above-200-day weak-market gate. Costs remain explicit assumptions; defaults are zero for reference-site comparison. Historical membership, RS ranking and broad liquid-universe coverage still need validation before claiming numeric parity.
@@ -154,7 +158,7 @@ Reference APIs: [Upstox historical candles V3](https://upstox.com/developer/api-
 
 Use **Python 3.13** and **Node.js 22**, matching Docker/CI, plus Git and npm. Install Python dependencies from `requirements-lock.txt` and frontend dependencies from `package-lock.json`. An Upstox access token and network access to NSE/Upstox are required for market-data downloads. Previously saved reports remain local files.
 
-The frontend is plain HTML/CSS/JavaScript served by FastAPI. There is no React build, separate frontend development server, database or Redis service. Node is needed for dependency installation, vendor generation and JavaScript checks; it is not a runtime application server.
+The frontend is plain HTML/CSS/JavaScript served by FastAPI. There is no React build or separate frontend development server. Trader readers use JSON; a separate PostgreSQL market archive exists, with no Redis/RQ service. Node is needed for dependency installation, vendor generation and JavaScript checks; it is not a runtime application server.
 
 Linux/macOS, after installing Python 3.13 and Node 22:
 
@@ -178,11 +182,9 @@ The chart bundle `dashboard/web/vendor/klinecharts.min.js` is tracked in Git. `n
 
 ### Configure data before research
 
-Choose the research universe in Settings. Market data → Fetch always downloads daily candles for the last calendar year and five-minute candles for the last 10 calendar days, ending on Upstox's latest completed Nifty 50 trading day. It covers all 750 Nifty Total Market stocks, regardless of research-universe selection. Older daily and five-minute history stays available. Quarterly fundamentals for the same stocks are checked after candles, with validated snapshots and older versions retained. The Fundamentals page reports scored snapshot history separately from comparative source filings. Failures are reported per stock and interval while remaining downloads continue; partial jobs retain successful data and can be retried. Saving Settings does not download anything.
+Settings selects the research universe; automatic Market data fetch always refreshes all 750 Total Market instruments. Inspect actual coverage and the completed-session cutoff. Saved internal date ranges are for legacy/frozen experiments and paper history, not editable fetch controls.
 
-The UI requests an **access token**, not an API key/client secret. The token expires daily in the current workflow: replace it in Settings and retry failed provider jobs. No code edit or server rebuild is necessary. “Saved” confirms storage, not validity; provider requests establish validity.
-
-Requested coverage and observed candles are different: a recently listed company can be considered for the whole requested interval but only have candles after its listing. The app does not fabricate prices or infer every internal calendar gap as a missing session. Holidays and suspensions can produce valid gaps.
+Save the access token, refresh universe, then Fetch prices & fundamentals. Provider requests validate the saved token; replace expired credentials and retry failed jobs. No server rebuild is needed. Missing historical sessions, listing dates, delisted membership and action adjustments are not guessed. Retained history may provide longer warmup than the rolling windows; reports disclose exclusions.
 
 ### Create an experiment
 
@@ -195,7 +197,7 @@ Requested coverage and observed candles are different: a recently listed company
 
 The base-and-pivot experiment was retired after failing its matched comparison.
 Its results and archived replay instructions remain in
-[BASE_PIVOT_RESEARCH.md](BASE_PIVOT_RESEARCH.md). Existing Blue sky paper rules remain unchanged.
+[BASE_PIVOT_RESEARCH.md](architecture.md#base-pivot-research). Existing Blue sky paper rules remain unchanged.
 
 | Configuration | Interpretation |
 |---|---|
@@ -206,9 +208,9 @@ Its results and archived replay instructions remain in
 | Breakeven R | Threshold expressed as a multiple of initial price-stop risk. |
 | Winner exit | Configured moving-average trail or +25% target. Other saved protection/holding rules also matter. |
 | Charges and slippage | User-supplied execution assumptions; 1 basis point equals 0.01%. |
-| Signal priority | Alphabetical or configured relative-strength order when candidates compete for capacity. |
+| Signal priority | Alphabetical, relative-strength or publication-time fundamental-score order when candidates compete for capacity. |
 
-The safe-window suggestion accounts for downloaded history and warmup. Adjust & rerun preserves the historical experiment's explicit dates instead of silently changing them. A requested end beyond coverage needs a date correction or an extended history setting followed by a fetch.
+The safe-window suggestion accounts for downloaded history and warmup. Adjust & rerun preserves the historical experiment's explicit dates instead of silently changing them. A requested end beyond coverage needs a date correction or additional provider ingestion followed by a coverage check.
 
 The Run button has a nearby explanation when disabled: an active job, missing symbols, insufficient history or a pending submission. Errors are visible on mobile too. Only one job runs at a time.
 
@@ -432,11 +434,12 @@ The restorer validates manifest version, path containment, JSON destinations and
 
 | Variable | Default / purpose |
 |---|---|
-| `TRADER_ENV` | `local`; only `production` enables paper APIs/scheduler. Other values fail startup. |
+| `TRADER_ENV` | `local`; `production` enables generic Swing paper APIs/scheduler. Separate Scalping quote paper also works locally. Other values fail startup. |
 | `TRADER_PUBLIC_ORIGIN` | Empty locally; production's exact HTTPS origin for host/origin checks. |
 | `TRADER_DATA_DIR` | `<checkout>/data` locally; `/state/data` in the production container. |
 | `TRADER_PRIVATE_DIR` | `<data>/private` locally; `/state/private` in production. |
 | `DASHBOARD_ADMIN_USER`, `DASHBOARD_ADMIN_PASSWORD` | Optional Basic Auth; configure both or neither. Only one configured prevents startup. |
+| `OPENAI_API_KEY`, `TRADER_NEWS_MODEL` | Optional company web research; both process values required, or saved Windows connection loaded through start.ps1. Production paid research requires Basic Auth. |
 | `TRADER_KEY_FILE` | Legacy encrypted-token key path; default `<checkout>/.local-key`. New saves are plaintext. |
 
 PowerShell example before starting a separate research installation:
@@ -516,6 +519,6 @@ Use a branch/PR when review is appropriate. Author routine changes in a developm
 
 Do not commit `.env`, tokens, private keys, `.local-key`, `data/`, research artifacts, portfolios, backups or virtual environments. Backtests are separate files but stay ignored, so running UI experiments does not cause Git merge conflicts under this policy. Do not force-add runtime state. Application backup and Git source history serve different purposes.
 
-Future plans include broader strategy plugins and database/queue infrastructure. The current application has no live broker execution, Telegram integration, shared local/remote database, external queue or off-server backup service. Working simulation and positive backtests do not by themselves establish a validated trading edge.
+Future plans include broader strategy plugins and database/queue infrastructure. The current application has no live broker execution, Telegram integration, shared database-backed Trader readers, external queue or off-server backup service. Working simulation and positive backtests do not by themselves establish a validated trading edge.
 
-Further intraday strategy research and the 24-trial timeframe/selection comparison are in [MOMENTUM_DEEP_RESEARCH.md](MOMENTUM_DEEP_RESEARCH.md). Momentum now separates the opening range from completed 5/10/15/30/60-minute confirmation; execution and protective exits retain five-minute resolution.
+Further intraday strategy research and the 24-trial timeframe/selection comparison are in [MOMENTUM_DEEP_RESEARCH.md](architecture.md#momentum-deep-research). Momentum now separates the opening range from completed 5/10/15/30/60-minute confirmation; execution and protective exits retain five-minute resolution.

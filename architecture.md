@@ -1,177 +1,99 @@
-# Trader — authoritative architecture and rebuild specification
+# Trader — architecture, implementation contracts and research record
 
-**Company research addition — 8 October 2026.** The Fundamentals page adds advisory
-technical candidate scans, sector-aware experimental quality scores and automatic LLM
-web research of company filings and recent news. Research runs through the existing
-job worker and preserves cited reviews. Users do not supply sources. The server needs
-`OPENAI_API_KEY` and `TRADER_NEWS_MODEL`; production paid actions require authentication.
-Backtest/paper entry rules are unchanged. The complete feature contract, storage and
-validation are documented in [COMPANY_RESEARCH.md](COMPANY_RESEARCH.md).
+Reconciled against the local checkout on **9 October 2026 (IST)**. Includes source changes already present, whether committed or not. Dated deployment observations and research results are historical evidence, not a claim that the live server was inspected today.
 
-**Reconciled with the application and owner decisions on 4 October 2026.**
+## Documentation policy
 
-**Research thread reconciled — 4 October 2026.** The final refreshed custom Blue sky
-backtest profit is ₹1,919.02 (+1.91902%) on ₹100,000, April 2025–October 2026.
-New provider matching, exact-row repair, trend/RS/breadth/warmup contracts are integrated
-below; the research decisions section records all retained/rejected configurations and
-comparisons. Other threads’ implementation contracts are preserved.
+Keep only README.md and architecture.md as project Markdown documentation. README covers setup and operation; architecture holds detailed contracts, schemas, research results, sources and deployment instructions. Do not create or update documentation during routine coding, testing, research or deployment unless the user explicitly asks. Research scripts export Markdown only with an explicit --markdown path. Saved JSON reports/charts remain runtime artifacts. Read only relevant architecture sections for routine work.
 
-This document is sufficient to rebuild the current local dashboard and its backend without
-chat history, screenshots, README.md, or an existing checkout. It defines appearance, navigation,
-forms, defaults, schemas, HTTP interfaces, algorithms, files, recovery behavior and verification.
-The future production design at the end is a separately labeled roadmap. It is not a prerequisite
-for recreating the current page. The current specification supersedes older architecture drafts.
+Current source, runtime schemas, dependency locks and deployment files define behavior. Dated experiments describe frozen historical snapshots, not current defaults. Local/uncommitted changes do not prove deployment. Proposed restructuring is not implemented by this cleanup or standing authorization to deploy/trade/modify user data.
 
-Rebuilding the application does not regenerate private credentials, downloaded provider data,
-saved experiments or a portfolio ledger. Reconnect and fetch real data for a fresh installation;
-restore the existing durable data directory when continuing an existing one; a legacy encrypted token also needs its original encryption key.
-Never replace missing user history with example records or hardcoded historical metrics.
+## Current implementation
 
-## Current deployment decisions — 4 October 2026
-
-The owner now authorizes the agent to commit and push to the public repository `manoj-mathivanan/trader_all` and deploy this MVP for remote research/paper use before edge validation. Live execution and the full Postgres/Redis production roadmap remain deferred. These are final current-runtime decisions. The future infrastructure roadmap below is not required for this deployed MVP; its database, queue and live-broker proposals are not current capabilities.
-
-The approved VPS is DigitalOcean `manoj-projects` in Bangalore, Ubuntu 24.04, 1 vCPU/1 GB RAM/25 GB SSD ($6/month before taxes). Domain: `manojmathivanan.com`; application: `https://trader.manojmathivanan.com`. Caddy HTTPS forwards to one loopback Uvicorn process in Docker Compose. Set `TRADER_PUBLIC_ORIGIN` explicitly; hosts and browser write origins remain checked. No website authentication is configured by owner choice, so all existing UI actions are publicly reachable.
-
-New UI token saves use a plaintext private file with restricted filesystem permissions, outside published state through `TRADER_PRIVATE_DIR`. Tokens are never returned to the UI/logs or committed. Legacy encrypted local records remain readable solely for migration compatibility. `main` holds shared code, tests and configuration only. No data branch is published. Production starts fresh, and local/production files remain independent with no database or synchronization. `TRADER_ENV=local` defaults to research only; production explicitly enables paper APIs and automatic scheduling. The server never commits or pushes. Nightly production backups remain on the VPS. Data and credentials remain outside the code checkout and image. The server needs no GitHub write credential. The complete deployment, backup and recovery specification is embedded below; no other document is required for these contracts.
-
-## Reading map
-
-- [Current deployment decisions](#current-deployment-decisions--4-october-2026)
-- [Complete deployment and recovery specification](#complete-deployed-mvp-specification-and-recovery-runbook)
-- [Owner decisions and implementation status](#owner-decisions-and-implementation-status)
-- [Current application rebuild specification](#current-application-rebuild-specification)
-- [Data source, universe and ingestion contract](#data-source-universe-and-ingestion-contract)
-- [Complete visual specification and DOM shell](#complete-visual-specification-and-dom-shell)
-- [Views, actions and dialogs](#views-actions-and-dialogs)
-- [Full screen-preset contract](#full-screen-preset-contract)
-- [Exact local signal predicates and differences from the reference](#exact-local-signal-predicates-and-differences-from-the-reference)
-- [Exact simulation, costs, exits and metrics](#exact-simulation-costs-exits-and-metrics)
-- [Persistent paper portfolio and scheduling](#persistent-paper-portfolio-and-scheduling)
-- [Strategy plugin and restart contracts](#strategy-plugin-and-restart-contracts)
-- [API, security and persistence contract](#api-security-and-persistence-contract)
-- [Schema reference and pinned local dependencies](#schema-reference-and-pinned-local-dependencies)
-- [Files to recreate when only this document survives](#files-to-recreate-when-only-this-document-survives)
-- [Research decisions, reproducible configurations and results from this thread](#research-decisions-reproducible-configurations-and-results-from-this-thread)
-- [Historical reference observations and investigation evidence](#historical-reference-observations-and-investigation-evidence)
-- [Future production design — not the current runtime](#future-production-design--not-the-current-runtime)
-
-## Owner decisions and implementation status
-
-| Area | Final decision / current status |
+| Area | Current behavior |
 |---|---|
-| Purpose | Personal rules-based equities research locally and in production; production Swing paper and local/production forward Scalping paper; no SaaS, multi-tenant service, tips or managed money |
-| Current market coverage | NSE cash equities matched to current Nifty 50 or Nifty 500 constituents; broad NSE/BSE support is a future target |
-| Product order | Dashboard first, real data and backtests next; production paper support is explicitly authorized before edge validation |
-| Visual direction | Light cream/green Banana-inspired design, optional persistent dark toggle; original source/assets only |
-| Strategy versus screen | One active Swing Patterns strategy with VCP, Blue sky, Multi-year and IPO screens; no separate parity strategy/profile |
-| Momentum research | intraday_momentum is active for five-minute opening-range backtests; momentum paper/streaming execution remains pending; scalping supports one-minute pullback research and forward quote paper (see SCALPING_RESEARCH.md); options is a roadmap item |
-| Portfolio ownership | Exactly one created portfolio per strategy ID, independent cash/capital/configuration/positions/history; no capital pooling |
-| Configurability | Research settings and paper screen/risk/exits/costs/schedule are editable in the UI; schema-defined fields, no deploy for routine tuning |
-| Accounting invariants | Paper capital and membership are fixed after creation; capital transfers/reallocation are not implemented; editing other settings never resets the ledger |
-| Execution | Swing paper uses simulated EOD next_open fills; Scalping paper uses observed streamed bid/ask for long/short fills; Upstox supplies data only, with no broker orders |
-| Persistence | Durable per-strategy JSON ledger, atomic replacement and session checkpoint; startup restores history and retries interrupted scheduled work |
-| Runtime | One loopback FastAPI process and in-process research job worker per environment; Swing weekday scheduler starts only in production; Scalping has a separate optional quote process with cross-process locks; no Postgres, Redis or RQ |
-| Data honesty | Real provider data only; tests may use isolated synthetic fixtures; no invented candles, prices, trades or performance |
-| Research gate | Edge is not validated; current constituents, adjustments, historical RS and listing history remain incomplete; live trading and the larger database/queue roadmap require research validation; current remote research/paper MVP is authorized |
-| Deployment | MVP deployed to DigitalOcean with Caddy HTTPS at trader.manojmathivanan.com; live mode remains unavailable |
-| Authentication | No website login for the current public MVP by owner choice; optional Basic Auth is implemented but unset; live-broker access is a separate future decision |
-| Source control | Owner authorizes agent commits/pushes of shared code/configuration to public manoj-mathivanan/trader_all main; all data and secrets excluded; server never pushes |
+| UI | Plain FastAPI-served HTML/CSS/JavaScript; KLineChart 9.8.12; no frontend framework/build server |
+| Navigation | Overview, Market data, Fundamentals, Backtests, Momentum, Scalping, production Paper trading, Jobs & logs, Settings |
+| Data | Current official Nifty 50/500/Total Market membership, exact ISIN provider matching; Upstox daily/five-minute/one-minute caches |
+| Rolling refresh | Daily last-calendar-year and five-minute last-ten-calendar-day history for all 750 Total Market stocks, retaining older data; official quarterly fundamentals follows |
+| Swing | VCP, Blue sky, Multi-year and verified IPO screens; bullish/bearish daily/intraday research; saved screens and validated strategy presets |
+| Momentum | Opening-range research, confirmation/indicator timeframes, fixed refinements/indicator/flag/reversal suites and historical fundamental gates; no paper module |
+| Scalping | One-minute pullback research and separate forward streamed-quote paper locally and in production |
+| Company | Direct NSE filing metrics/scoring, bulk quarterly cache, prospective buy screens, dated historical ranking and optional cited LLM reviews |
+| Worker | One in-process ThreadPoolExecutor research job at a time; interrupted jobs fail on restart |
+| Application storage | Independent per-environment atomic JSON files; paper accounting/checkpoint commit together; research artifacts span files |
+| PostgreSQL | Independent PostgreSQL 17 market-data layer; completed local/production refreshes sync automatically; Trader readers/state still use JSON |
+| Execution | Simulated only: Swing EOD next-open, Scalping observed fresh bid/ask. No live broker orders |
+| Portfolio | Exactly one per implemented strategy, independent fixed capital/captured membership and durable history; no auto-create/pooling/reset |
+| Runtime | Python 3.13, Node 22 for checks/vendor; one dashboard process per environment; optional separate Scalping quote process with cross-process locks |
+| Hosting | DigitalOcean/Caddy/Docker Compose configuration with durable mounts; host/write-origin checks and optional Basic Auth |
+| Validation | No validated edge; membership/actions/accounting/executable shorts/fills and data-basis limitations remain disclosed |
 
-Implemented: six production dashboard views (five locally), plaintext private token saves, real constituent matching/ingestion,
-coverage and candlestick charts, saved screens, costed backtests and complete sortable reports,
-jobs/logs, isolated paper portfolios, configurable paper UI, scheduling and restart recovery.
-Production MVP deployment is implemented. Database/queue, Telegram, momentum paper/streaming and options execution,
-live broker accounts/orders/stops/reconciliation and unbiased edge validation remain pending.
-No account/portfolio or automatic paper schedule is created at installation. Deployment installs the separate nightly data-backup timer.
+TRADER_ENV defaults to local. Generic Swing paper routes and its weekday scheduler are production-only. Scalping uses separate /api/scalping/paper routes and operates locally too. Installing does not create a portfolio, schedule or runner.
 
-## Current application rebuild specification
+PostgreSQL runs independently under /opt/market-data with durable /srv/market-data/postgres state; Trader production JSON remains under /srv/trader/data. Importing market evidence does not synchronize credentials, paper, settings, jobs or report outputs. Database provisioning/import source is present; dated deployment records must not be read as today's verification.
 
-The following sections define the current shared application and its local/production differences. They distinguish API compatibility defaults,
-new-form UI seeds, reference-site observations and future goals explicitly. If a known limitation
-is described, reproduce the documented current behavior rather than silently claiming a fix.
-
-### Current repository and run commands
-
-The shared file-based MVP is intentionally smaller than the future database/queue architecture below:
+## Module ownership
 
 | Path | Responsibility |
 |---|---|
-| `dashboard/api/main.py` | Loopback-bound FastAPI API, allowed public proxy origin, local/production gate, bootstrap/settings/token/jobs/bars/runs/paper routes |
-| `dashboard/web/app.js` | Single-page dashboard renderer and forms |
-| `dashboard/web/style.css` | Light Banana-inspired dashboard styling |
-| `dashboard/web/index.html` and `favicon.svg` | Static document shell and original app icon |
-| `dashboard/web/vendor/` | Locally copied KLineChart library and its license |
-| `scripts/vendor.mjs`, `package.json`, `package-lock.json` | Frontend dependency installation and vendoring |
-| `requirements.txt`, `requirements-lock.txt`, `start.ps1` | Python dependencies and local launch |
-| `tests/test_*.py`, `tests/test_screen_presets.cjs` | Backend and screen-selection regression checks |
-| `core/research/config.py` | Pydantic settings and backtest schemas |
-| `core/research/upstox.py` | Universe refresh, Upstox V3 daily ingestion, boundary merge and validation |
-| `core/research/backtest.py` | Daily-bar preparation, simulation, metrics and run snapshots |
-| `core/research/jobs.py` | In-process queued/running/success/failed jobs and structured logs |
-| `core/research/store.py` | Local JSON/lock-backed persistence under `data/` |
-| `core/portfolio/manager.py` | Strategy identity, isolated creation/configuration/status/persistence |
-| `core/portfolio/registry.py` | Per-strategy paper schema and runner registration |
-| `core/portfolio/paper.py` | Swing config, forward-only cycle, data fingerprints and atomic checkpoints |
-| `core/portfolio/scheduler.py` | Production-only weekday schedule, claims and restart recovery |
-| `core/risk/position_sizer.py` | Shared risk and cash sizing |
-| `core/execution/paper.py` | Shared simulated fills, fees and actual slippage |
-| `core/strategies/registry.py` | Active Swing Patterns, Intraday Momentum research and Scalping research entries |
-| `strategies/swing_patterns/patterns/registry.py` | Banana screen registry |
-| `strategies/swing_patterns/patterns/signals.py` | Pure daily-bar signal predicates |
+| dashboard/api/main.py | Lifecycle/security, bootstrap and settings/data/jobs/backtest/paper APIs |
+| dashboard/api/company_review.py | Company evidence, filings, buy screens, scans/reviews |
+| dashboard/web/app.js | Navigation/state, templates/forms/charts/reports/events/polling |
+| dashboard/web/company-review.js | Company feature currently sharing app.js globals |
+| dashboard/web/style.css, index.html | Theme, responsive/accessibility shell |
+| core/research/config.py, strategy_presets.py | Validated models and screen/strategy presets |
+| core/research/upstox.py, market_data.py, intraday_data.py | Provider matching, rolling/history fetch and cache validation |
+| core/research/backtest.py, short_backtest.py, intraday_long.py, intraday_short.py | Swing preparation, simulations and saved reports |
+| core/research/momentum.py, momentum_indicators.py, scalping.py | Strategy config/engines and frozen suites |
+| core/research/fundamentals.py, fundamental_history.py, official_filings.py, company_review.py | Direct evidence/scoring, publication-time archives and advisory web research |
+| core/research/market_history.py, data_quality.py, corporate_actions.py, candle_repairs.py | Listing/quarantine/audit, verified actions and derived exact-row repairs |
+| core/research/store.py, jobs.py, provenance.py | Atomic JSON, jobs/logs and source/input hashes |
+| core/research/trade_chart.py, short_trade_chart.py | Frozen charts/explanations |
+| core/strategies/registry.py, strategies/swing_patterns/patterns/ | Strategy identity and daily pattern predicates/registry |
+| core/risk/, core/execution/ | Shared sizing and simulated fill/cost code |
+| core/portfolio/ | Independent ledgers, dispatch, scheduler; separate Scalping runner/control/process locks |
+| core/market_data/ | Upstox V3 full-feed transport and protobuf |
+| scripts/, reference_data/ | Explicit utilities and public sourced history/repair evidence |
+| deploy/, Dockerfile, compose.yaml | Hosting/backups/restore and independent PostgreSQL provision/import |
+| tests/ | Isolated synthetic/temp fixtures and JavaScript checks, no shipped fake prices |
 
-On Windows, run `start.ps1` from the repository root. The dashboard is loopback-only at
-`http://127.0.0.1:8765`. Run `npm.cmd run check` and
-`.venv/Scripts/python.exe -m unittest discover -s tests -q` after code changes.
+## Reading map
 
-### Data source, universe and ingestion contract
+- [UI/Swing implementation](#ui-and-swing-implementation-contracts)
+- [Strategy/portfolio contracts](#strategy-and-portfolio-contracts)
+- [Rolling ingestion](#rolling-market-data-ingestion)
+- [API/storage/recovery](#api-security-storage-and-recovery)
+- [Exact current schemas](#exact-configuration-schemas-9-october-2026)
+- [Frozen validation plan — registered 5 October 2026 (IST)](#validation-plan)
+- [Intraday momentum: research and experiment review](#momentum-deep-research)
+- [Fundamental ranking comparison](#fundamental-ranking-comparison)
+- [Quarterly fundamentals cache and buy screens](#fundamentals-pull)
+- [NSE intraday long and short strategy review](#nse-intraday-strategy-review)
+- [Stronger momentum entries — 8 October 2026](#momentum-stronger-rules)
+- [Reversed intraday momentum experiment](#momentum-reverse-research)
+- [Intraday momentum baseline](#momentum-research)
+- [Momentum indicator loop — declared 8 October 2026](#momentum-indicator-research)
+- [Fundamentals before momentum entry](#momentum-fundamentals-research)
+- [Scalping research](#scalping-research)
+- [Trader MVP deployment](#deploy-readme)
+- [Screen and backtest configuration guide](#screen-and-backtest-parameters)
+- [Automatic company research](#company-research)
+- [Base-and-pivot research — 8 October 2026](#base-pivot-research)
+- [Banana Patterns versus our breakout signals](#banana-pattern-comparison)
+- [Corporate-action history investigation — 7 October 2026](#corporate-action-review)
+- [Shared market-data database](#deploy-market-data-readme)
+- [Data-validity safeguards — first increment](#data-validity)
+- [Upstox feed schema](#core-market-data-readme)
+- [Intraday cost diagnosis](#intraday-cost-diagnosis)
+- [Sector-filter implementation](#sector-filter-implementation)
+- [Original Swing studies](#research-decisions-reproducible-configurations-and-results-from-the-original-swing-study)
+- [Deployment/database operations](#deployment-and-database-operations)
+- [Proposed restructuring/roadmap](#proposed-restructuring-and-future-scope-not-implemented)
 
-- Upstox is the primary historical EOD source. The user has Upstox API access; never ask for or
-  print access tokens in chat, logs, code, or reports.
-- The token is entered in each environment's Settings and saved as plaintext in its private file, with restricted filesystem permissions. It is never returned to the browser or logged. Legacy encrypted local records remain readable with the original key. Mutating requests require the existing `X-Trader-Request: local-ui` header in both environments; its name is a protocol marker, not authentication.
-- The API default universe is **Nifty 50**; the owner expanded research first to **Nifty 500**,
-  then to **Nifty Total Market (750)** on 8 October 2026. The existing paper portfolio retains
-  its frozen Nifty 500 membership.
-  Both are implemented Settings choices. The full available 500-member provider universe has
-  been fetched; broader NSE/BSE coverage and historical membership remain future work.
-- Historical setup used a maximum ten-year internal range. The rolling Market data fetch contract below supersedes editable dates. The validated working range is
-  research initially used `2019-01-01` onward, then extended stored history to `2018-01-01`.
-  Upstox returned actual trading candles through `2026-10-01`; requested end dates and observed
-  last sessions are distinct. Do not overwrite other threads’ current Settings merely to
-  reproduce a historical settings snapshot.
-- Upstox V3 daily requests use the inclusive path format
-  `/v3/historical-candle/{instrument_key}/days/1/{to_date}/{from_date}`. Instrument keys are URL
-  encoded. Upstox daily history supports old ranges back to 2000; the application still enforces
-  a ten-year local setting range.
-- **Refresh universe** downloads and matches the current official constituent list and Upstox
-  instruments. It does not fetch candles.
-- **Fetch missing data** examines every symbol's actual stored first/last bar. It requests only an
-  earlier boundary when the configured start precedes local coverage and only a later boundary
-  when the configured end follows local coverage. New candles merge by date, replace duplicate
-  dates with the provider's newest row, validate OHLCV, and atomically replace the local record.
-- If coverage is complete, the provider is not called. Exchange holidays, suspensions and missing
-  sessions are not invented. A symbol may begin later because it listed later.
-- An earlier validated ingestion snapshot fetched 93,962 bars for 50 Nifty 50 symbols. In that snapshot ADANIENT had 1,923
-  bars from `2019-01-01` through `2026-10-01`, with no duplicate dates or suspicious multi-day
-  gaps. Current constituents are still survivorship-biased; delisted/merged historical membership
-  and corporate-action adjustment require a future data source/validation step.
+## UI and Swing implementation contracts
 
-### Decisions and precedence
-
-- Use the shared dashboard for real-data research/backtests locally or in production; create and run paper portfolios only in production.
-- One Swing strategy owns four screen families; VCP is a screen, not another strategy. There is
-  no separate Banana parity profile. Intraday Momentum and Scalping have active research tabs; Scalping also supports a separately controlled forward quote paper runner. Momentum streaming paper remains pending.
-- Backtest and paper forms have exactly one **Screen** dropdown containing built-ins and saved
-  screens. Store `pattern` as a hidden field updated by the selection. Do not add a second
-  visible Banana screen selector. Only custom-screen creation has a **Base screen** selector.
-- Every dropdown change replaces all thirteen screen-filter values, including custom → built-in
-  transitions. It leaves dates, name, capital, entries, exits, risk, fees and acknowledgment alone.
-- Production paper simulation and remote MVP hosting are authorized before edge validation; this does not validate the edge. Live execution remains future.
-- The public MVP deliberately has no website authentication. Basic Auth remains an optional implementation, not a deployment requirement. Uvicorn remains bound to loopback behind Caddy.
-- The owner authorizes the agent to commit and push to the public repository; exclude credentials.
-- The reference site's screen thresholds are research inputs. Actual implemented predicates below
-  determine the local output; do not imply missing reference filters are enforced.
-- Preserve old experiments rather than rewriting their settings or metrics after a bug fix.
+The detailed Swing contracts originated in the earlier implementation and are retained with current corrections. Current schemas and the strategy-specific additions below cover later capabilities. Historical ingestion/performance counts are dated observations, not current server health.
 
 ### Complete visual specification and DOM shell
 
@@ -218,20 +140,20 @@ and links to the KLineChart Apache 2.0 license. Do not substitute demo data for 
 
 ### Views, actions and dialogs
 
-Hash navigation: `#overview`, `#data`, `#backtests`, `#paper`, `#jobs`, `#settings`; unknown hashes
+Hash navigation: `#overview`, `#data`, `#company`, `#backtests`, `#momentum`, `#scalping`, `#paper`, `#jobs`, `#settings`; unknown hashes
 return to overview. Closing/changing views disposes charts and closes the modal.
 
 | View | Required content and behavior |
 |---|---|
 | Overview | Universe, loaded-symbol/bar coverage, run count, Research/Paper mode and simulated position count; latest run's return/trade count and full-report button; connection/data/backtest onboarding; methodology strip; three recent jobs |
-| Market data | Refresh universe, Fetch missing data, selected universe/requested dates, actual coverage and bias warning; search symbol/company/sector; table of company/symbol, sector, last close/change, bars, first/last history and Chart button |
+| Market data | Refresh universe, Fetch prices & fundamentals, 750-stock rolling fetch status and selected research universe, actual coverage and bias warning; search symbol/company/sector; table of company/symbol, sector, last close/change, bars, first/last history and Chart button |
 | Backtests | New backtest; newest-first run cards with name, universe, dates, IST creation time, return, drawdown, trades; open complete report; explanatory research text |
 | Paper trading | Strategy portfolio selector; Create/configure portfolio; pause/resume new entries; Run daily cycle; status/universe/start/last session/schedule; equity/cash/realized/unrealized cards; open positions, equity curve, closed trades, fills and full JSON export |
 | Jobs & logs | All returned jobs with type/time/status and View logs; pending-job link and manual Refresh; readable timestamped log in a modal |
 | Settings | Research-universe form (automatic history windows); private plaintext-token connection form; token saved/replacement status; environment/authentication status; backtest configuration action |
 
 Sidebar saved-screen buttons open New backtest seeded from that screen. Add new screen opens
-name, Base screen and all thirteen filters. New backtest groups fields into Experiment; Banana screen
+name, Base screen and schema-defined qualification filters. New backtest groups fields into Experiment; Banana screen
 filters; Entry, risk & exits; Execution costs; acknowledgment. Strategy currently displays Swing
 Pattern. Screen choices: VCP, Blue sky, Multi-year breakouts, IPO base, then each saved name.
 Risk, stop and position count are numeric inputs with schema bounds, not restricted choice lists.
@@ -244,8 +166,7 @@ Backtest date-picker limits (5 October 2026): both New backtest
 start/end inputs set HTML `min` to the available-window response's `history_start` (fallback
 `start`) and `max` to `end` (fallback `history_end`). This prevents choosing dates outside
 downloaded coverage in the calendar. The warmup-adjusted safe start remains a recommendation,
-not the minimum date. With no history boundaries, disable the date inputs. Do not constrain
-Market data settings, since those dates request additional history. Preserve cloned report
+not the minimum date. With no history boundaries, disable the date inputs. Market data settings expose only the research universe; rolling fetch windows are automatic. Preserve cloned report
 dates, but block invalid values through native input validation and `validateBacktestDates`
 before submission; reject either date outside the bounds and start after end. Regression tests
 cover both limits, inclusive endpoints, reversed ranges and no-history disabled fields.
@@ -332,7 +253,7 @@ other values use strings. `screen` and `strategy` are UI selectors, not extra Ba
 
 ### Full screen-preset contract
 
-All four built-ins currently share the following thirteen-field seed; their pattern IDs choose
+All four built-ins currently share the following schema-defined filter seed; their pattern IDs choose
 different predicates. These shared defaults do not mean the four signal rules are identical.
 
 ```json
@@ -342,15 +263,16 @@ different predicates. These shared defaults do not mean the four signal rules ar
   "require_rising_long_trend": false, "min_rs_rating": 0, "min_turnover": 50000000,
   "vcp_window_days": 10, "vcp_volume_multiple": 0.9,
   "blue_sky_lookback_days": 5000,
-  "multiyear_base_days": 260, "multiyear_max_depth_pct": 50
+  "multiyear_base_days": 260, "multiyear_max_depth_pct": 50,
+  "ipo_max_age_days": 730
 }
 ```
 
 IDs are `builtin:vcp`, `builtin:blue_sky`, `builtin:multiyear`, `builtin:ipo`; they are UI IDs only.
-Saved screen stores name, one pattern ID, the thirteen filters, created_at and an ID computed as
+Saved screen stores name, one pattern ID, the schema-defined filters, created_at and an ID computed as
 `custom_` + first ten hex characters of SHA1(name encoded as UTF-8). Saving the same name replaces
 that preset; keep at most 100 newest presets. No delete/edit-specific screen API exists yet.
-Selecting a saved screen copies its stored values. For older presets missing the three new
+Saved strategy presets can additionally carry validated trading_defaults, minimum_warmup_sessions, source_run_id and description. Pattern/filter conflicts with trading_defaults are rejected. Bundled presets are merged with installation-specific saved screens; local saved values override the same identity. Selecting a saved screen copies its stored values. For older presets missing the three new
 trend/RS filters, merge the built-in disabled defaults (false, false, 0); never leave stale
 checkbox states. Set checkbox.checked for booleans, numeric input.value for numeric fields. New form merge order:
 built-in/saved filters, then any explicit run seed (for cloning), then UI general defaults as
@@ -359,7 +281,7 @@ the saved run configuration; the resolved pattern, boolean and numeric values ar
 
 New backtest defaults outside filters: name `Breakout experiment`, capital ₹10,00,000, pivot,
 1.5% risk, 8% stop, trail_50d, weak-market off, breakeven_r 1, trail_pct 8, five positions,
-120 holding sessions, alphabetical ranking, minimum_warmup_sessions 50, market_breadth_pct 40,
+120 holding sessions, fundamental_score ranking for new long UI forms (alphabetical for legacy API/bearish), minimum_warmup_sessions 50, market_breadth_pct 40,
 **10 bps slippage and zero buy/sell fees**, acknowledgment unchecked.
 Zero slippage must be entered explicitly for a wholly before-cost reference comparison.
 New paper capital must be entered by the owner; it has no UI default. Paper fees and slippage
@@ -651,9 +573,7 @@ attempt per strategy/day. It waits while another job is active. A normal failed 
 automatically retried that day; manual retry is available. Startup first marks interrupted jobs
 failed, then releases missing/interrupted schedule claims. The production container must remain running; Docker restarts it after a process crash and Docker/Caddy start at boot. No exchange-holiday calendar or notifications are implemented. The systemd backup timer is separate from this in-process paper scheduler.
 
-### Intraday momentum research contract
-
-`core/research/momentum.py` declares `MomentumConfig`, the prior-session liquidity/ATR preselection, same-opening-interval relative-volume ranking, completed five-minute breakout-close signals, next-bar-open long/short simulation, ATR stops/optional R targets, reserved equal capital budgets, and same-day cutoff exits. It is independent of Swing screen/risk settings and paper execution. The dashboard renders its schema in the Momentum view and dispatches `/api/jobs/momentum`; `/api/momentum/coverage` reports required/cached/missing stock-sessions without fetching. `intraday_data.load_ranges` validates and reuses per-ISIN/session caches, downloads missing inputs in <=28-day V3 requests, and fails on missing expected sessions. Runs snapshot `run_data` and `run_intraday`, daily selections, input hashes, provenance and research references; charts read frozen five-minute inputs. Normal daily-history coverage/listing evidence and price-discontinuity checks remain enforced. Full behavior and the initial experiment are documented in `MOMENTUM_RESEARCH.md`.
+## Strategy and portfolio contracts
 
 ### Strategy plugin and restart contracts
 
@@ -748,8 +668,8 @@ The rebuild must provide these contracts even if internal code is organized diff
 | Persistence | read(name, default=None), write(name, JSON value), now(), save_token(value), token() |
 | Data | match_constituents(rows, master) → instruments/exclusions; apply_verified_overrides(candles, isin) → provider-shaped rows; refresh_universe(settings, log), ingest(settings, log, universe=None, extend_history=True), fetch_range(client, instrument, token, start, end), validate_candles(rows, start, end), merge_candles(existing, additions) |
 | Signals | matches(chronological_bars, signal_index, config) → bool; separate pure predicate per family |
-| Research | required_warmup(config), available_window(settings, warmup), prepare(settings, config) → universe/datasets/manifest/exclusions, run(settings, config, log, job_id) → {run_id} |
-| Simulation | simulate(datasets, config, state=None, liquidate=True, allow_entries=True) → trades/curve/state/metrics; deepcopy input state before mutation |
+| Research | required_warmup(config), available_window(settings, warmup), prepare(settings, config) → universe/datasets/manifest/exclusions, run(settings, config, log, job_id, fundamental_evidence=None, sector_evidence=None) → {run_id} |
+| Simulation | simulate(datasets, config, *, state=None, liquidate=True, allow_entries=True, entry_warmup=0, entry_check=None, fundamental_scores=None, sector_gate=None, sector_observe_only=False) → trades/curve/state/metrics; deepcopy input state before mutation |
 | Sizer | percent_risk_size(equity, cash, fill, stop, config) → nonnegative integer |
 | Fill adapter | PaperBrokerAdapter(config).fill(price, quantity, buy-or-sell) → price/fees/slippage; reject invalid side, price or quantity |
 | Jobs | submit(type, callable(log, job_id), payload=None) → queued job; update(job_id, status/message/result), recover() |
@@ -773,6 +693,8 @@ complete portfolio record. Generic status/cycle endpoints require an implemented
 lookup alone is insufficient. All API writes use JSON, Content-Type application/json and the local
 request header. The browser treats either a string detail or a 422 detail array as an actionable
 error. The token is sent only to /api/connection and is never part of sample config payloads.
+
+## Rolling market-data ingestion
 
 ### Rolling market-data fetch — 8 October 2026
 
@@ -866,106 +788,12 @@ suite. All 136 release tests also passed in the deployed production image using 
 isolated state and mounted test/scripts fixtures. Live production bootstrap and JavaScript
 rendering confirmed Universe-only settings, both resolved windows and progress/count display.
 
-### Fundamentals included in Market data fetch — 9 October 2026
-
-Market data → Fetch prices & fundamentals now runs three stages for the same current 750-stock
-Nifty Total Market universe: rolling-year daily candles, last-ten-calendar-day five-minute
-candles, then quarterly fundamentals. Candle windows and retention remain as specified above.
-The fundamentals stage uses the official NSE integrated-financials index and direct NSE Ind-AS
-HTML filings; no provider token, LLM or paid data key is needed for that stage. One failed
-stock must not abort the remaining fundamental checks. Unexpected per-stock exceptions expose
-only their class. A fundamentals-stage failure cannot undo saved candles. The market_fetch
-result has a nested fundamentals summary; any failed stage/stock marks the job partial/failed.
-Unsupported financial taxonomies are counted honestly, not turned into fabricated snapshots.
-
-Fundamentals implementation files: core/research/fundamentals.py (pull/lock/validation/coverage),
-core/research/official_filings.py (official index/parser/calculation), and core/research/company_review.py
-(validated input schema, deterministic scorer, source/date eligibility and company overview).
-The company API router and company-review.js make the existing Fundamentals page available in
-production. This publication adds the data fetch, evidence view and quality checks; it does not
-change existing production paper-entry predicates or historical backtest priority. Local paper
-and research experiments in other unfinished work retain their own separate scope.
-
-For each stock keep company, snapshot, score/checks, source documents, validation, latest indexed
-period, last_period_end, next_quarter_end, last_checked_at, last_attempted_at and last_pulled_at.
-Latest records live in company/fundamentals/{ISIN}.json; each successful version is also retained
-under company/fundamentals/{ISIN}/history/{snapshot_id}.json. Raw HTML and parsed financial facts
-are content-addressed in company/filings/{sha256}.html and .json. Validate exact identity, financial
-period/publication time, accounting basis, INR units, hashes and recomputed metrics before saving.
-Failed updates retain older validated snapshots. Never delete older versions or source files.
-
-Prefer consolidated filings for the newest indexed period, otherwise standalone. Query the NSE
-index for up to the preceding 800 calendar days, choosing up to eight latest revisions for the
-latest quarter, its prior-year quarter, the latest completed annual March period and its prior-year
-annual comparator. The 800-day search is **not** a promise of 800 days of stored quarterly history.
-Only those selected source periods are downloaded. Missing balance sheet/annual inputs stay unknown.
-Financial Services bank/NBFC adapters and other unsupported forms remain missing/unsupported.
-P/E, full promoter-pledge and governance research are not inferred from missing fields.
-
-Skip a stored snapshot covering the latest completed calendar quarter until the next quarter ends.
-Otherwise check the index at most once per UTC day; when the next quarter remains unpublished,
-retain the existing snapshot without redownloading its source filings. The explicit combined
-Market data fetch retries previously failed stocks even if checked today (`retry_failed=True`).
-Same-quarter revisions are not reingested by this policy. Standalone pull API/CLI retains its
-ordinary daily-skip behavior, with CLI --retry-failed for an explicit same-day retry.
-Use a cross-process filesystem lock so a standalone pull cannot overlap the combined pull.
-
-Scored nonfinancial fields: quarterly revenue growth YoY (15 points if >=10%), PAT growth YoY
-(20 if >=10%), ROE (15 if >=12%), ROCE (10 if >=15%), debt/equity (10 if <=1), interest coverage
-(5 if >=3), annual operating cash flow/PAT (5 if >=0.8), pledging (10 if <=5%), no auditor concern
-(5) and no governance concern (5). Missing metrics receive zero points and reduce evidence coverage.
-Financial-sector inputs have separate NPA/capital-adequacy rules, but the filing downloader does
-not yet populate them. Scores are experimental and must not be described as validated predictors.
-Financial periods older than 180 days are flagged stale; source publication and recorded time
-are both respected when choosing a snapshot for a given decision time.
-
-Progress/checkpoints: company/fundamentals_pull.json holds job_id, started_at, total_symbols,
-counts by status, stock results, completed_at, partial and coverage. The nested market_fetch
-fundamentals object returns this summary. company/fundamentals_coverage.json is measured at
-completion and distinguishes validated stocks, missing stocks, pull statuses, scored snapshot
-period counts, retained versions, distinct company-periods, stocks with multiple snapshot periods,
-unique comparative source filings, source period counts and first/last source publication.
-GET /api/company/fundamentals-history returns the cached measurement, computing it when absent.
-GET /api/company includes history_coverage. The Fundamentals page displays it separately from
-scores; Market data shows validated coverage, updated/failed/unsupported counts and the page link.
-The archive contains comparative quarterly and annual evidence, not a complete consecutive-quarter
-scored history; older filings may have been collected retrospectively. Current scores must never
-be substituted into historical decisions. company/fundamentals_validation.json separately records
-an offline audit of checksums, identity, periods and metric reconstruction.
-
-Operational commands: `python scripts/pull_fundamentals.py` (Total Market default),
-`--retry-failed`, `--symbols TCS STLTECH` for focused retries, and `--validate-only` for an offline
-source audit. Production runs the same command within its container/state mounts; tokens and
-all source/price/fundamental data remain installation-specific and excluded from Git/images.
-POST /api/company/fundamentals-pull queues a standalone fundamental refresh. Existing company
-quality-check APIs and source review routes use the shared origin/auth guards. Deploy source
-through GitHub after tests/backup, then trigger the combined job separately locally/production.
+## API, security, storage and recovery
 
 ### API, security and persistence contract
 
 All routes use the same origin and optional Basic Auth (unset in the public MVP). Bind 127.0.0.1:8765 with one process, never reload/multiple workers. Local launch disables proxy headers. Production trusts proxy headers only from 127.0.0.1; Caddy removes X-Forwarded-For so the peer remains loopback. Accept loopback peers and localhost/loopback hosts (testclient/testserver in tests), plus the hostname of explicitly configured TRADER_PUBLIC_ORIGIN. Mutations require `X-Trader-Request: local-ui`; when Origin is present, require exact TRADER_PUBLIC_ORIGIN for the public host, otherwise exact base-origin match. These guards are not a login or authorization system. Security response headers: nosniff, DENY frames,
 no-referrer and no-store. Do not expose OpenAPI/docs endpoints. ValueError returns 400 detail. Standard schema errors return 422 locations/messages without echoing inputs; generic plugin-config validation returns a safe 422 detail string. Invalid/missing run, bar and job IDs return 404; unknown strategy IDs and unimplemented paper plugins return 400, and GET of a valid strategy without a portfolio returns JSON null.
-
-| Method and route | Request / response |
-|---|---|
-| GET `/` and `/static/*` | HTML shell and static assets |
-| GET `/api/bootstrap` | settings/settings_schema, backtest_schema, patterns, screens, token_saved, instruments/catalog coverage, universe_updated, jobs (latest 100), runs, strategies, auth_enabled, environment, paper_enabled, remote_enabled, paper_schema/portfolio and generic paper_schemas/paper_portfolios |
-| PUT `/api/settings` | DataPreferences (universe only); reject while job active; preserve internal legacy dates; no implicit fetch |
-| PUT `/api/connection` | access_token 20–10000 chars after whitespace checks; save plaintext private file; saved status only |
-| POST `/api/screens` | name/pattern/thirteen filters; validate and persist resolved preset |
-| POST `/api/jobs/universe` | Queue constituent/instrument match job |
-| POST `/api/jobs/ingest` | Require saved token; queue full 750-stock rolling daily + five-minute fetch |
-| POST `/api/jobs/backtest` | BacktestConfig; validate prepare before queuing; job result run_id |
-| GET `/api/backtest/window?warmup=50` | warmup integer50–2500; start/end, warmup_sessions, ready/total symbols, history_start/end |
-| GET `/api/bars/{isin}` | Full normalized bar record; ISIN alphanumeric length 12 |
-| GET `/api/runs/{run_id}` | Saved complete report; ID 12 lowercase hex |
-| GET `/api/jobs/{job_id}` | Job/logs/result; ID 12 lowercase hex |
-| POST/PUT `/api/paper/portfolio` | Create/update Swing PaperConfig; full portfolio result |
-| PUT `/api/paper/status` | status active/paused |
-| POST `/api/jobs/paper` | Queue Swing cycle, manual trigger |
-| GET/POST/PUT `/api/strategies/{strategy_id}/paper/portfolio` | Generic per-strategy lookup/create/update |
-| PUT `/api/strategies/{strategy_id}/paper/status` | Per-strategy active/paused |
-| POST `/api/strategies/{strategy_id}/paper/cycle` | Queue registered plugin cycle; reject unsupported strategy |
 
 Storage root defaults to repository/data; override with TRADER_DATA_DIR. Atomic JSON writes through `store.write` use
 UTF-8, reject NaN, write a unique sibling `.{filename}.{uuid4hex}.tmp` in exclusive-create mode,
@@ -1049,6 +877,70 @@ before validate_candles; leave ordinary validation failures actionable. Retry pr
 low≤open/close≤high, no duplicate/out-of-request dates. Sort/merge by session date. Never invent
 sessions; boundary-only ingestion does not repair internal gaps or revise all historical bars.
 
+### Current route inventory
+
+Extracted from the current API source. Static assets are mounted at /static. Company routes inherit authentication/origin checks; model and feature contracts below describe payloads.
+
+| Method | Route | Handler |
+|---|---|---|
+| GET | `/` | `dashboard/api/main.py::index` |
+| GET | `/api/bootstrap` | `dashboard/api/main.py::bootstrap` |
+| PUT | `/api/settings` | `dashboard/api/main.py::save_settings` |
+| POST | `/api/bearish/scan` | `dashboard/api/main.py::scan_bearish` |
+| PUT | `/api/connection` | `dashboard/api/main.py::save_connection` |
+| POST | `/api/screens` | `dashboard/api/main.py::save_screen` |
+| POST | `/api/jobs/universe` | `dashboard/api/main.py::universe_job` |
+| GET | `/api/data-quality` | `dashboard/api/main.py::audit_price_history` |
+| POST | `/api/jobs/ingest` | `dashboard/api/main.py::ingest_job` |
+| POST | `/api/jobs/universe-expansion` | `dashboard/api/main.py::universe_expansion_job` |
+| POST | `/api/jobs/backtest` | `dashboard/api/main.py::backtest_job` |
+| GET | `/api/backtest/window` | `dashboard/api/main.py::backtest_window` |
+| GET | `/api/sectors` | `dashboard/api/main.py::sector_audit` |
+| POST | `/api/jobs/sectors` | `dashboard/api/main.py::sector_fetch_job` |
+| POST | `/api/jobs/sector-comparison` | `dashboard/api/main.py::sector_comparison_job` |
+| POST | `/api/jobs/momentum` | `dashboard/api/main.py::momentum_job` |
+| POST | `/api/jobs/momentum-comparison` | `dashboard/api/main.py::momentum_comparison_job` |
+| POST | `/api/momentum/coverage` | `dashboard/api/main.py::momentum_coverage` |
+| POST | `/api/jobs/scalping` | `dashboard/api/main.py::scalping_job` |
+| POST | `/api/scalping/coverage` | `dashboard/api/main.py::scalping_coverage` |
+| POST | `/api/jobs/scalping-comparison` | `dashboard/api/main.py::scalping_comparison_job` |
+| GET | `/api/scalping/paper/portfolio` | `dashboard/api/main.py::get_scalping_paper` |
+| GET | `/api/scalping/paper/export` | `dashboard/api/main.py::export_scalping_paper` |
+| POST | `/api/scalping/paper/portfolio` | `dashboard/api/main.py::create_scalping_paper` |
+| PUT | `/api/scalping/paper/portfolio` | `dashboard/api/main.py::update_scalping_paper` |
+| PUT | `/api/scalping/paper/status` | `dashboard/api/main.py::scalping_status` |
+| GET | `/api/scalping/paper/runner` | `dashboard/api/main.py::scalping_runner_status` |
+| POST | `/api/scalping/paper/start` | `dashboard/api/main.py::start_scalping_runner` |
+| POST | `/api/scalping/paper/stop` | `dashboard/api/main.py::stop_scalping_runner` |
+| POST | `/api/paper/portfolio` | `dashboard/api/main.py::create_paper` |
+| PUT | `/api/paper/portfolio` | `dashboard/api/main.py::update_paper` |
+| PUT | `/api/paper/status` | `dashboard/api/main.py::paper_status` |
+| POST | `/api/jobs/paper` | `dashboard/api/main.py::paper_job` |
+| GET | `/api/strategies/{strategy_id}/paper/portfolio` | `dashboard/api/main.py::get_strategy_portfolio` |
+| POST | `/api/strategies/{strategy_id}/paper/portfolio` | `dashboard/api/main.py::create_strategy_portfolio` |
+| PUT | `/api/strategies/{strategy_id}/paper/portfolio` | `dashboard/api/main.py::update_strategy_portfolio` |
+| PUT | `/api/strategies/{strategy_id}/paper/status` | `dashboard/api/main.py::update_strategy_status` |
+| POST | `/api/strategies/{strategy_id}/paper/cycle` | `dashboard/api/main.py::strategy_paper_job` |
+| GET | `/api/bars/{isin}` | `dashboard/api/main.py::bars` |
+| GET | `/api/runs/{run_id}` | `dashboard/api/main.py::run_result` |
+| GET | `/api/jobs/{job_id}` | `dashboard/api/main.py::job_detail` |
+| GET | `/api/runs/{run_id}/trades/{trade_index}/chart` | `dashboard/api/main.py::trade_chart` |
+| GET | `/api/company` | `dashboard/api/company_review.py::overview` |
+| GET | `/api/company/fundamentals-history` | `dashboard/api/company_review.py::fundamentals_history` |
+| GET | `/api/company/fundamentals/{isin}` | `dashboard/api/company_review.py::stored_fundamentals` |
+| GET | `/api/company/buy-screen/{strategy}` | `dashboard/api/company_review.py::buy_screen` |
+| PUT | `/api/company/buy-screen/{strategy}` | `dashboard/api/company_review.py::save_buy_screen` |
+| GET | `/api/company/buy-check/{strategy}/{isin}` | `dashboard/api/company_review.py::buy_check` |
+| POST | `/api/company/fundamentals-pull` | `dashboard/api/company_review.py::pull_fundamentals` |
+| POST | `/api/company/evidence` | `dashboard/api/company_review.py::import_evidence` |
+| GET | `/api/company/evidence/{isin}` | `dashboard/api/company_review.py::evidence` |
+| POST | `/api/company/scan` | `dashboard/api/company_review.py::scan` |
+| POST | `/api/company/reviews` | `dashboard/api/company_review.py::create_review` |
+| POST | `/api/company/research` | `dashboard/api/company_review.py::automatic_research` |
+| GET | `/api/company/reviews/{review_id}` | `dashboard/api/company_review.py::review` |
+
+## Verification contracts
+
 ### Regression acceptance requirements
 
 Backtest dialog correction (deployed 4 October 2026, source commit
@@ -1102,7 +994,7 @@ History requested remains 2018-10-01 through 2026-10-01. The earlier failed jobs
 the job history as evidence; their status is not rewritten. On a fresh installation, reproduce
 and verify this correction before ingestion if Upstox still supplies that exact invalid row.
 
-Regression acceptance: custom→every built-in resets all thirteen filters and checkbox.checked;
+Regression acceptance: custom→every built-in resets all applicable schema filters and checkbox.checked;
 old presets inherit disabled new-filter defaults; exact provider repair matches all values;
 ordinary unmatched/ambiguous constituents fail; RS ranking uses only completed-session prefixes;
 trend/warmup/breadth options obey their bounds and default-disabled compatibility; fresh VCP form applies the preset;
@@ -1120,7 +1012,7 @@ scheduler one-attempt/restart checks. Tests use synthetic fixtures only, never d
    core/risk/position_sizer.py and core/execution/paper.py. Keep production modules separate.
 2. Implement schemas/storage/security and bootstrap, registry, provider ingestion and jobs.
 3. Implement predicates and the shared daily simulator to the formulas and conventions above.
-4. Build the HTML shell, design tokens, six production views/five local views, dialogs/preset merge and polling behavior; gate paper routes/scheduler on TRADER_ENV.
+4. Build the HTML shell, design tokens, nine production views/eight local views, dialogs/preset merge and polling behavior; gate paper routes/scheduler on TRADER_ENV.
 5. Implement paper manager/plugin/cycle/scheduler using the same simulator; persist independently.
 6. Vendor KLineChart and its license. Add Python execution/data/API/paper tests and Node dropdown
    regression tests. No production DB, Redis, broker SDK, vectorbt or frontend framework is needed.
@@ -1152,343 +1044,1642 @@ Ignore .venv, __pycache__, all data/, .local-key, .env and runtime logs/pids; do
 No document can regenerate previously fetched candles or private tokens: reconnect and fetch real
 history, or restore a secure backup. Never hardcode the historical metrics as dashboard content.
 
-### Schema reference and pinned local dependencies
+## Exact configuration schemas (9 October 2026)
 
-All monetary/numeric input models reject NaN/infinity and unknown fields. Dates must increase;
-Internal legacy Settings additionally limits its range to 3653 calendar days; public DataPreferences has no date fields. Backtest/Paper acknowledgment must
-be true. Defaults below are **API/schema defaults**; the explicit UI screen seed above overrides
-them for new forms. This separation preserves older saved experiments.
+Generated from current Pydantic models. Defaults are API defaults; UI presets can override them. Cross-field/time/date/acknowledgment validators still apply. Dependency pins live in requirements-lock.txt, package-lock.json and deploy/market-data/requirements.txt; duplicated source/lock dumps were removed. Nested record definitions remain in the identified implementation.
 
-#### Settings (internal legacy model; UI/API uses universe-only DataPreferences)
+### DataPreferences
 
-| Field | Type / allowed values / bounds | API default |
+Implementation: `core/research/config.py`.
+
+| Field | Type / constraints | Default |
 |---|---|---|
-| `universe` | string: nifty50, nifty500, niftytotalmarket | "nifty50" |
-| `start` | date | "2018-10-01" |
-| `end` | date | "2026-10-01" |
+| `universe` | {"enum":["nifty50","nifty500","niftytotalmarket"],"type":"string"} | "nifty50" |
 
-#### BacktestConfig
+### Settings
 
-| Field | Type / allowed values / bounds | API default |
+Implementation: `core/research/config.py`.
+
+| Field | Type / constraints | Default |
 |---|---|---|
-| `name` | string; length ≥ 1; length ≤ 80 | "Breakout experiment" |
-| `pattern` | string: breakout, vcp, blue_sky, multiyear, ipo | "breakout" |
-| `capital` | number; ≥ 1000; ≤ 10000000000.0 | 1000000 |
-| `base_days` | integer; ≥ 5; ≤ 250 | 25 |
-| `max_depth_pct` | number; > 0; ≤ 80 | 30 |
-| `volume_multiple` | number; ≥ 0.1; ≤ 10 | 1.5 |
-| `sma_days` | integer; ≥ 5; ≤ 250 | 50 |
-| `require_long_trend` | boolean | false |
-| `require_rising_long_trend` | boolean | false |
-| `min_rs_rating` | number; ≥ 0; ≤ 100; 0 disables | 0 |
-| `candidate_rank` | string: alphabetical, rs_126 | "alphabetical" |
-| `min_turnover` | number; ≥ 0; ≤ 1000000000000.0 | 50000000 |
-| `vcp_window_days` | integer; ≥ 3; ≤ 60 | 10 |
-| `vcp_volume_multiple` | number; > 0; ≤ 1 | 0.8 |
-| `blue_sky_lookback_days` | integer; ≥ 50; ≤ 5000 | 5000 |
-| `multiyear_base_days` | integer; ≥ 252; ≤ 2500 | 260 |
-| `multiyear_max_depth_pct` | number; > 0; ≤ 90 | 50 |
-| `entry_mode` | string: pivot, close, next_open | "pivot" |
-| `risk_pct` | number; > 0; ≤ 5 | 1.5 |
-| `stop_pct` | number; > 0; ≤ 50 | 8 |
-| `winner_exit` | string: trail_50d, trail_30w, take_25 | "trail_50d" |
-| `skip_weak_markets` | boolean | false |
-| `market_breadth_pct` | number; ≥ 0; ≤ 100 | 40 |
-| `breakeven_r` | number; ≥ 0.1; ≤ 10 | 1 |
-| `trail_pct` | number; > 0; ≤ 50 | 8 |
-| `max_positions` | integer; ≥ 1; ≤ 50 | 5 |
-| `max_hold_days` | integer; ≥ 1; ≤ 1000 | 120 |
-| `slippage_bps` | number; ≥ 0; ≤ 500 | 10 |
-| `buy_cost_bps` | number; ≥ 0; ≤ 500 | 10 |
-| `sell_cost_bps` | number; ≥ 0; ≤ 500 | 10 |
-| `minimum_warmup_sessions` | integer; ≥ 50; ≤ 2500 | 50 |
-| `start` | date | Required |
-| `end` | date | Required |
-| `acknowledge_limitations` | boolean | false |
+| `universe` | {"enum":["nifty50","nifty500","niftytotalmarket"],"type":"string"} | "nifty50" |
+| `start` | {"format":"date","type":"string"} | "2018-10-01" |
+| `end` | {"format":"date","type":"string"} | "2026-10-01" |
 
-#### PaperConfig
+### ScreenInput
 
-| Field | Type / allowed values / bounds | API default |
+Implementation: `core/research/strategy_presets.py`.
+
+| Field | Type / constraints | Default |
 |---|---|---|
-| `name` | string; length ≥ 1; length ≤ 80 | "Swing paper portfolio" |
-| `pattern` | string: vcp, blue_sky, multiyear, ipo | "vcp" |
-| `capital` | number; ≥ 1000; ≤ 10000000000.0 | Required |
-| `base_days` | integer; ≥ 5; ≤ 250 | 25 |
-| `max_depth_pct` | number; > 0; ≤ 80 | 30 |
-| `volume_multiple` | number; ≥ 0.1; ≤ 10 | 1.5 |
-| `sma_days` | integer; ≥ 5; ≤ 250 | 50 |
-| `require_long_trend` | boolean | false |
-| `require_rising_long_trend` | boolean | false |
-| `min_rs_rating` | number; ≥ 0; ≤ 100; 0 disables | 0 |
-| `candidate_rank` | string: alphabetical, rs_126 | "alphabetical" |
-| `min_turnover` | number; ≥ 0; ≤ 1000000000000.0 | 50000000 |
-| `vcp_window_days` | integer; ≥ 3; ≤ 60 | 10 |
-| `vcp_volume_multiple` | number; > 0; ≤ 1 | 0.8 |
-| `blue_sky_lookback_days` | integer; ≥ 50; ≤ 5000 | 5000 |
-| `multiyear_base_days` | integer; ≥ 252; ≤ 2500 | 260 |
-| `multiyear_max_depth_pct` | number; > 0; ≤ 90 | 50 |
-| `entry_mode` | string: next_open | "next_open" |
-| `risk_pct` | number; > 0; ≤ 5 | 1.5 |
-| `stop_pct` | number; > 0; ≤ 50 | 8 |
-| `winner_exit` | string: trail_50d, trail_30w, take_25 | "trail_50d" |
-| `skip_weak_markets` | boolean | false |
-| `market_breadth_pct` | number; ≥ 0; ≤ 100 | 40 |
-| `breakeven_r` | number; ≥ 0.1; ≤ 10 | 1 |
-| `trail_pct` | number; > 0; ≤ 50 | 8 |
-| `max_positions` | integer; ≥ 1; ≤ 50 | 5 |
-| `max_hold_days` | integer; ≥ 1; ≤ 1000 | 120 |
-| `slippage_bps` | number; > 0; ≤ 500 | 10 |
-| `buy_cost_bps` | number; > 0; ≤ 500 | 10 |
-| `sell_cost_bps` | number; > 0; ≤ 500 | 10 |
-| `auto_run` | boolean | false |
-| `run_hour` | integer; ≥ 16; ≤ 23 | 16 |
-| `run_minute` | integer; ≥ 0; ≤ 59 | 15 |
-| `acknowledge_limitations` | boolean | false |
+| `name` | {"maxLength":80,"minLength":1,"type":"string"} | Required |
+| `pattern` | {"enum":["vcp","blue_sky","multiyear","ipo"],"type":"string"} | "vcp" |
+| `base_days` | {"maximum":250,"minimum":5,"type":"integer"} | 25 |
+| `max_depth_pct` | {"exclusiveMinimum":0,"maximum":80,"type":"number"} | 30 |
+| `volume_multiple` | {"maximum":10,"minimum":0.1,"type":"number"} | 1.5 |
+| `sma_days` | {"maximum":250,"minimum":5,"type":"integer"} | 50 |
+| `require_long_trend` | {"type":"boolean"} | false |
+| `require_rising_long_trend` | {"type":"boolean"} | false |
+| `min_rs_rating` | {"maximum":100,"minimum":0,"type":"number"} | 0 |
+| `min_turnover` | {"maximum":1000000000000.0,"minimum":0,"type":"number"} | 50000000 |
+| `vcp_window_days` | {"maximum":60,"minimum":3,"type":"integer"} | 10 |
+| `vcp_volume_multiple` | {"exclusiveMinimum":0,"maximum":1,"type":"number"} | 0.8 |
+| `blue_sky_lookback_days` | {"maximum":5000,"minimum":50,"type":"integer"} | 5000 |
+| `multiyear_base_days` | {"maximum":2500,"minimum":252,"type":"integer"} | 260 |
+| `multiyear_max_depth_pct` | {"exclusiveMinimum":0,"maximum":90,"type":"number"} | 50 |
+| `ipo_max_age_days` | {"maximum":3653,"minimum":1,"type":"integer"} | 730 |
+| `trading_defaults` | {"anyOf":[{"$ref":"#/$defs/TradingConfig"},{"type":"null"}]} | null |
+| `minimum_warmup_sessions` | {"anyOf":[{"maximum":2500,"minimum":50,"type":"integer"},{"type":"null"}]} | null |
+| `source_run_id` | {"anyOf":[{"pattern":"^[0-9a-f]{12}(?:_[a-z0-9]+)?$","type":"string"},{"type":"null"}]} | null |
+| `description` | {"maxLength":1500,"type":"string"} | "" |
 
-ScreenInput contains only name, pattern and the thirteen screen-filter fields; name is required,
-pattern defaults to vcp, and numeric defaults/bounds match the BacktestConfig filter rows.
-No execution/cost fields belong to a screen. It also forbids extra keys and nonfinite numbers.
+### BacktestConfig
 
-Exact requirements-lock.txt snapshot inspected on 4 October 2026:
+Implementation: `core/research/config.py`.
+
+| Field | Type / constraints | Default |
+|---|---|---|
+| `name` | {"maxLength":80,"minLength":1,"type":"string"} | "Breakout experiment" |
+| `pattern` | {"enum":["breakout","vcp","blue_sky","multiyear","ipo"],"type":"string"} | "breakout" |
+| `capital` | {"maximum":10000000000.0,"minimum":1000,"type":"number"} | 1000000 |
+| `base_days` | {"maximum":250,"minimum":5,"type":"integer"} | 25 |
+| `max_depth_pct` | {"exclusiveMinimum":0,"maximum":80,"type":"number"} | 30 |
+| `volume_multiple` | {"maximum":10,"minimum":0.1,"type":"number"} | 1.5 |
+| `sma_days` | {"maximum":250,"minimum":5,"type":"integer"} | 50 |
+| `require_long_trend` | {"type":"boolean"} | false |
+| `require_rising_long_trend` | {"type":"boolean"} | false |
+| `min_rs_rating` | {"maximum":100,"minimum":0,"type":"number"} | 0 |
+| `candidate_rank` | {"enum":["alphabetical","rs_126","fundamental_score"],"type":"string"} | "alphabetical" |
+| `min_turnover` | {"maximum":1000000000000.0,"minimum":0,"type":"number"} | 50000000 |
+| `vcp_window_days` | {"maximum":60,"minimum":3,"type":"integer"} | 10 |
+| `vcp_volume_multiple` | {"exclusiveMinimum":0,"maximum":1,"type":"number"} | 0.8 |
+| `blue_sky_lookback_days` | {"maximum":5000,"minimum":50,"type":"integer"} | 5000 |
+| `multiyear_base_days` | {"maximum":2500,"minimum":252,"type":"integer"} | 260 |
+| `multiyear_max_depth_pct` | {"exclusiveMinimum":0,"maximum":90,"type":"number"} | 50 |
+| `entry_mode` | {"enum":["pivot","close","next_open"],"type":"string"} | "pivot" |
+| `risk_pct` | {"exclusiveMinimum":0,"maximum":5,"type":"number"} | 1.5 |
+| `stop_pct` | {"exclusiveMinimum":0,"maximum":50,"type":"number"} | 8 |
+| `winner_exit` | {"enum":["trail_50d","trail_30w","take_8","take_15","take_25"],"type":"string"} | "trail_50d" |
+| `skip_weak_markets` | {"type":"boolean"} | false |
+| `sector_filter` | {"enum":["off","trend","trend_rs"],"type":"string"} | "off" |
+| `market_breadth_pct` | {"maximum":100,"minimum":0,"type":"number"} | 40 |
+| `market_min_coverage_pct` | {"exclusiveMinimum":0,"maximum":100,"type":"number"} | 80 |
+| `ipo_max_age_days` | {"maximum":3653,"minimum":1,"type":"integer"} | 730 |
+| `breakeven_r` | {"maximum":10,"minimum":0.1,"type":"number"} | 1 |
+| `trail_pct` | {"exclusiveMinimum":0,"maximum":50,"type":"number"} | 8 |
+| `max_positions` | {"maximum":50,"minimum":1,"type":"integer"} | 5 |
+| `max_hold_days` | {"maximum":1000,"minimum":1,"type":"integer"} | 120 |
+| `slippage_bps` | {"maximum":500,"minimum":0,"type":"number"} | 10 |
+| `buy_cost_bps` | {"maximum":500,"minimum":0,"type":"number"} | 10 |
+| `sell_cost_bps` | {"maximum":500,"minimum":0,"type":"number"} | 10 |
+| `execution_horizon` | {"enum":["swing","intraday"],"type":"string"} | "swing" |
+| `square_off_time` | {"pattern":"^\\d{2}:\\d{2}$","type":"string"} | "15:00" |
+| `comparison_run_id` | {"anyOf":[{"pattern":"^[0-9a-f]{12}(?:_[a-z0-9]+)?$","type":"string"},{"type":"null"}]} | null |
+| `minimum_warmup_sessions` | {"maximum":2500,"minimum":50,"type":"integer"} | 50 |
+| `start` | {"format":"date","type":"string"} | Required |
+| `end` | {"format":"date","type":"string"} | Required |
+| `acknowledge_limitations` | {"type":"boolean"} | false |
+
+### BearishBacktestConfig
+
+Implementation: `core/research/config.py`.
+
+| Field | Type / constraints | Default |
+|---|---|---|
+| `pattern` | {"enum":["vcp_breakdown","new_lows","multiyear_breakdown","ipo_breakdown"],"type":"string"} | "new_lows" |
+| `base_days` | {"maximum":250,"minimum":5,"type":"integer"} | 25 |
+| `max_depth_pct` | {"exclusiveMinimum":0,"maximum":80,"type":"number"} | 30 |
+| `volume_multiple` | {"maximum":10,"minimum":0.1,"type":"number"} | 1.5 |
+| `sma_days` | {"maximum":250,"minimum":5,"type":"integer"} | 50 |
+| `require_falling_long_trend` | {"type":"boolean"} | true |
+| `max_rs_rating` | {"maximum":100,"minimum":0,"type":"number"} | 30 |
+| `min_turnover` | {"maximum":1000000000000.0,"minimum":0,"type":"number"} | 50000000 |
+| `vcp_window_days` | {"maximum":60,"minimum":3,"type":"integer"} | 10 |
+| `vcp_volume_multiple` | {"exclusiveMinimum":0,"maximum":1,"type":"number"} | 0.8 |
+| `low_lookback_days` | {"maximum":5000,"minimum":50,"type":"integer"} | 252 |
+| `multiyear_base_days` | {"maximum":2500,"minimum":252,"type":"integer"} | 260 |
+| `multiyear_max_depth_pct` | {"exclusiveMinimum":0,"maximum":90,"type":"number"} | 50 |
+| `ipo_max_age_days` | {"maximum":3653,"minimum":1,"type":"integer"} | 730 |
+| `require_weak_market` | {"type":"boolean"} | true |
+| `max_market_breadth_pct` | {"maximum":100,"minimum":0,"type":"number"} | 40 |
+| `market_min_coverage_pct` | {"exclusiveMinimum":0,"maximum":100,"type":"number"} | 80 |
+| `name` | {"maxLength":80,"minLength":1,"type":"string"} | "Breakout experiment" |
+| `capital` | {"maximum":10000000000.0,"minimum":1000,"type":"number"} | 1000000 |
+| `require_long_trend` | {"type":"boolean"} | false |
+| `require_rising_long_trend` | {"type":"boolean"} | false |
+| `min_rs_rating` | {"maximum":100,"minimum":0,"type":"number"} | 0 |
+| `candidate_rank` | {"enum":["alphabetical","rs_126","fundamental_score"],"type":"string"} | "alphabetical" |
+| `blue_sky_lookback_days` | {"maximum":5000,"minimum":50,"type":"integer"} | 5000 |
+| `entry_mode` | {"enum":["pivot","close","next_open"],"type":"string"} | "pivot" |
+| `risk_pct` | {"exclusiveMinimum":0,"maximum":5,"type":"number"} | 1.5 |
+| `stop_pct` | {"exclusiveMinimum":0,"maximum":50,"type":"number"} | 8 |
+| `winner_exit` | {"enum":["trail_50d","trail_30w","take_8","take_15","take_25"],"type":"string"} | "trail_50d" |
+| `skip_weak_markets` | {"type":"boolean"} | false |
+| `sector_filter` | {"enum":["off","trend","trend_rs"],"type":"string"} | "off" |
+| `market_breadth_pct` | {"maximum":100,"minimum":0,"type":"number"} | 40 |
+| `breakeven_r` | {"maximum":10,"minimum":0.1,"type":"number"} | 1 |
+| `trail_pct` | {"exclusiveMinimum":0,"maximum":50,"type":"number"} | 8 |
+| `max_positions` | {"maximum":50,"minimum":1,"type":"integer"} | 5 |
+| `max_hold_days` | {"maximum":1000,"minimum":1,"type":"integer"} | 120 |
+| `slippage_bps` | {"maximum":500,"minimum":0,"type":"number"} | 10 |
+| `buy_cost_bps` | {"maximum":500,"minimum":0,"type":"number"} | 10 |
+| `sell_cost_bps` | {"maximum":500,"minimum":0,"type":"number"} | 10 |
+| `execution_horizon` | {"enum":["swing","intraday"],"type":"string"} | "swing" |
+| `square_off_time` | {"pattern":"^\\d{2}:\\d{2}$","type":"string"} | "15:00" |
+| `comparison_run_id` | {"anyOf":[{"pattern":"^[0-9a-f]{12}(?:_[a-z0-9]+)?$","type":"string"},{"type":"null"}]} | null |
+| `minimum_warmup_sessions` | {"maximum":2500,"minimum":50,"type":"integer"} | 50 |
+| `start` | {"format":"date","type":"string"} | Required |
+| `end` | {"format":"date","type":"string"} | Required |
+| `acknowledge_limitations` | {"type":"boolean"} | false |
+| `borrow_cost_bps_year` | {"maximum":100000,"minimum":0,"type":"number"} | 0 |
+
+### PaperConfig
+
+Implementation: `core/portfolio/paper.py`.
+
+| Field | Type / constraints | Default |
+|---|---|---|
+| `name` | {"maxLength":80,"minLength":1,"type":"string"} | "Swing paper portfolio" |
+| `pattern` | {"enum":["vcp","blue_sky","multiyear","ipo"],"type":"string"} | "vcp" |
+| `capital` | {"maximum":10000000000.0,"minimum":1000,"type":"number"} | Required |
+| `base_days` | {"maximum":250,"minimum":5,"type":"integer"} | 25 |
+| `max_depth_pct` | {"exclusiveMinimum":0,"maximum":80,"type":"number"} | 30 |
+| `volume_multiple` | {"maximum":10,"minimum":0.1,"type":"number"} | 1.5 |
+| `sma_days` | {"maximum":250,"minimum":5,"type":"integer"} | 50 |
+| `require_long_trend` | {"type":"boolean"} | false |
+| `require_rising_long_trend` | {"type":"boolean"} | false |
+| `min_rs_rating` | {"maximum":100,"minimum":0,"type":"number"} | 0 |
+| `candidate_rank` | {"enum":["alphabetical","rs_126","fundamental_score"],"type":"string"} | "alphabetical" |
+| `min_turnover` | {"maximum":1000000000000.0,"minimum":0,"type":"number"} | 50000000 |
+| `vcp_window_days` | {"maximum":60,"minimum":3,"type":"integer"} | 10 |
+| `vcp_volume_multiple` | {"exclusiveMinimum":0,"maximum":1,"type":"number"} | 0.8 |
+| `blue_sky_lookback_days` | {"maximum":5000,"minimum":50,"type":"integer"} | 5000 |
+| `multiyear_base_days` | {"maximum":2500,"minimum":252,"type":"integer"} | 260 |
+| `multiyear_max_depth_pct` | {"exclusiveMinimum":0,"maximum":90,"type":"number"} | 50 |
+| `entry_mode` | {"const":"next_open","type":"string"} | "next_open" |
+| `risk_pct` | {"exclusiveMinimum":0,"maximum":5,"type":"number"} | 1.5 |
+| `stop_pct` | {"exclusiveMinimum":0,"maximum":50,"type":"number"} | 8 |
+| `winner_exit` | {"enum":["trail_50d","trail_30w","take_8","take_15","take_25"],"type":"string"} | "trail_50d" |
+| `skip_weak_markets` | {"type":"boolean"} | false |
+| `sector_filter` | {"enum":["off","trend","trend_rs"],"type":"string"} | "off" |
+| `market_breadth_pct` | {"maximum":100,"minimum":0,"type":"number"} | 40 |
+| `market_min_coverage_pct` | {"exclusiveMinimum":0,"maximum":100,"type":"number"} | 80 |
+| `ipo_max_age_days` | {"maximum":3653,"minimum":1,"type":"integer"} | 730 |
+| `breakeven_r` | {"maximum":10,"minimum":0.1,"type":"number"} | 1 |
+| `trail_pct` | {"exclusiveMinimum":0,"maximum":50,"type":"number"} | 8 |
+| `max_positions` | {"maximum":50,"minimum":1,"type":"integer"} | 5 |
+| `max_hold_days` | {"maximum":1000,"minimum":1,"type":"integer"} | 120 |
+| `slippage_bps` | {"exclusiveMinimum":0,"maximum":500,"type":"number"} | 10 |
+| `buy_cost_bps` | {"exclusiveMinimum":0,"maximum":500,"type":"number"} | 10 |
+| `sell_cost_bps` | {"exclusiveMinimum":0,"maximum":500,"type":"number"} | 10 |
+| `sector_observe_only` | {"type":"boolean"} | true |
+| `auto_run` | {"type":"boolean"} | false |
+| `run_hour` | {"maximum":23,"minimum":16,"type":"integer"} | 16 |
+| `run_minute` | {"maximum":59,"minimum":0,"type":"integer"} | 15 |
+| `acknowledge_limitations` | {"type":"boolean"} | false |
+
+### MomentumConfig
+
+Implementation: `core/research/momentum.py`.
+
+| Field | Type / constraints | Default |
+|---|---|---|
+| `strategy_id` | {"const":"intraday_momentum","type":"string"} | "intraday_momentum" |
+| `name` | {"maxLength":80,"minLength":1,"type":"string"} | "Opening-range momentum" |
+| `start` | {"format":"date","type":"string"} | Required |
+| `end` | {"format":"date","type":"string"} | Required |
+| `capital` | {"maximum":10000000000.0,"minimum":1000,"type":"number"} | 1000000 |
+| `direction` | {"enum":["both","long","short"],"type":"string"} | "both" |
+| `execution_mode` | {"enum":["follow","reverse"],"type":"string"} | "follow" |
+| `exclude_symbols` | {"items":{"type":"string"},"maxItems":50,"type":"array"} | null |
+| `exclude_stock_sessions` | {"items":{"type":"string"},"maxItems":100,"type":"array"} | null |
+| `opening_minutes` | {"enum":[5,10,15,30],"type":"integer"} | 5 |
+| `confirmation_minutes` | {"enum":[5,10,15,30,60],"type":"integer"} | 5 |
+| `volume_lookback` | {"maximum":50,"minimum":5,"type":"integer"} | 14 |
+| `min_relative_volume` | {"maximum":20,"minimum":0,"type":"number"} | 1.5 |
+| `liquidity_days` | {"maximum":50,"minimum":5,"type":"integer"} | 20 |
+| `min_turnover` | {"maximum":1000000000000.0,"minimum":0,"type":"number"} | 50000000 |
+| `liquid_universe_size` | {"maximum":500,"minimum":1,"type":"integer"} | 50 |
+| `atr_days` | {"maximum":50,"minimum":5,"type":"integer"} | 14 |
+| `min_atr_pct` | {"maximum":20,"minimum":0,"type":"number"} | 1 |
+| `stop_atr` | {"exclusiveMinimum":0,"maximum":5,"type":"number"} | 0.5 |
+| `target_r` | {"maximum":20,"minimum":0,"type":"number"} | 0 |
+| `risk_pct` | {"exclusiveMinimum":0,"maximum":5,"type":"number"} | 0.25 |
+| `max_positions` | {"maximum":50,"minimum":1,"type":"integer"} | 5 |
+| `last_entry_time` | {"pattern":"^\\d{2}:\\d{2}$","type":"string"} | "11:30" |
+| `square_off_time` | {"pattern":"^\\d{2}:\\d{2}$","type":"string"} | "15:00" |
+| `require_vwap` | {"type":"boolean"} | false |
+| `breakout_buffer_atr` | {"maximum":2,"minimum":0,"type":"number"} | 0 |
+| `min_close_strength` | {"maximum":1,"minimum":0,"type":"number"} | 0 |
+| `min_confirmation_body_atr` | {"maximum":2,"minimum":0,"type":"number"} | 0 |
+| `breakeven_after_r` | {"maximum":10,"minimum":0,"type":"number"} | 0 |
+| `indicator_filter` | {"enum":["none","ema","macd","ema_macd"],"type":"string"} | "none" |
+| `indicator_minutes` | {"enum":[10,60],"type":"integer"} | 10 |
+| `entry_pattern` | {"enum":["breakout","flag"],"type":"string"} | "breakout" |
+| `stop_reference` | {"enum":["atr","pullback"],"type":"string"} | "atr" |
+| `require_fundamentals` | {"type":"boolean"} | false |
+| `fundamental_min_score` | {"maximum":100,"minimum":0,"type":"number"} | 60 |
+| `fundamental_min_coverage_pct` | {"maximum":100,"minimum":0,"type":"number"} | 80 |
+| `fundamental_max_age_days` | {"maximum":730,"minimum":1,"type":"integer"} | 180 |
+| `comparison_run_id` | {"anyOf":[{"pattern":"^[0-9a-f]{12}$","type":"string"},{"type":"null"}]} | null |
+| `slippage_bps` | {"maximum":500,"minimum":0,"type":"number"} | 10 |
+| `buy_cost_bps` | {"maximum":500,"minimum":0,"type":"number"} | 10 |
+| `sell_cost_bps` | {"maximum":500,"minimum":0,"type":"number"} | 10 |
+| `acknowledge_limitations` | {"type":"boolean"} | false |
+
+### ScalpingConfig
+
+Implementation: `core/research/scalping.py`.
+
+| Field | Type / constraints | Default |
+|---|---|---|
+| `strategy_id` | {"const":"scalping","type":"string"} | "scalping" |
+| `name` | {"maxLength":80,"minLength":1,"type":"string"} | "EMA pullback scalping" |
+| `capital` | {"maximum":10000000000.0,"minimum":1000,"type":"number"} | 1000000 |
+| `direction` | {"enum":["both","long","short"],"type":"string"} | "both" |
+| `entry_filter` | {"enum":["candles","ema","ema_vwap"],"type":"string"} | "ema" |
+| `trend_fast` | {"maximum":50,"minimum":2,"type":"integer"} | 9 |
+| `trend_slow` | {"maximum":100,"minimum":3,"type":"integer"} | 20 |
+| `pullback_ema` | {"maximum":50,"minimum":2,"type":"integer"} | 9 |
+| `pullback_bars` | {"maximum":5,"minimum":1,"type":"integer"} | 2 |
+| `ema_touch_bps` | {"maximum":100,"minimum":0,"type":"number"} | 5 |
+| `entry_buffer_bps` | {"maximum":100,"minimum":0,"type":"number"} | 1 |
+| `min_stop_pct` | {"exclusiveMinimum":0,"maximum":5,"type":"number"} | 0.05 |
+| `max_stop_pct` | {"exclusiveMinimum":0,"maximum":10,"type":"number"} | 0.5 |
+| `liquidity_days` | {"maximum":50,"minimum":5,"type":"integer"} | 20 |
+| `min_turnover` | {"maximum":1000000000000.0,"minimum":0,"type":"number"} | 50000000 |
+| `liquid_universe_size` | {"maximum":100,"minimum":1,"type":"integer"} | 20 |
+| `risk_pct` | {"exclusiveMinimum":0,"maximum":5,"type":"number"} | 0.1 |
+| `max_positions` | {"maximum":20,"minimum":1,"type":"integer"} | 3 |
+| `target_r` | {"exclusiveMinimum":0,"maximum":10,"type":"number"} | 1.5 |
+| `max_holding_minutes` | {"maximum":120,"minimum":1,"type":"integer"} | 15 |
+| `cooldown_minutes` | {"maximum":120,"minimum":1,"type":"integer"} | 5 |
+| `max_trades_per_symbol` | {"maximum":20,"minimum":1,"type":"integer"} | 3 |
+| `daily_loss_pct` | {"exclusiveMinimum":0,"maximum":20,"type":"number"} | 1 |
+| `participation_pct` | {"exclusiveMinimum":0,"maximum":10,"type":"number"} | 1 |
+| `first_entry_time` | {"pattern":"^\\d{2}:\\d{2}$","type":"string"} | "09:45" |
+| `last_entry_time` | {"pattern":"^\\d{2}:\\d{2}$","type":"string"} | "14:30" |
+| `square_off_time` | {"pattern":"^\\d{2}:\\d{2}$","type":"string"} | "15:15" |
+| `slippage_bps` | {"maximum":500,"minimum":0,"type":"number"} | 10 |
+| `buy_cost_bps` | {"maximum":500,"minimum":0,"type":"number"} | 10 |
+| `sell_cost_bps` | {"maximum":500,"minimum":0,"type":"number"} | 10 |
+| `acknowledge_limitations` | {"type":"boolean"} | false |
+| `start` | {"format":"date","type":"string"} | Required |
+| `end` | {"format":"date","type":"string"} | Required |
+| `comparison_run_id` | {"anyOf":[{"pattern":"^[0-9a-f]{12}$","type":"string"},{"type":"null"}]} | null |
+
+### ScalpingPaperConfig
+
+Implementation: `core/portfolio/scalping_paper.py`.
+
+| Field | Type / constraints | Default |
+|---|---|---|
+| `strategy_id` | {"const":"scalping","type":"string"} | "scalping" |
+| `name` | {"maxLength":80,"minLength":1,"type":"string"} | "Scalping paper portfolio" |
+| `capital` | {"maximum":10000000000.0,"minimum":1000,"type":"number"} | Required |
+| `direction` | {"enum":["both","long","short"],"type":"string"} | "both" |
+| `entry_filter` | {"enum":["candles","ema","ema_vwap"],"type":"string"} | "ema" |
+| `trend_fast` | {"maximum":50,"minimum":2,"type":"integer"} | 9 |
+| `trend_slow` | {"maximum":100,"minimum":3,"type":"integer"} | 20 |
+| `pullback_ema` | {"maximum":50,"minimum":2,"type":"integer"} | 9 |
+| `pullback_bars` | {"maximum":5,"minimum":1,"type":"integer"} | 2 |
+| `ema_touch_bps` | {"maximum":100,"minimum":0,"type":"number"} | 5 |
+| `entry_buffer_bps` | {"maximum":100,"minimum":0,"type":"number"} | 1 |
+| `min_stop_pct` | {"exclusiveMinimum":0,"maximum":5,"type":"number"} | 0.05 |
+| `max_stop_pct` | {"exclusiveMinimum":0,"maximum":10,"type":"number"} | 0.5 |
+| `liquidity_days` | {"maximum":50,"minimum":5,"type":"integer"} | 20 |
+| `min_turnover` | {"maximum":1000000000000.0,"minimum":0,"type":"number"} | 50000000 |
+| `liquid_universe_size` | {"maximum":100,"minimum":1,"type":"integer"} | 20 |
+| `risk_pct` | {"exclusiveMinimum":0,"maximum":5,"type":"number"} | 0.1 |
+| `max_positions` | {"maximum":20,"minimum":1,"type":"integer"} | 3 |
+| `target_r` | {"exclusiveMinimum":0,"maximum":10,"type":"number"} | 1.5 |
+| `max_holding_minutes` | {"maximum":120,"minimum":1,"type":"integer"} | 15 |
+| `cooldown_minutes` | {"maximum":120,"minimum":1,"type":"integer"} | 5 |
+| `max_trades_per_symbol` | {"maximum":20,"minimum":1,"type":"integer"} | 3 |
+| `daily_loss_pct` | {"exclusiveMinimum":0,"maximum":20,"type":"number"} | 1 |
+| `participation_pct` | {"exclusiveMinimum":0,"maximum":10,"type":"number"} | 1 |
+| `first_entry_time` | {"pattern":"^\\d{2}:\\d{2}$","type":"string"} | "09:45" |
+| `last_entry_time` | {"pattern":"^\\d{2}:\\d{2}$","type":"string"} | "14:30" |
+| `square_off_time` | {"pattern":"^\\d{2}:\\d{2}$","type":"string"} | "15:15" |
+| `slippage_bps` | {"exclusiveMinimum":0,"maximum":500,"type":"number"} | 10 |
+| `buy_cost_bps` | {"exclusiveMinimum":0,"maximum":500,"type":"number"} | 10 |
+| `sell_cost_bps` | {"exclusiveMinimum":0,"maximum":500,"type":"number"} | 10 |
+| `acknowledge_limitations` | {"type":"boolean"} | false |
+| `max_spread_bps` | {"exclusiveMinimum":0,"maximum":500,"type":"number"} | 15 |
+| `quote_max_age_seconds` | {"maximum":15,"minimum":1,"type":"integer"} | 3 |
+| `max_entry_delay_seconds` | {"maximum":30,"minimum":2,"type":"integer"} | 8 |
+| `auto_run` | {"type":"boolean"} | false |
+
+### BuyScreen
+
+Implementation: `core/research/fundamentals.py`.
+
+| Field | Type / constraints | Default |
+|---|---|---|
+| `min_score` | {"maximum":100,"minimum":0,"type":"number"} | 60 |
+| `min_coverage_pct` | {"maximum":100,"minimum":0,"type":"number"} | 80 |
+| `max_age_days` | {"maximum":730,"minimum":1,"type":"integer"} | 180 |
+
+### ImportInput
+
+Implementation: `core/research/company_review.py`.
+
+| Field | Type / constraints | Default |
+|---|---|---|
+| `fundamentals` | {"items":{"$ref":"#/$defs/FundamentalInput"},"maxItems":500,"type":"array"} | null |
+| `articles` | {"items":{"$ref":"#/$defs/Article"},"maxItems":100,"type":"array"} | null |
+
+### ReviewRequest
+
+Implementation: `core/research/company_review.py`.
+
+| Field | Type / constraints | Default |
+|---|---|---|
+| `isin` | {"pattern":"^IN[A-Z0-9]{10}$","type":"string"} | Required |
+| `use_llm` | {"type":"boolean"} | false |
+| `disposition` | {"enum":["watch","would_take","would_skip","undecided"],"type":"string"} | "undecided" |
+| `thesis` | {"maxLength":2000,"type":"string"} | "" |
+
+### AutoResearchRequest
+
+Implementation: `core/research/company_review.py`.
+
+| Field | Type / constraints | Default |
+|---|---|---|
+| `isin` | {"pattern":"^IN[A-Z0-9]{10}$","type":"string"} | Required |
+| `disposition` | {"enum":["watch","would_take","would_skip","undecided"],"type":"string"} | "undecided" |
+| `thesis` | {"maxLength":2000,"type":"string"} | "" |
+| `technical_config` | {"anyOf":[{"$ref":"#/$defs/TradingConfig"},{"type":"null"}]} | null |
+
+
+<a id="screen-and-backtest-parameters"></a>
+
+## Screen and backtest configuration guide
+
+This guide describes the current implementation in this repository, as inspected on 4 October 2026. It explains the fields in **Add a new screen** and **Backtests → New backtest**, including defaults, accepted values, formulas and interactions. Examples illustrate the software's behavior; they are not trading recommendations.
+
+### 1. What you are configuring
+
+A **screen** is a reusable set of stock qualification filters. It stores a name, a pattern and schema-defined filter values. Plain screens store qualification filters. Saved strategy presets may also store validated trading_defaults, comparison warmup, source_run_id and description; their pattern/filter values must agree.
+
+A **backtest** combines those filters with a test period and portfolio execution assumptions. Selecting a screen copies its pattern and filter values into the form. You can change them for that experiment without changing the saved screen. Changing the screen selection replaces the filter fields, so select the screen before making individual adjustments.
+
+The engine is long-only and uses daily OHLCV candles: open, high, low, close and volume. All symbols share one cash balance. A session means an available daily candle, not a calendar day. A 50-session average is therefore different from 50 calendar days.
+
+#### Units and conventions
+
+| Unit | Meaning | Example |
+|---|---|---|
+| Sessions | Daily observations for a symbol | 10 sessions is usually about two trading weeks. |
+| Percent (`pct`) | Enter a percentage number, not a decimal fraction | Enter `8` for 8%. |
+| Multiple | A ratio to a baseline | `1.5` means 150% of the baseline. |
+| Rupees | Absolute INR amount | `50000000` = ₹5 crore. |
+| Basis points (`bps`) | 1 bps = 0.01%; 100 bps = 1% | `10` bps = 0.1% per side. |
+| R | Initial entry-to-stop price risk | Entry ₹100 and stop ₹92 give 1 R = ₹8 per share. |
+
+All listed range endpoints are inclusive unless explicitly written as `> 0`. Session/count parameters must be integers. Numeric configuration values must be finite, and unknown API fields are rejected.
+
+### 2. Configure a screen
+
+#### Screen name — `name`
+
+- **New-screen UI value:** `My screen`. **API:** required, 1–80 characters.
+- Use a name that identifies the assumptions, such as `VCP volume 1.5 RS 80`.
+- The UI trims leading/trailing whitespace before saving. The name does not affect signals.
+- Saving the exact same name again replaces the screen with that name-derived ID. The server retains the latest 100 saved screens. `id` and `created_at` are generated metadata, not inputs.
+
+#### Base screen — `pattern`
+
+- **New-screen UI/API default:** `vcp`.
+- **Choices:** `vcp`, `blue_sky`, `multiyear`, `ipo`.
+- This chooses the pattern predicate. All four require the common trend, turnover and signal-volume rules described below.
+
+| Pattern | Exact qualification in this engine |
+|---|---|
+| VCP — `vcp` | Three consecutive prior windows must show strictly declining normalized price ranges and strictly declining average volumes. The final window must satisfy the volume dry-up limit. The signal close must exceed the final window's high. |
+| Blue sky — `blue_sky` | The signal close must exceed the highest prior high in the available history, limited by the configured lookback cap. There is no additional base-depth or contraction test. |
+| Multi-year breakouts — `multiyear` | The signal close must exceed the high of the configured long base, and that base must satisfy the multiyear depth limit. |
+| IPO base — `ipo` | The signal close must exceed the configured short base's high, and that base must satisfy the short-base depth limit. The current engine does **not** verify listing age or that this is the first base. |
+
+The API also accepts legacy `breakout` for backtests, but the screen-saving API and screen dropdown do not. Its filter predicate uses the short-base rules like IPO; its execution behavior differs as explained later.
+
+#### Filter applicability
+
+All schema-defined filters remain visible and are saved even when the selected pattern does not use them. An inactive field does not add a condition just because you entered a value.
+
+| Parameter | VCP | Blue sky | Multi-year | IPO / legacy breakout |
+|---|---|---|---|---|
+| `base_days` | Pivot fill calculation only | No | No | Signal base and pivot |
+| `max_depth_pct` | No | No | No | Signal depth |
+| `volume_multiple` | Yes | Yes | Yes | Yes |
+| `sma_days` | Yes | Yes | Yes | Yes |
+| `require_long_trend` | Yes | Yes | Yes | Yes |
+| `require_rising_long_trend` | Yes | Yes | Yes | Yes |
+| `min_rs_rating` | Backtest entry filter | Backtest entry filter | Backtest entry filter | Backtest entry filter |
+| `min_turnover` | Yes | Yes | Yes | Yes |
+| `vcp_window_days` | Yes | No | No | No |
+| `vcp_volume_multiple` | Yes | No | No | No |
+| `blue_sky_lookback_days` | No | Signal and pivot | No | No |
+| `multiyear_base_days` | No | No | Signal and pivot | No |
+| `multiyear_max_depth_pct` | No | No | Signal depth | No |
+
+`min_rs_rating` is stored with the screen, but is applied by the simulation after the pattern predicate qualifies. The pure pattern predicate itself does not compute RS.
+
+#### Base length (sessions) — `base_days`
+
+- **UI default:** `15`. **Screen API/backtest model default:** `25`. **Range:** 5–250.
+- Uses exactly this many completed candles immediately before the signal candle for IPO and legacy breakout. It is a fixed measurement window, not an automatically detected base of at least this length.
+- The base high is the maximum high, and the base low is the minimum low in that window. The signal candle is excluded.
+- A larger window can raise the breakout ceiling and capture a wider/deeper structure; it need not simply reduce signals in every dataset.
+- **VCP interaction:** VCP signal qualification uses `vcp_window_days`, but pivot entry uses `base_days` to calculate the execution pivot. With defaults, qualification checks a 10-session high while the pivot fill uses a 15-session high. `next_open` and `close` do not use this pivot fill calculation.
+
+#### Maximum base depth (%) — `max_depth_pct`
+
+- **UI default:** `35`. **API/model default:** `30`. **Range:** > 0 through 80.
+- Used only for IPO and legacy breakout.
+- Formula: `depth_pct = (base_high - base_low) / base_high × 100`.
+- A base with high ₹100 and low ₹75 has 25% depth. It passes a limit of 30 and fails a limit of 20. Equality passes.
+- Lower values require shallower bases. This parameter has no effect on VCP, Blue sky or Multi-year qualification.
+
+#### Volume / prior 50-session mean — `volume_multiple`
+
+- **UI default:** `1`. **API/model default:** `1.5`. **Range:** 0.1–10.
+- All patterns require `signal_volume >= mean(prior 50 volumes) × volume_multiple`.
+- The mean excludes the signal candle. With a prior mean of 100,000 shares, `1.5` requires at least 150,000 shares on the signal candle.
+- Higher values strengthen volume confirmation; below 1 allows below-average signal volume. This is share volume, not rupee turnover.
+
+#### Trend SMA (sessions) — `sma_days`
+
+- **UI/API default:** `50`. **Range:** 5–250.
+- Every pattern requires the signal close to be **strictly above** the simple mean of the latest `sma_days` closes, including the signal close.
+- A close equal to the average fails. This is a price-above-average test; it does not require this average to slope upward.
+- Increasing the length changes the trend horizon and can increase required warmup. At least 50 prior sessions are still needed for volume and turnover even if this value is less than 50.
+
+#### Require price above 200-day SMA — `require_long_trend`
+
+- **UI/API default:** `false`. **Values:** `true` / `false`.
+- If enabled, the signal close must also be strictly above its 200-session SMA, including the signal close.
+- This supplements `sma_days`; it does not replace it. Backtest preparation requires at least 200 prior sessions when enabled.
+
+#### Require rising 200-day SMA (20 sessions) — `require_rising_long_trend`
+
+- **UI/API default:** `false`. **Values:** `true` / `false`.
+- Requires the current 200-session SMA to be strictly greater than its value 20 sessions earlier, **and** the signal close to be above the current 200-session SMA.
+- Therefore enabling this also enforces the long-trend price test even if `require_long_trend` is unchecked.
+- Requires 220 warmup sessions in backtest preparation. This is a comparison between two averages, not a requirement for an increase on every intervening session.
+
+#### Minimum 126-session RS percentile — `min_rs_rating`
+
+- **UI/API default:** `0`. **Range:** 0–100. `0` disables the threshold.
+- Computes each eligible symbol's return on the signal date: `close_today / close_126_sessions_earlier - 1`.
+- Converts those returns to percentile ranks among loaded, non-excluded symbols with a candle on that date and sufficient history. It is relative to this run's dataset, not a benchmark index and not a proprietary Banana rating.
+- Higher values retain stronger relative performers. A threshold of `80` requires a percentile of at least 80; it does not require an 80% price return.
+- Tied returns receive their average rank. A single eligible symbol receives percentile 0. Missing RS fails a positive threshold.
+- Enabling a positive threshold requires at least 126 prior sessions. Changing the universe or exclusions can change the percentile even for identical stock prices.
+- `candidate_rank` is separate: this field controls eligibility; candidate ranking controls which eligible symbols get scarce cash or position slots.
+
+#### Minimum average turnover (₹) — `min_turnover`
+
+- **UI/API default:** `50000000` (₹5 crore per session). **Range:** 0–1,000,000,000,000.
+- All patterns require `mean(close × volume over prior 50 sessions) >= min_turnover`.
+- The signal candle is excluded. This is a daily traded-value proxy based on close × volume, not actual intraday traded value or a volume participation limit.
+- Higher values demand more liquidity. `0` effectively removes this threshold for ordinary nonnegative data.
+
+#### VCP contraction window (sessions) — `vcp_window_days`
+
+- **UI/API default:** `10`. **Range:** 3–60. **Applies:** VCP only.
+- Splits the `3 × vcp_window_days` candles immediately before the signal into three consecutive equal windows, oldest to newest.
+- For each window, range is `(highest_high - lowest_low) / highest_high`; volume is the mean share volume.
+- Requires `range_old > range_middle > range_recent` and `volume_old > volume_middle > volume_recent`. Equality fails either contraction sequence.
+- The signal close must exceed the most recent window's highest high. Larger windows examine contractions over a longer period and increase warmup if `3 × window` exceeds the other requirements.
+
+#### VCP final volume / 50-session mean — `vcp_volume_multiple`
+
+- **UI default:** `0.9`. **API/model default:** `0.8`. **Range:** > 0 through 1. **Applies:** VCP only.
+- Requires `mean_volume_recent_window <= mean_volume_prior_50 × vcp_volume_multiple`.
+- For a prior 50-session mean of 100,000, `0.9` permits a final contraction-window mean up to 90,000; `0.5` permits up to 50,000.
+- Lower values require stronger volume dry-up. This tests the prior contraction window; `volume_multiple` independently tests the breakout candle's volume expansion.
+
+#### Blue-sky prior high lookback (sessions) — `blue_sky_lookback_days`
+
+- **UI/API default:** `5000`. **Range:** 50–5000. **Applies:** Blue sky only.
+- The signal close must be strictly above the highest high in the preceding `min(configured_lookback, available_prior_sessions)` candles.
+- The setting is a cap, not a minimum history requirement. A symbol with 100 prior sessions and a cap of 5000 is compared with those 100 sessions.
+- A larger value can include older resistance. A smaller value produces a rolling-high test. Even 5000 cannot establish a true lifetime high when the downloaded history is shorter than the listing's lifetime.
+- The same lookback determines the Blue-sky pivot fill level. There is no enforced 252-session minimum in the predicate, despite the pattern registry's descriptive history label.
+
+#### Multiyear base length (sessions) — `multiyear_base_days`
+
+- **UI/API default:** `260`. **Range:** 252–2500. **Applies:** Multi-year only.
+- Measures a fixed prior window of this length. The signal close must exceed its highest high, and its depth must pass `multiyear_max_depth_pct`.
+- Also determines the pivot fill ceiling. Larger values extend the structure being measured and require more pre-test history. The engine does not independently detect how many years a base has existed.
+
+#### Multiyear maximum base depth (%) — `multiyear_max_depth_pct`
+
+- **UI/API default:** `50`. **Range:** > 0 through 90. **Applies:** Multi-year only.
+- Uses the same high-to-low depth formula as `max_depth_pct`, over `multiyear_base_days`.
+- Lower values demand shallower long bases. `max_depth_pct` does not add another depth condition for this pattern.
+
+### 3. Data settings required before a backtest
+
+Public Settings exposes only universe, default nifty50, with nifty50/nifty500/niftytotalmarket choices. The selection changes research membership, RS ranks, cash competition and breadth; it does not limit the full 750-stock rolling fetch. Internal legacy Settings start/end remain 2018-10-01/2026-10-01 with increasing <=3653-day validation for saved compatibility; these dates are not editable fetch controls.
+
+Saving settings does not download candles. Refresh universe and Fetch prices & fundamentals; the latter requires a saved Upstox token (20-10,000 characters). It refreshes automatic daily last-calendar-year and five-minute last-ten-calendar-day windows, retaining older inputs. Existing cached research does not need a new token request.
+
+Missing stock files halt preparation; insufficient pre-test indicator warmup is excluded and disclosed. Actual coverage differs from requested calendar dates, and holidays/suspensions/listings are not fabricated. Rolling history alone may be too short for a multi-year strategy.
+
+### 4. Configure a backtest
+
+Every filter in section 2 also appears in the backtest form and has the same meaning. The following fields complete the experiment.
+
+#### Strategy — `strategy` (UI selector)
+
+The current dropdown offers only **Swing Pattern** (`swing_patterns`). Intraday/scalping are planned. This selector is a UI control; `strategy` is not a field in `BacktestConfig` and is not submitted by its schema-based form reader. Do not include it in a direct backtest API payload.
+
+#### Screen — `screen` (UI selector)
+
+Defaults to **VCP**, unless opening a different built-in/saved screen or cloning a run. Built-in selector IDs are `builtin:vcp`, `builtin:blue_sky`, `builtin:multiyear`, `builtin:ipo`; saved screens use generated custom IDs.
+
+This copies values into the form's actual `pattern` and filter fields. `screen` itself is not a `BacktestConfig` API field. The run records the copied configuration, rather than a live reference that follows later screen edits.
+
+#### Run name — `name`
+
+- **UI/model default:** `Breakout experiment`. **Range:** 1–80 characters.
+- Identifies the run in reports. It has no effect on trading behavior. Use a name that makes comparisons recognizable.
+- Adjust & rerun appends ` · revised`; the total name must still satisfy the length limit.
+
+#### Test from / Test through — `start`, `end`
+
+- **API:** both dates are required; `start < end`. **New UI run:** suggested from the downloaded safe window. Cloning preserves the run's dates.
+- Both boundaries are inclusive for available candles. Earlier candles supply indicators and can provide the previous-session signal for an entry at the beginning of the test.
+- This means a next-open/pivot trade on the first test session can originate from a signal just before `start`; warmup dates do not become reported portfolio sessions.
+- Every symbol is liquidated at its last available candle within the interval, using that candle's close plus sell slippage/charges. A symbol whose history ends early can therefore exit before the requested `end`.
+- Dates need not themselves be trading sessions, but there must be actual candles in the interval. The UI blocks an end beyond its coverage window; backend preparation also validates requested coverage.
+
+#### Starting capital (₹) — `capital`
+
+- **UI/model default:** `1000000` (₹10 lakh). **Range:** ₹1,000–₹10,000,000,000.
+- Initial shared cash balance. Capital is not separately assigned to each stock.
+- Position sizing uses portfolio equity at the session open; buying is constrained by remaining cash including buy charges. The model has no borrowing to fund an entry.
+- Larger capital can change whole-share rounding and cash availability; it does not relax screen conditions.
+
+#### Minimum comparison warmup (sessions) — `minimum_warmup_sessions`
+
+- **UI/model default:** `50`. **Range:** 50–2500.
+- Minimum number of a symbol's candles strictly before the test start. A symbol that fails is excluded for the entire run, rather than becoming eligible later in that run.
+- Effective requirement is `max(minimum_warmup_sessions, required_warmup_for_rules)`:
+
+| Rule | Required warmup component |
+|---|---|
+| Every pattern | At least 50 and `sma_days` |
+| VCP | Also `3 × vcp_window_days` |
+| IPO / legacy breakout | Also `base_days` |
+| Multi-year | Also `multiyear_base_days` |
+| Above 200-session SMA | Also 200 |
+| Rising 200-session SMA | Also 220 |
+| Positive RS threshold or RS candidate priority | Also 126 |
+| Blue sky | No requirement to fill the full Blue-sky lookback cap |
+
+For example, Multi-year with a 260-session base still needs 260 prior sessions even if this field says 50. VCP with 60-session windows needs at least 180.
+
+The UI's safe-window suggestion uses an additional session buffer for the prior signal, and is calculated when opening the dialog. It is not recalculated for every subsequent filter edit; its calculation also does not explicitly include `3 × vcp_window_days`. Backend preparation enforces the actual configuration. Check exclusions and fetch more history or move the start if needed.
+
+#### Entry price — `entry_mode`
+
+- **UI/model default:** `pivot`. **Choices:** `pivot`, `close`, `next_open`.
+
+| Choice | Signal timing and raw fill before costs |
+|---|---|
+| Pivot breakout — `pivot` | Requires a qualifying previous-session signal. On the following available symbol session, raw fill is `max(open, pivot)`, provided the high reaches that price. If not reached, the entry is skipped; there is no persistent pending order. |
+| Close breakout — `close` | For the four current patterns, qualifies on today's completed candle and enters at today's close. This assumes execution at the very close used to confirm the signal. |
+| Next session open — `next_open` | Requires a qualifying previous-session signal and fills at the following available symbol session's open. Useful when comparing with the paper engine's next-open timing. |
+
+The pivot is the prior base high: `base_days` for VCP/IPO, `multiyear_base_days` for Multi-year, and capped prior history for Blue sky. Note the VCP signal-window/pivot-window difference in section 2.
+
+For current-pattern `pivot` and `close` entries, initial protection, position aging and winner management start on the **next** available session. The entry-day low is not used to retroactively stop the position because daily candles cannot establish intraday ordering. Next-open entries can hit the initial stop on their entry day. All entry prices are then adjusted by buy slippage.
+
+**Legacy `breakout`:** always uses previous-session qualification and next-open fills, irrespective of the stored `entry_mode`; its winner management uses the percentage fallback rather than the moving-average branches.
+
+#### Simultaneous signal priority — `candidate_rank`
+
+- **UI/model default:** `alphabetical`. **Choices:** `alphabetical`, `rs_126`.
+- `alphabetical` considers symbols in sorted symbol order.
+- `rs_126` considers the highest signal-date RS percentile first, then highest 126-session return, then symbol order. It requires 126-session warmup even if `min_rs_rating` is zero.
+- Ranking matters when cash or `max_positions` prevents taking all candidates. It does not itself impose a minimum strength threshold.
+- Ranking uses the completed signal date: today's date for current-pattern close entry; the previous available symbol session for next-open/pivot and legacy breakout. Missing RS sorts behind valid scores.
+
+#### Risk per trade (%) — `risk_pct`
+
+- **UI/model default:** `1.5`. **Range:** > 0 through 5.
+- Sets the sizing budget to `equity_at_open × risk_pct / 100`, rather than allocating that percentage of capital to the purchase.
+- Quantity is the smaller of the risk-limited and cash-limited whole-share counts, rounded down. Entries with fewer than one share are skipped.
+- The sizer includes modeled fees and exit slippage in unit risk:
 
 ```text
-annotated-doc==0.0.5
-annotated-types==0.8.0
-anyio==4.15.1
-certifi==2026.7.22
-cffi==2.1.1
-click==8.5.0
-cryptography==50.0.2
-fastapi==0.142.2
-h11==0.16.0
-httpcore==1.0.9
-httpx==0.28.1
-idna==3.20
-opentelemetry-api==1.45.0
-pycparser==3.0
-pydantic==2.13.5
-pydantic_core==2.46.5
-python-multipart==0.0.32
-starlette==1.7.0
-typing-inspection==0.4.4
-typing_extensions==4.16.0
-uvicorn==0.54.0
+buy_rate = buy_cost_bps / 10000
+sell_rate = sell_cost_bps / 10000
+slip = slippage_bps / 10000
+unit_risk = fill - initial_stop + fill × buy_rate + initial_stop × (sell_rate + slip)
+risk_quantity = floor(equity_at_open × risk_pct / 100 / unit_risk)
+cash_quantity = floor(available_cash / (fill × (1 + buy_rate)))
+quantity = max(0, min(risk_quantity, cash_quantity))
 ```
 
-## Files to recreate when only this document survives
+At equity ₹10 lakh, 1.5% gives ₹15,000 risk budget. With zero costs, fill ₹100 and stop ₹92, risk sizing gives 1,875 shares costing ₹187,500, subject to cash and capacity.
 
-Recreate the source modules described above, their package directories and tests; conventional
-__init__.py files may be empty. The package registry, schemas, algorithm and API contracts are
-specified in this document. The HTML shell loads favicon, style.css, KLineChart and app.js from
-/static; use defer for both scripts and UTF-8/viewport/theme-color metadata. The root document
-contains the required DOM IDs given above. All application files and this spec are UTF-8.
+The budget is per position, not a portfolio-wide aggregate loss cap. Multiple positions can each consume a budget, and gaps can exceed the modeled stop loss. Within a session, candidates use the same open-equity basis but progressively reduced available cash; this also applies to the model's close entries.
 
-The following shared/local support files are fully specified here; production support files are embedded in the deployment section. They replace the original
-production starter-file suggestions for the current rebuild; do not install unused broker SDKs,
-Timescale/Redis, vectorbt or Telegram merely to display this page.
+#### Initial stop (%) — `stop_pct`
 
-### package.json
+- **UI/model default:** `8`. **Range:** > 0 through 50.
+- Initial stop is `slippage_adjusted_buy_fill × (1 - stop_pct / 100)`.
+- Defines initial price risk for sizing and the R trigger. Wider stops generally reduce risk-limited quantity; tighter stops increase it, subject to available cash.
+- For an existing protected position, an open at/below the stop exits at the open; otherwise a low at/below the stop exits at the stop. Sell slippage and charges then apply. The stop is a simulated trigger, not a guaranteed net exit price.
 
-```json
-{
-  "name": "trader-control-panel",
-  "private": true,
-  "version": "0.1.0",
-  "scripts": { "vendor": "node scripts/vendor.mjs", "check": "node --check dashboard/web/app.js", "test": "node tests/test_screen_presets.cjs" },
-  "dependencies": { "klinecharts": "9.8.12" }
-}
-```
+#### Winner exit — `winner_exit`
 
-### requirements.txt
+- **UI/model default:** `trail_50d`. **Choices:** `trail_50d`, `trail_30w`, `take_25`.
+- Winner management begins only when the close reaches the `breakeven_r` threshold. Until then, initial protection and holding/end-of-data exits remain active.
 
-```text
-fastapi>=0.115,<1
-uvicorn>=0.34,<1
-httpx>=0.28,<1
-cryptography>=44,<51
-```
+| Choice | Implementation after the R trigger |
+|---|---|
+| 50-day trailing exit — `trail_50d` | Raises the stop to the maximum of the previous stop, cost-adjusted breakeven and current 50-session SMA. |
+| 30-week trailing exit — `trail_30w` | Same, using a **150-daily-session SMA** as the 30-week approximation. It does not aggregate weekly candles. If unavailable, uses the percentage fallback. |
+| Take profit at +25% — `take_25` | Exits at the close when that close is at least 25% above entry **and** the R trigger is satisfied. Before that, once the R trigger is satisfied, cost-adjusted breakeven and the percentage fallback can raise the stop. This is not an intraday limit order. |
 
-For an exact dependency snapshot, create requirements-lock.txt from the pinned list above.
-Python 3.13 is the verified runtime, not a requirement to invent a different dependency stack.
-With no surviving package-lock.json, run `npm.cmd install` against the exact KLineChart version
-in package.json to generate a lockfile. Use `npm.cmd ci` only after that lockfile exists.
-Node must support ES modules and node:fs/promises for the vendor script and node:vm for tests.
+Stops only rise; they do not fall with the moving average. Close-based stop updates become active next session. A take-profit exit uses the same close that meets its conditions, with sell costs applied.
 
-### scripts/vendor.mjs
+#### Skip weak markets — `skip_weak_markets`
 
-```javascript
-import { mkdir, copyFile } from 'node:fs/promises';
-await mkdir('dashboard/web/vendor', { recursive: true });
-await copyFile('node_modules/klinecharts/dist/umd/klinecharts.min.js', 'dashboard/web/vendor/klinecharts.min.js');
-await copyFile('node_modules/klinecharts/LICENSE', 'dashboard/web/vendor/KLINECHARTS-LICENSE');
-```
+- **UI/model default:** `false`. **Values:** `true` / `false`.
+- If enabled, new entries need sufficient signal-date market breadth as defined below. Existing positions keep their exit rules.
+- This is a gate across the run's eligible stock datasets, not a test against an external index. Insufficient-data exclusions can change the breadth calculation.
 
-### start.ps1
+#### Minimum market breadth (%) — `market_breadth_pct`
+
+- **UI/model default:** `40`. **Range:** 0–100. Active only when `skip_weak_markets` is true.
+- Breadth is `100 × eligible_symbols_above_200_session_SMA / eligible_symbols` on the signal date. Above means strictly above; equality does not count.
+- Eligible symbols must have a candle on that date with index at least 200 in their dataset. The SMA includes that day's close.
+- If 30 of 100 eligible symbols are above their averages, a 40% threshold blocks new entries; 40 of 100 passes.
+- **Current fallback:** if there are no eligible symbols, the gate passes. Enabling the gate does not itself add a 200-session preparation requirement; early tests may therefore lack meaningful breadth. Supply sufficient history when relying on this filter.
+
+#### Breakeven trigger (R) — `breakeven_r`
+
+- **UI/model default:** `1`. **Range:** 0.1–10.
+- Activates at `close >= entry × (1 + stop_pct / 100 × breakeven_r)`.
+- With entry ₹100, stop 8% and `breakeven_r = 1`, the trigger is ₹108. At `2`, it is ₹116. The test uses the close, not the day's high.
+- Cost-adjusted breakeven is `entry_cost_per_share / ((1 - sell_rate) × (1 - slip))`, so it covers the modeled buy charges and future sell costs. Gaps can still cause a loss.
+- This threshold gates both breakeven and the chosen winner management. For example, stop 10% and trigger 3 R require +30%, so a `take_25` run cannot take profit merely upon reaching +25%.
+- Trade-report R uses net P&L divided by initial quantity × entry-to-stop distance. That denominator excludes fees, unlike the sizing unit risk.
+
+#### Trail below best close (%) — `trail_pct`
+
+- **UI/model default:** `8`. **Range:** > 0 through 50.
+- Fallback stop candidate: `best_close_since_entry × (1 - trail_pct / 100)`, applied only after the R trigger, along with breakeven and the existing stop.
+- Used if the selected moving average is unavailable, for legacy breakout, and in `take_25` before its gated profit exit is reached.
+- It is **not** an extra percentage trail continuously applied alongside an available 50/150-session SMA trail. Lower values tighten the fallback; higher values leave more room.
+- The best-close baseline begins at the entry fill. For current-pattern pivot/close entry, entry-day management is skipped as described above.
+
+#### Maximum open positions — `max_positions`
+
+- **UI/model default:** `5`. **Range:** 1–50.
+- Caps simultaneous holdings. When full, later qualifying candidates are skipped. No existing position is replaced to admit a stronger candidate, and the engine does not buy another lot of an already-held symbol.
+- Open-time stop/time exits happen before entries and can release cash and slots. Intraday stop exits happen after the entry pass and cannot fund those entries. A symbol exited that day is not re-entered that day.
+- This is not an equal-weight allocation rule or a maximum portfolio-risk percentage.
+
+#### Maximum holding sessions — `max_hold_days`
+
+- **UI/model default:** `120`. **Range:** 1–1000.
+- Checked at the open: if stored age is at least the limit, the position exits at that open, unless a gap-stop reason takes precedence.
+- Age increases during eligible position-management sessions with a candle for that symbol. It does not increase over weekends, missing candles, or the entry-day management skipped for current-pattern pivot/close fills.
+- Consequently the calendar duration can exceed this number, and exit occurs at the next available open after the age threshold is accumulated.
+
+#### Slippage per side (bps) — `slippage_bps`
+
+- **Current UI/model default:** `10`. **Range:** 0–500.
+- Buy fill is `raw_price × (1 + bps / 10000)`; sell fill is `raw_price × (1 - bps / 10000)`.
+- At raw ₹100 and 10 bps, buy fill is ₹100.10 and sell fill is ₹99.90, before charges.
+- Applies on every side, including stops, time exits, profit exits and end-of-data exits. It also affects sizing and breakeven.
+- **Default distinction:** the UI explicitly sets buy/sell charges to zero but does not override slippage, so a fresh comparison run still has 10 bps slippage. For a deliberately cost-free comparison, explicitly set all three cost fields to zero.
+
+#### All-in buy charges (bps) — `buy_cost_bps`
+
+- **New UI default:** `0`. **Model/API default:** `10`. **Range:** 0–500.
+- Buy charge is `slippage_adjusted_buy_fill × quantity × buy_cost_bps / 10000`.
+- Deducted from cash in addition to purchase value; included in sizing and cost-adjusted breakeven. For ₹100,000 executed buy value, 10 bps adds ₹100.
+- Enter a combined assumption for applicable fees/taxes. The engine does not itemize or verify historical broker/tax schedules.
+
+#### All-in sell charges (bps) — `sell_cost_bps`
+
+- **New UI default:** `0`. **Model/API default:** `10`. **Range:** 0–500.
+- Sell charge is `slippage_adjusted_sell_fill × quantity × sell_cost_bps / 10000`.
+- Deducted from sale proceeds and net trade P&L. Also affects sizing and breakeven. You can use a different rate from buys.
+- Charges are proportional assumptions; minimum ticket charges, fee slabs and changing historical rates are not separately modeled.
+
+#### Exploratory-backtest acknowledgement — `acknowledge_limitations`
+
+- **UI/model initial value:** `false`. **Required to run:** `true`.
+- The backend rejects a run without acknowledgement. It does not alter fills or filters.
+- The recorded limitations include current-constituent survivorship bias, unverified corporate actions/calendar gaps/delisted history, local rather than verified market-wide RS, assumed costs, and no volume participation/circuit-limit/non-fill simulation.
+
+### 5. Defaults at a glance
+
+All four built-in screens currently copy the same filter defaults; the selected pattern determines which ones are active. Saved screens use their stored values, with missing older fields filled from built-in defaults. Adjust & rerun preserves explicit recorded values, including costs and dates.
+
+| Parameter | Fresh UI value | API/model default if omitted |
+|---|---|---|
+| Screen `name` | `My screen` | Required in screen API |
+| Backtest `name` | `Breakout experiment` | `Breakout experiment` |
+| `pattern` | `vcp` | Screen API: `vcp`; backtest: legacy `breakout` |
+| `base_days` | 15 | 25 |
+| `max_depth_pct` | 35 | 30 |
+| `volume_multiple` | 1 | 1.5 |
+| `sma_days` | 50 | 50 |
+| `require_long_trend` | false | false |
+| `require_rising_long_trend` | false | false |
+| `min_rs_rating` | 0 | 0 |
+| `min_turnover` | 50,000,000 | 50,000,000 |
+| `vcp_window_days` | 10 | 10 |
+| `vcp_volume_multiple` | 0.9 | 0.8 |
+| `blue_sky_lookback_days` | 5000 | 5000 |
+| `multiyear_base_days` | 260 | 260 |
+| `multiyear_max_depth_pct` | 50 | 50 |
+| `capital` | 1,000,000 | 1,000,000 |
+| `minimum_warmup_sessions` | 50 | 50 |
+| Backtest `start`, `end` | Suggested safe window | Required |
+| `entry_mode` | pivot | pivot |
+| `candidate_rank` | fundamental_score (long Swing UI) | alphabetical |
+| `risk_pct` | 1.5 | 1.5 |
+| `stop_pct` | 8 | 8 |
+| `winner_exit` | trail_50d | trail_50d |
+| `skip_weak_markets` | false | false |
+| `market_breadth_pct` | 40 | 40 |
+| `breakeven_r` | 1 | 1 |
+| `trail_pct` | 8 | 8 |
+| `max_positions` | 5 | 5 |
+| `max_hold_days` | 120 | 120 |
+| `slippage_bps` | 10 | 10 |
+| `buy_cost_bps` | 0 | 10 |
+| `sell_cost_bps` | 0 | 10 |
+| `acknowledge_limitations` | false; must check | false; must supply true |
+
+The API accepts only `pattern` and the actual configuration fields, not the UI-only `screen` or `strategy` selectors. Fields with defaults can be omitted by direct API callers; the UI normally submits explicit values. Screen name is required, and backtest dates plus a true acknowledgement must be supplied.
+
+### 6. Practical configuration sequence
+
+1. Select the universe in Settings, request enough daily history before the planned test, refresh the universe and fetch candles.
+2. Create/select a screen. Choose its pattern first, then adjust its applicable filters. Save it with a descriptive name if you want to reuse it.
+3. Open New backtest and review dates, capital and warmup. The selected screen's filters are copied into this run.
+4. Choose entry mode and candidate priority. Configure initial risk/stop, winner management, breadth gate, capacity and holding limit.
+5. Enter explicit slippage and both charge assumptions. Check the acknowledgement and run.
+6. Inspect exclusions, skipped entries, modeled costs, drawdown and individual trades alongside return. The skipped-entry count includes several causes (RS, breadth, capacity, pivot not reached and insufficient cash), not only cash/position limits.
+7. Use Adjust & rerun to vary an assumption while retaining the previous experiment. The application records configuration, universe, report and frozen input data; later data updates do not rewrite old runs. There is no automatic walk-forward optimizer.
+
+### 7. Implementation references
+
+These are repository-relative references so this file remains portable:
+
+- [Configuration models and validation](core/research/config.py)
+- [Saved-screen API model and submission endpoints](dashboard/api/main.py)
+- [UI fields, built-in presets and new-run defaults](dashboard/web/app.js)
+- [Pattern predicates and indicator calculations](strategies/swing_patterns/patterns/signals.py)
+- [Warmup, dataset preparation, entries, ranking, breadth and exits](core/research/backtest.py)
+- [Position sizing](core/risk/position_sizer.py)
+- [Simulated fills, fees and slippage](core/execution/paper.py)
+
+Update documentation only when explicitly requested. Current schema tables take precedence over dated default examples.
+
+<a id="scalping-research"></a>
+
+## Scalping research
+
+Scalping supports historical research and a separate forward paper portfolio.
+Open **Scalping → Scalping backtest** for research.
+Daily history supplies prior turnover selection; Upstox one-minute history supplies
+signals and simulated fills. The existing five-minute cache remains separate.
+**Forward scalping paper** uses completed candles for signals and fresh streamed
+bid/ask quotes for simulated fills. Live broker orders are not implemented.
+
+### First run
+
+1. Fetch daily history in Market data and save a valid Upstox token in Settings.
+2. Choose a short completed-session window, initially one week, and a small scan size.
+3. Set capital, direction, entry confirmation and explicit costs.
+4. Select **Check minute coverage** to estimate sessions and candles, including warmup.
+5. Select **Fetch missing & backtest**. Inspect Jobs & logs, then open the report.
+6. Select a trade to see its frozen one-minute candles, stop, target and indicator lines.
+7. **Compare confirmations** runs candles only, EMA confirmation and EMA + VWAP
+   on identical frozen candles and cost settings. Every success or failure is retained.
+   **Adjust & rerun** also uses the selected run's frozen reference.
+
+### Declared baseline
+
+These are editable research hypotheses, not optimized settings or evidence of an edge.
+
+| Component | Default and exact rule |
+|---|---|
+| Selection | Up to 20 stocks ranked by the previous 20 sessions' mean close × volume, at least ₹5 crore average turnover. Current universe membership remains survivorship biased. |
+| Trend | Five-minute EMA9 above EMA20, fast EMA rising, completed five-minute close above the fast EMA for longs. Reverse all comparisons for shorts. |
+| Warmup | SMA-seeded EMAs; fetch at least five slow-EMA periods of prior-session complete five-minute bars. Each regular session has 375 one-minute bars. Corporate-action crossings halt pending minute price-basis verification. |
+| Pullback | A directional one-minute candle followed by exactly two immediately preceding adverse candles. At least one adverse candle's range overlaps EMA9, allowing 5 bps tolerance. |
+| Trigger | A directional completed one-minute close beyond the adverse candles' high/low plus 1 bp buffer, and back on the trend side of the one-minute EMA. |
+| Entry | Next one-minute bar's open, with adverse slippage. Signals never use incomplete five-minute candles or future volume. |
+| Optional VWAP | EMA + VWAP requires signal close above/below cumulative session typical-price × volume VWAP. |
+| Candle comparison | Use consecutive completed five-minute closes for trend direction; retain the directional candle/pullback/breakout rules, without EMA touch/alignment or VWAP gates. |
+| Stop | Pullback low/high with 1 bp outward buffer. Reject entries whose slipped fill-to-stop distance is outside 0.05–0.5%. |
+| Target / time | 1.5 initial price-risk R target; exit after 15 minutes or at 15:15 IST, whichever occurs first. Stops/targets may exit sooner. |
+| Risk | 0.1% marked equity per trade, including modeled stop-exit costs; maximum three concurrent positions. |
+| Re-entry | Five-minute cooldown after exit; up to three trades per symbol per session. No same-bar re-entry after an intrabar exit. |
+| Daily loss pause | At 1% loss from session-start equity, latch a pause on new entries. Existing protective exits continue; gaps can exceed the threshold. |
+| Liquidity proxy | Quantity at most 1% of the completed signal-minute volume. This does not establish executable liquidity at the next open. |
+| Hours | Entries from 09:45 through 14:30 IST; mandatory exit at the 15:15 bar open. Special sessions are skipped. |
+| Costs | Initially 10 bps slippage per side and 10 bps buy/sell charges. Supply assumptions appropriate to the experiment; these are not a verified broker/tax schedule. |
+
+### Accounting and timing
+
+One shared cash pool is processed minute by minute, in prior-turnover candidate order
+(symbol order breaks ties). Each long or short reserves its full entry notional plus
+entry fee. Short-sale proceeds never increase buying power. Open-price exits can fund
+open-price entries; intrabar stop/target proceeds can only fund subsequent minutes.
+Capital is reused after exits; leverage is unavailable.
+
+Stop gaps fill at the open. Favorable target gaps fill at the open. Within a candle,
+stop takes precedence when both stop and target are touched. New positions' stops
+and targets apply during the entry minute. Time/cutoff exits use the bar open before
+the candle's high/low is examined. Stops stay fixed for this first setup.
+
+Position size is limited by modeled stop risk, available cash, marked equity divided
+by the position cap, and the volume proxy. Trade R uses initial fill-to-price-stop
+risk; net P&L includes both transaction fees and slipped entry/exit prices.
+
+Drawdown tracks minute-close marked equity, including entry fees but excluding
+estimated liquidation costs and intraminute extrema. The daily equity curve shows
+session-end cash. Reports include long/short and morning/midday/afternoon attribution,
+holding time, turnover, cost impact and daily loss pauses. Earlier/later segments are
+diagnostics on a known sample, not an untouched holdout.
+
+### Reproducibility and boundaries
+
+Saved runs freeze daily candles, one-minute sessions, universe, configuration,
+input hashes and source provenance. Replays fail on missing/changed inputs rather
+than fetching substitutes. Increasing scan size or warmup can require unavailable
+frozen stock-sessions and therefore fail deliberately. Trade charts use the frozen
+session and show indicator values known at each candle's open; the signal records
+its actual completed-close indicators separately.
+
+One-minute OHLCV cannot establish seconds-level fill quality, spreads, queue priority,
+intraminute ordering, circuit restrictions or short-sale eligibility. Minute corporate
+action adjustments and historical membership remain unverified. An adverse cost
+stress and a genuinely untouched date window are required before judging an edge.
+
+### Forward paper workflow
+
+1. Load daily history and save an Upstox access token in Settings.
+2. On **Scalping**, select **Create paper portfolio**, enter allocated capital,
+   choose direction and confirmations, and acknowledge the simulation assumptions.
+   Capital has no default and remains fixed after creation. The captured universe
+   also remains fixed. No portfolio or runner is created automatically.
+3. Select **Start quote runner**. The separate Python process waits for the first
+   eligible weekday after creation, then freezes prior-session selection and minute
+   warmup. Refresh daily coverage before each new session; stale daily history blocks
+   preparation. A valid token and Upstox full-feed permission are required.
+4. **Pause entries** takes effect immediately while protective exits continue.
+   **Flatten & stop runner** requests liquidation on fresh regular-session quotes
+   before the process exits. If markets are closed or the feed is unavailable, open
+   positions remain recorded and the runner reports that it needs attention.
+5. Inspect open positions, closed trade portions and observed simulated fills.
+   **Export full ledger** includes every fill's book, signal, context hash and costs.
+6. Configuration changes apply when the next session context is frozen. Existing
+   positions keep their recorded stop, target and holding/cutoff rules. Exit costs use
+   the current session's frozen assumptions. Optional automatic startup launches this
+   runner when the dashboard starts; the default is off.
+
+The runner uses the Upstox V3 binary protobuf full feed and subscribes to selected
+equities plus held instruments. Initial snapshots cannot fill trades. NSE equity
+`NORMAL_OPEN` status and a valid, uncrossed book are required. Quotes must be no more
+than three seconds old by default and cannot be future-dated. Closed-market and stale
+quotes cannot enter, mark or liquidate positions.
+
+Completed one-minute REST candles, requested in background threads after a two-second
+publication grace, drive the same candle/EMA/VWAP rules as research. Feed OHLC and
+sampled ticks do not construct signal candles. Full regular-session prefixes must be
+continuous from 09:15; revised processed candles latch an entry block. Default entries
+expire eight seconds after signal close. REST/feed delays skip opportunities rather
+than recording historical or next-open fills after the fact. This latency makes paper
+results different from the idealized research next-open model.
+
+Long entries use observed ask and exits use bid; shorts use the reverse. Adverse
+configured slippage and positive charges apply to both sides. Each fill is capped by
+the displayed quantity at that side of the book. Entry sizing also applies the completed
+signal-minute volume cap, stop risk, cash and position limits. Both directions reserve
+full notional plus fees. An exit may be partial; once triggered, its intent remains
+latched until the remaining shares can exit on subsequent fresh quotes. Repeated depth
+updates do not prove replenishment or executable liquidity, and queue position,
+circuits, fees and short eligibility remain unverified.
+
+Atomic portfolio replacement commits cash, positions, trades, fills and the fill
+watermark together. Cross-process locks protect controls and portfolio mutations and
+permit one runner per data directory. Restart/reconnect discards pending entries and
+retains exposure and committed fills. Previous-day exposure, or exposure with a broken
+session context, enters recovery liquidation before new signals/history preparation.
+No missed historical exits are fabricated. A holiday, suspended symbol, feed outage or
+missing depth can therefore leave a paper position open beyond its intended cutoff.
+
+Marks checkpoint every ten seconds and may become stale during outages; the dashboard
+reports stale held symbols. Paper drawdown is based on processed quote marks/checkpoints,
+not all exchange ticks. This implementation has synthetic transport/recovery tests;
+an authenticated market-hours observation run and untouched research validation remain
+necessary before judging execution quality or an edge.
+
+Implementation: `core/research/scalping.py`, parameterized
+`core/research/intraday_data.py`, API endpoints and shared dashboard reporting.
+Streaming implementation: `core/market_data/upstox_stream.py`,
+`core/portfolio/scalping_paper.py`, `scalping_runner.py`, `scalping_control.py`
+and `locking.py`. Tests: `tests/test_scalping.py`, `tests/test_scalping_paper.py`
+and `tests/test_scalping.cjs`.
+
+<a id="momentum-research"></a>
+
+## Intraday momentum baseline
+
+Implemented 8 October 2026. This is research on NSE cash equities, with real Upstox five-minute history. Momentum paper/streaming/live execution remains pending.
+
+### Research comparison
+
+There is no defensible universal “best” momentum strategy across markets, time horizons and costs. The first choice is a transparent, testable baseline suitable for this project's intraday strategy slot.
+
+| Candidate | Evidence and fit | Decision |
+|---|---|---|
+| Opening-range breakout with stocks-in-play relative volume | [Zarattini, Barbon and Aziz's original paper](https://concretumgroup.com/wp-content/uploads/2026/02/A-Profitable-Day-Trading-Strategy-For-The-U.S.-Equity-Market.pdf) studies US stocks and compares ordinary ORB against volume-selected ORB. The stock-selection/volume filter matters materially. | Implement an India adaptation, then validate locally. Published returns do not transfer to this universe. |
+| Practical ORB replication | [QuantConnect's own implementation](https://www.quantconnect.com/research/18444/opening-range-breakout-for-stocks-in-play/p1) provides explicit same-opening-interval relative volume, prior ATR, rank selection and capital limits. | Reusable baseline structure, with conservative completed-close/next-open entries. |
+| Time-series momentum | [AQR's original research](https://www.aqr.com/Insights/Research/Journal-Article/Time-Series-Momentum) supports longer-horizon own-return momentum across futures/forwards. | Useful research alternative; does not directly establish an intraday NSE equity strategy. |
+| Data capability | [Upstox V3 historical documentation](https://upstox.com/developer/api-documentation/v3/get-historical-candle-data/) specifies minute history from January 2022 and one-month retrieval limits for intervals of 1–15 minutes. | Shared five-minute session cache; missing downloads batched into at most 28 calendar days. |
+
+### Deterministic rules
+
+The broader [momentum research review](architecture.md#momentum-deep-research) compares twelve research/practitioner approaches and records further experiments. Opening ranges now include 10 minutes. Completed breakout confirmation has its own 5/10/15/30/60-minute control, aligned to 09:15 IST; five-minute fills and protective exits remain in effect. Defaults stay at five minutes. Hourly confirmation is not an hourly EMA/ADX trend filter.
+
+1. Use prior-session mean rupee turnover to pick up to 50 liquid stocks daily from the selected current constituent universe. Require at least ₹5 crore average turnover and a prior arithmetic-mean 14-session true range of at least 1% of prior close. Daily-history coverage and listing evidence remain validated through the existing preparation pipeline.
+2. Observe a completed 5-minute opening range starting at 09:15 IST (15/30 minutes are configurable). Divide opening volume by the average volume in the same interval over the preceding 14 observed sessions. Verified special sessions cannot substitute for regular openings. Explicit raw-volume corporate actions rebase earlier volume into the current share units.
+3. Require relative volume at least 1.5 by default. Select at most five stocks by descending opening relative volume, with symbol as the tie-breaker. A positive opening candle qualifies for longs; a negative candle qualifies for shorts; a flat opening candle does not qualify. Direction is configurable.
+4. After the opening range, require a completed five-minute close strictly above the opening high for longs or below the opening low for shorts. Enter at the next five-minute bar open, no later than 11:30 IST. One trade per selected stock/session, with no replacement stock or re-entry. This differs from the source paper's stop-market entry; it resolves entry/stop ordering at the cost of delayed entries.
+5. Default stop distance is 0.5 prior daily ATR from the slipped execution price. Optional target is a configured multiple of initial price-stop risk; default zero means stop/cutoff only. Gaps through a stop fill at the adverse bar open. When stop and target appear in the same candle, assume stop first. No intrabar trail or implied tick ordering.
+6. Risk budget defaults to 0.25% of session-opening equity per trade, including modeled costs in sizing. Each selected stock receives at most one fifth of opening equity including entry fees; unused budgets are not redistributed. Shorts reserve full notional plus entry fees. No leverage or same-day capital recycling. P&L and two-sided fees/slippage reconcile to session-end cash.
+7. Exit at the open of the 15:00 IST candle unless stopped/targeted earlier. Cutoff high/low/close cannot change the exit. All trades close the same day. Stop/target timestamps identify five-minute intervals, not exact tick times.
+
+The model, thresholds, ATR definition, close confirmation, India timings and rupee filters are documented research choices. They have not been optimized to maximize this sample's returns. Fees and slippage are configurable aggregate estimates rather than a verified brokerage/tax schedule.
+
+### Dashboard and reproducibility
+
+The **Momentum** view has a schema-driven form, coverage estimate, automatic missing-data fetch, experiment list, report exports and Adjust & rerun. Shared report charts read frozen five-minute candles and show execution markers at the recorded intraday timestamps. Daily volume rankings/selections are retained in each report's `selections` list.
+
+Inputs remain under ignored `data/`: daily input snapshot, minute snapshot, universe membership, prepared daily manifest and hashes, minute snapshot hash, configuration, source-tree provenance, complete trade ledger and equity curve. Downloads retain no token in cache or report. Missing/incomplete expected intraday sessions halt the experiment; no daily or synthetic price substitute is used.
+
+The CLI `scripts/run_momentum.py --config <local JSON file>` submits the same tracked job as the dashboard, within the common one-job-at-a-time rule.
+
+### First real-data backtest
+
+Run ID: `ebef4eacf96f`. Dates: **26 August–4 September 2026**, eight observed sessions. Universe: current Nifty 500, 499 symbols with sufficient daily warmup and 50 selected daily by prior turnover. One symbol was excluded for daily warmup. The run needed 1,289 stock-sessions including volume context; 33 were already cached and 1,256 were downloaded in 103 batches.
+
+| Measure | Result |
+|---|---:|
+| Starting capital | ₹10,00,000 |
+| Final equity | ₹9,89,451.85 |
+| Net P&L | −₹10,548.15 |
+| Net return | −1.0548% |
+| Maximum session-end drawdown | 1.7382% |
+| Trades | 21 (12 long / 9 short) |
+| Win rate | 38.0952% |
+| Expectancy | −0.2802 R |
+| Profit factor | 0.5460 |
+| Modeled fees | ₹6,665.77 |
+| Modeled slippage impact | ₹6,665.78 |
+| Overnight positions | 0 |
+
+Parameters were the documented defaults: 5-minute range, relative volume ≥1.5, 0.5 ATR stop, no target, 0.25% risk per trade, five stocks, 10 bps slippage and 10 bps buy/sell charges each. This short sample checks ingestion, execution and report wiring. It neither proves nor rejects a durable edge. Its annualized Sharpe is too unstable to use for strategy selection.
+
+A proposed September-through-1-October window failed the data diagnostic because **HEGAM on 7 September 2026** had an unresolved −64.30% daily-open discontinuity versus its previous close. The initial run ends before that event; prices were not repaired or silently replaced. Later windows need verified event/provider adjustment evidence before proceeding.
+
+### Validation and next research gate
+
+#### Refinement comparison — 8 October 2026
+
+The dashboard now shows cost attribution, long/short breakdowns, signal rejections, and an earlier/later chronological diagnostic. The form groups experiment, selection, entry/protection and cost controls with explanations. Optional refinements are **VWAP confirmation**, a **prior-ATR breakout buffer**, and a **cost breakeven stop activated after a completed close reaches the chosen R threshold**. They default to disabled. VWAP is approximated from cumulative five-minute typical-price × volume; it is not tick VWAP. This is an ORB research adaptation, informed by the authors' [additional intraday momentum/VWAP research](https://concretumgroup.com/wp-content/uploads/2026/02/Beat-the-Market.pdf), not a reproduction of that SPY strategy.
+
+**Compare refinements** runs six predeclared trials on a saved run's frozen daily/minute/universe inputs, preserving its capital and cost assumptions. Frozen hashes, date bounds and warmup are checked. Missing required frozen sessions halt comparison; no current-cache replacement or download is permitted. Adjust & rerun also uses the reference snapshot. All trials are saved; no default changes or automatic winner selection occur.
+
+Comparison ID `84e4b600e868`, reference `ebef4eacf96f`, same 26 August–4 September 2026 dates:
+
+| Trial | Net return | Max drawdown | Trades | Earlier 5 sessions | Later 3 sessions |
+|---|---:|---:|---:|---:|---:|
+| Baseline replay | −1.0548% | 1.7382% | 21 | +0.1470% | −1.2000% |
+| VWAP confirmation | −1.0548% | 1.7382% | 21 | +0.1470% | −1.2000% |
+| VWAP + 0.1 ATR buffer | −0.5560% | 1.1407% | 18 | +0.4857% | −1.0366% |
+| VWAP + breakeven at 1R | −1.0548% | 1.7382% | 21 | +0.1470% | −1.2000% |
+| VWAP + 0.75 ATR stop | −0.6953% | 1.2123% | 21 | +0.2218% | −0.9151% |
+| VWAP + 2R target | −0.8666% | 1.5563% | 21 | +0.0781% | −0.9439% |
+
+The buffer reduces losses and drawdown on this sample; all trials remain negative overall and in the later segment. The earlier/later split uses an already known sample and is a diagnostic, **not an untouched holdout**. Before-cost attribution adds recorded fee/slippage impact back to actual net P&L; it is not a separate zero-cost simulation, since costs also affect sizing and protective stops.
+
+Focused tests cover completed-bar timing, long/short exits, adverse gaps, conservative stop/target ambiguity, cutoff future-price exclusion, no future daily selection data, reserved capital, fee reconciliation, missing-history failure, cache reuse and batch downloads, report chart levels, UI routing and intraday markers. Existing Swing/paper tests remain intact.
+
+Next: resolve the HEGAM discontinuity with source evidence, extend to multiple market regimes with historical membership where available, and reserve untouched later dates. Compare long/short components, opening ranges, relative-volume filters and cost sensitivities using fixed predeclared experiments. Report all trials rather than choose a flattering historical curve. Circuit limits, short-sale eligibility, participation, real broker fills, exchange calendars and intraday drawdown still need validation before paper/live decisions.
+
+<a id="company-research"></a>
+
+## Automatic company research
+
+The Fundamentals page adds company-quality scoring and an LLM that searches websites
+for financial filings and multiple recent news articles itself. Users select a stock;
+they do not supply websites, articles or financial figures. News reviews remain advisory.
+Stored fundamental scores now enforce configurable prospective buy screens. Historical
+backtests, stops and position sizing remain unchanged. See [Quarterly bulk pull and buy screens](architecture.md#fundamentals-pull).
+
+### Workflow
+
+1. Refresh the market universe and download daily history as usual.
+2. Open **Fundamentals**, choose an existing technical screen and scan candidates.
+3. Select **Research stock**. The thesis and provisional disposition are optional.
+4. The worker searches company/exchange disclosures and recent reporting, then extracts
+   financial metrics, supportive catalysts, risks, contradictions and unknowns.
+5. Read the saved review and clickable citations. Reviews remain in the prospective
+   journal and can be exported. Rejected candidates remain in the journal too.
+
+Research runs as an inspectable job. Failed or interrupted jobs do not fabricate reviews
+or figures. Research the technical shortlist one company at a time; there is no whole-
+universe paid search. The separate NSE fundamentals pull covers the complete market-data
+universe, with quarter-aware caching and automatic prospective buy restrictions.
+
+### Server connection
+
+For Windows local setup, run `./setup-research.ps1` from PowerShell in the project folder.
+It prompts for the API key without displaying it, verifies key/model access using the
+Models endpoint, and stores the key with Windows DPAPI encryption in
+`%LOCALAPPDATA%/TraderCompanyResearch/openai.json`, outside the repository. The directory
+has an ACL restricted to the current Windows user. Default model: `gpt-5.4-mini`, which
+supports web search and structured outputs. The access check does not verify billing
+or generate/search; the first company research job verifies those capabilities.
+Stop the existing local server, then run `./start.ps1` to load the saved connection.
+Existing process environment variables take precedence over the saved local values.
+The encrypted record can be unlocked only by the same Windows account; it is not a
+portable server credential. Run setup again to replace it. Never paste keys into chat.
+
+Model reference: [GPT-5.4 Mini](https://developers.openai.com/api/docs/models/gpt-5.4-mini).
+
+Set `OPENAI_API_KEY` and `TRADER_NEWS_MODEL` in the server process environment. Choose
+a model supporting Responses web search and structured outputs. No key or model is
+silently selected, and Python does not load `.env.example` automatically. Keys are
+never returned to the dashboard. Production requires the existing Basic Auth settings
+before exposing a paid research action. This feature does not configure credentials.
+
+The first Responses request requires `web_search`, includes source metadata and caps
+built-in tool calls at eight. The second extracts structured data from the retrieved
+report without tools. Both set `store=false`. Provider request failures are reported
+without saving request headers or secrets. Live search requires a configured API key;
+provider behavior is tested using mocked responses.
+
+Official references: [Web search](https://developers.openai.com/api/docs/guides/tools-web-search)
+and [Structured outputs](https://developers.openai.com/api/docs/guides/structured-outputs).
+
+### Evidence contracts
+
+- Exact company identity uses name, NSE symbol and ISIN. Unconfirmed identity rejects
+  the review. Web content is untrusted evidence and cannot authorize actions.
+- Cited URLs must appear in provider search metadata or URL annotations; generated links
+  alone are insufficient. This verifies source discovery, not the model's interpretation.
+- Automatic financial scores use direct official NSE integrated Ind-AS HTML filings;
+  LLM-generated financial figures never enter the score. Downloads validate symbol,
+  ISIN, INR units, reporting dates and accounting basis. Original HTML, SHA-256 hashes,
+  parsed rows and calculation inputs are retained under `data/company/filings`.
+  The timestamp encoded in the NSE filename is recorded with an explicit notice and
+  checked against the board approval date; it is not inferred by the LLM.
+- Quarterly revenue/PAT growth requires matching prior-year dates, units and basis.
+  NSE's integrated-filing index discovers the latest and matching prior-year quarters
+  directly, independently of LLM-selected links. Old month-name dates and INR actuals
+  are supported; amounts are converted to INR before comparing rupees/lakhs/crores.
+  Only the reporting-quarter column is used, never the YTD column. Nonpositive prior
+  bases and conflicting prior revisions leave growth unknown. An explicit unmodified
+  opinion can populate the filing-specific auditor check, not the governance check.
+- Annual NSE filings now populate ROE (total PAT / average total equity), ROCE
+  ((PBT + finance costs) / average (total assets - current liabilities)), debt/equity
+  (current and non-current borrowings plus explicit lease liabilities / total equity),
+  interest coverage ((PBT + finance costs) / finance costs) and operating cash flow/PAT.
+  Annual profit and finance costs use the YTD column; fourth-quarter figures are not
+  annualized. Average balance-sheet ratios require two annual filings. Nonpositive
+  denominators and unsupported fields remain unknown. These are the stated calculation
+  conventions, and may differ from published vendor ratios.
+- This adapter does not parse BSE filings, company PDFs, bank/NBFC taxonomies,
+  P/E or promoter pledges. Placeholder zero ratios are
+  ignored. Unsupported or inaccessible documents leave financial metrics unknown;
+  failures appear in the saved review. Downloads allow only the supported official
+  NSE host/path, reject redirects and cap size at 2 MB and discovery at eight files.
+  Requests identify the reader with `TraderCompanyResearch/1.0`; NSE stalls the default
+  Python HTTP client user-agent on this machine. Connect/read timeouts are 5/20 seconds.
+- Legacy LLM-derived financial snapshots remain in the audit files but are excluded
+  from the current screener. The report, discovered links, response IDs and usage
+  remain preserved alongside direct filing artifacts.
+- Recent-news findings require known publication dates in the preceding 30 calendar
+  days. Missing dates cannot support favourable recent news. The LLM groups coverage
+  of the same event, but independent corroboration is not guaranteed.
+- Two non-opinion source domains are required for `supportive`; conflicting or adverse
+  evidence yields `mixed` or `adverse`. Insufficient evidence remains explicit. Verdicts
+  classify evidence and do not predict prices or issue buy instructions.
+- The financial snapshot and review are frozen prospectively. Today's evidence must
+  not be used as historical point-in-time inputs. Reviews store the selected technical
+  configuration and the latest price-catalog context; signal and review dates may differ.
+
+### Experimental score
+
+Missing metrics earn zero points; coverage is the sum of known metric weights. Financial
+periods older than 180 days, reported auditor/governance concerns, and promoter pledging
+above 20% flag review. No adverse search results does not establish clean governance.
+
+| Criterion | Non-financial weight | Bank/NBFC weight |
+|---|---:|---:|
+| Latest quarter revenue growth YoY ≥ 10% | 15 | 15 |
+| Latest quarter PAT growth YoY ≥ 10% | 20 | 20 |
+| Annual/trailing annual ROE ≥ 12% | 15 | 15 |
+| Annual/trailing annual ROCE ≥ 15% | 10 | — |
+| Debt/equity ≤ 1 | 10 | — |
+| Annual/trailing annual interest coverage ≥ 3 | 5 | — |
+| Annual operating cash flow / positive PAT ≥ 0.8 | 5 | — |
+| Net NPA ≤ 2% | — | 15 |
+| Capital adequacy ≥ 15% | — | 15 |
+| Promoter shares pledged ≤ 5% | 10 | 10 |
+| Explicit evidence of no auditor concern | 5 | 5 |
+| Explicit evidence of no governance concern | 5 | 5 |
+
+These are research thresholds, not sector regulatory requirements. IPOs may have limited
+financial history; negative-base profit growth stays unknown. Valuation and acceleration
+are not scored yet. Technical scans reuse swing predicates, warmup, RS, breadth, listing
+and corporate-action evidence. They exclude today's possibly incomplete IST session,
+stale history, quarantines and detected price discontinuities.
+
+### Storage and evaluation
+
+Research artifacts use the existing ignored data directory: `company/evidence.json`,
+`company/reviews_index.json`, and `company/reviews/<id>.json`. Later research never rewrites
+old reviews. Optional manual import APIs remain compatible but are not the primary UI.
+
+Tests cover scoring, missing values, sector rules, timestamps, actual search execution,
+identity, URL provenance, per-metric sources, news recency, provider failures, queued jobs,
+immutable journals, API boundaries, automatic controls, filtering and HTML escaping.
+Evaluate the configured entry filters prospectively, including rejected
+candidates, net expectancy, drawdown and missed winners.
+
+<a id="fundamentals-pull"></a>
+
+## Quarterly fundamentals cache and buy screens
+
+The market-history fetch now checks fundamentals for the same 750-stock total-market universe after saving daily and five-minute candles. This stage uses official NSE Ind-AS HTML filings, without an LLM/API key, third-party numeric inference or BSE fallback. Market-data selection and the smaller research universe do not limit this bulk pull.
+
+Standalone commands, from the repository root:
 
 ```powershell
-$ErrorActionPreference = 'Stop'
-Set-Location -LiteralPath $PSScriptRoot
-& "$PSScriptRoot/.venv/Scripts/python.exe" -m uvicorn dashboard.api.main:app --host 127.0.0.1 --port 8765 --no-proxy-headers
+.\.venv\Scripts\python.exe scripts/pull_fundamentals.py
+.\.venv\Scripts\python.exe scripts/pull_fundamentals.py --validate-only
+.\.venv\Scripts\python.exe scripts/pull_fundamentals.py --symbols TCS STLTECH --retry-failed
 ```
 
-### .gitignore
+Each `data/company/fundamentals/<ISIN>.json` stores the snapshot, deterministic score/checks, source documents, validation, `last_checked_at`, `last_attempted_at`, `last_pulled_at`, `last_period_end` and `next_quarter_end`. Successful versions are retained under `<ISIN>/history/`. Raw source files are in `data/company/filings/`. All timestamps include a timezone. The bulk progress/report is `data/company/fundamentals_pull.json`; the independent audit is `data/company/fundamentals_validation.json`.
 
-```gitignore
-.env
-*.env
-__pycache__/
-*.pyc
-.venv/
-venv/
-node_modules/
-*.db
-*.sqlite3
-data/raw/
-data/cache/
-.DS_Store
-.idea/
-.vscode/
-artifacts/
-data/
-.local-key
+A snapshot covering the latest completed calendar quarter is skipped without network requests until the next quarter ends. Otherwise the NSE index is checked at most once daily. If it still contains the stored quarter, no financial documents are downloaded and the last successful pull date stays unchanged. This avoids missing results published several weeks after quarter end. Failed downloads may be retried explicitly on the same day with `--retry-failed`; repeated ordinary pulls leave them for the next day. A failed new quarter cannot replace an older valid snapshot. This deliberately does not ingest same-quarter revisions after that quarter is stored.
 
-!.env.example
-*.log
-*.pid
+The pull chooses consolidated filings when available, with matching previous-year quarterly and annual comparables. It validates exact company identity, dates, periods, accounting basis, INR units, source SHA-256 checksums, parsed source rows and recomputed metrics before saving. Missing annual comparables, missing balance-sheet inputs or ambiguous figures remain unknown. Bank/NBFC taxonomies, REITs and unsupported NSE forms currently do not receive fabricated scores. Such instruments remain blocked when the required evidence is absent; attempting every stock does not guarantee a score for every stock.
+
+The Fundamentals page has separate saved **Fundamental buy screens** for Swing and Intraday momentum. Defaults: score at least 60/100, evidence coverage at least 80%, financial period at most 180 days old. Missing evidence and flagged concerns block new buys. Thresholds are configurable through the screen forms and `PUT /api/company/buy-screen/{strategy}`. `GET /api/company/buy-check/{strategy}/{ISIN}` returns eligibility, reasons, score, metrics and dates. The per-stock **Check buy** button compares both strategies.
+
+Current swing technical candidates and forward swing paper entries enforce the buy screen. Paper checks record the snapshot ID, thresholds and rejection reasons in the cycle journal, with evidence available by the decision time. Existing positions still receive exits. Intraday momentum remains research-only (no paper/live execution module); its prospective check uses the same stored-score gate and its engine accepts an explicit entry-check callback for future execution integration. Historical backtests never inject today's cache: both engines' historical defaults remain unchanged.
+
+P/E, promoter pledging and full governance research are not added by this pull. News remains a separate on-demand LLM review. The score is the existing experimental fundamental score, not a validated return predictor.
+
+New long swing backtests and paper portfolios in the UI default to five positions and `fundamental_score` priority. API/model defaults retain alphabetical priority for legacy callers. Company scans rank passing candidates by score and show the first five recommendations. Score ties prefer evidence coverage, then symbol. Open holdings are not replaced merely because another stock scores higher.
+
+Historical fundamental ranking uses `core/research/fundamental_history.py` to reconstruct scores from verified archived NSE filings, applying each filing's publication timestamp to every input (including older-period comparables). It does not substitute the current cache for past decisions. Evidence is downloaded retrospectively and intermediate quarters/revisions are incomplete. Missing, stale or flagged historical scores rank last; ranking alone does not enforce the live buy screen. Frozen financial inputs and a checksum are stored at `data/run_fundamentals/<run-id>.json`; frozen comparisons reuse them. Long intraday swing screens also support this priority; bearish short screens reject it.
+
+Run the matched comparison with `scripts/compare_fundamental_ranking.py --reference <saved-swing-run-id> --start 2026-06-01 --end 2026-10-01`. It holds price inputs, costs, signals and exits fixed within each pair and changes only ranking, with five positions in both. Results are in [FUNDAMENTAL_RANKING_COMPARISON.md](architecture.md#fundamental-ranking-comparison).
+
+<a id="data-validity"></a>
+
+## Data-validity safeguards — first increment
+
+These checks do not establish a trading edge or certify corporate-action adjustment.
+No historical report, provider candle or paper ledger is migrated by this change.
+
+### Price-history audit and circuit breaker
+
+Market data → **Audit price history** reads the selected universe's current cached
+history and lists absolute opening gaps of **35% or more** versus the previous
+observed close. It shows both dates: the prior observation can be years earlier.
+The audit is read-only and does not call Upstox or repair prices.
+
+New backtest jobs halt if this check finds a gap anywhere in their input history
+through the test end, including indicator warmup. This deliberately blocks a run
+until suspect data is independently investigated. There is no automatic bypass.
+The error identifies the first symbol/date and the number of findings; the UI
+audit lists the full current-cache findings.
+
+Paper cycles halt before simulation/ledger commit for gaps in newly processed
+sessions, including the transition from the last processed close. Pausing entries
+does not bypass this check: a held position can also have invalid accounting.
+Ingestion may still update the provider cache; the paper ledger stays unchanged.
+Already processed history retains its existing fingerprint guard. Review warmup
+and previously processed inputs separately; this incremental check does not
+retroactively certify them.
+
+Legitimate gaps can trigger this rule; smaller actions can escape it. Splits,
+bonuses, mergers, instrument history stitching and provider errors require
+different remedies. Do not apply split factors merely because a gap exists, and
+do not edit a ledger to make a failed cycle resume.
+
+For a local audit including overlaps with existing report holding periods:
+
+```powershell
+.venv/Scripts/python.exe scripts/audit_data.py --output artifacts/my-price-audit.json
 ```
 
-### dashboard/web/index.html
+Use a new output filename. Optional `--data-dir` selects another local data copy.
+The output compares current cached bars with report trade dates; it does not
+scan each frozen report input, match an event calendar, or measure warmup,
+breadth/ranking or missed-signal impacts. No overlap is not a clean bill of health.
 
-```html
-<!doctype html>
-<html lang="en" data-theme="light">
-<head>
-  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#f7f8f3">
-  <title>Trader — Swing control panel</title>
-  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/static/style.css">
-  <script defer src="/static/vendor/klinecharts.min.js"></script>
-  <script defer src="/static/app.js"></script>
-</head>
-<body>
-  <a class="skip" href="#content">Skip to content</a>
-  <header class="topbar">
-    <a href="#overview" class="brand" aria-label="Trader home"><span class="brand-mark">↗</span><span>trader<span class="brand-dot">.</span><small>A little more systematic.</small></span></a>
-    <nav id="top-navigation" aria-label="Workspace navigation"></nav>
-    <div class="top-tools"><span class="local-status"><i></i> Local workspace</span><button class="icon-button" id="theme-toggle" aria-label="Switch to dark theme">◐</button><span class="avatar" aria-label="Personal workspace">M</span></div>
-  </header>
-  <aside class="sidebar">
-    <div class="eyebrow">YOUR STRATEGIES</div><div id="strategies"></div>
-    <div class="eyebrow saved-eyebrow">SAVED SCREENS</div><div id="saved-screens"></div>
-    <button class="button add-screen" data-action="new-screen">＋ Add new screen</button>
-    <div class="sidebar-bottom"><div class="risk-icon">◎</div><strong>Protect first.<br>Let the winners run.</strong><p>One set of rules.<br>Every trade, every time.</p><button class="text-button" data-action="method">Explore the method ↗</button></div>
-    <div class="sidebar-foot"><i></i> Research workspace <span>v0.1</span></div>
-  </aside>
-  <main id="content" tabindex="-1">
-    <div class="demo-banner"><span><b>RESEARCH & PAPER</b> Real market data. Simulated trades. No live execution.</span><a href="#settings">Connection settings ↗</a></div>
-    <div id="view"><div class="empty">Loading your workspace…</div></div>
-    <footer><span>Rules-based research. Not investment advice. Backtests are hypothetical.</span><span>Charts by KLineChart · <a href="/static/vendor/KLINECHARTS-LICENSE">Apache 2.0</a></span></footer>
-  </main>
-  <dialog id="modal"><div id="modal-content"></div></dialog>
-  <div id="toast" role="status" aria-live="polite"></div>
-</body>
-</html>
-```
+### Initial local observations (4 October 2026)
 
-### dashboard/web/favicon.svg
+The local cache audit scanned 500 symbols and 112 saved reports and found 31
+large gaps. None intersected the recorded holding periods under this limited
+current-cache comparison. Several findings warrant instrument-identity checks:
 
-```xml
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40"><rect width="40" height="40" rx="12" fill="#21734e"/><path d="M10 28 28 10M14 10h14v14" fill="none" stroke="#e6ed9b" stroke-width="3"/></svg>
-```
+| Symbol | Previous observation | New observation | Prices |
+|---|---|---|---|
+| RAINBOW | 4 June 2019 | 10 May 2022 | Previous close ₹0.75 → open ₹510 |
+| KFINTECH | 29 May 2018 | 29 December 2022 | Previous close ₹11.95 → open ₹367 |
+| PRIVISCL | 20 August 2020 | 21 August 2020 | Previous close ₹0.15 → open ₹527 |
 
-### A complete paper-create configuration example
+These are suspicious transitions, not confirmed corporate-action classifications.
+They must not be automatically converted into adjustment factors.
 
-This is documentation for the request shape, not an automatically created account. The owner
-chooses their own capital in the UI. POST this shape to /api/strategies/swing_patterns/paper/portfolio
-only after actual universe/history ingestion; resolved screen values are included, not a screen ID.
+Nestlé's issuer filing documents a ten-for-one split effective 5 January 2024:
+[issuer filing](https://www.nestle.in/sites/g/files/pydnoa451/files/2025-01/BSENSEUFRs_31.12.2024.pdf).
+The local NESTLEIND cache has a 4 January close of ₹1,355.80 and a 5 January open
+of ₹1,377.00. Continuity across the event suggests that at least this price series
+is already adjusted. This observation does not verify volume adjustment, all
+events, or all instruments. An automatic global backward-adjustment pass would
+therefore be premature.
+
+Next: verify instrument identity for flagged histories and compare a sourced
+sample of split/bonus events with prices and volume before designing adjustment
+and held-position accounting. Preserve raw evidence and existing reports.
+
+### IPO eligibility
+
+IPO signals now require a verified, sourced listing date and a signal-date age
+between zero and `ipo_max_age_days` inclusive. The default is **730 calendar
+days**, an explicit research assumption, configurable in screens/backtests/paper.
+This establishes young-listing eligibility, not proof that a base is its first.
+The first downloaded candle is never treated as a listing date.
+
+Provide independently checked listing evidence in the installation-specific
+`data/metadata/listings.json` (or the configured data directory), keyed by ISIN:
 
 ```json
 {
-  "name": "Swing paper portfolio",
-  "pattern": "vcp",
-  "capital": 1000000.0,
-  "base_days": 15,
-  "max_depth_pct": 35,
-  "volume_multiple": 1,
-  "sma_days": 50,
-  "min_turnover": 50000000.0,
-  "vcp_window_days": 10,
-  "vcp_volume_multiple": 0.9,
-  "blue_sky_lookback_days": 5000,
-  "multiyear_base_days": 260,
-  "multiyear_max_depth_pct": 50.0,
-  "entry_mode": "next_open",
-  "risk_pct": 1.5,
-  "stop_pct": 8.0,
-  "winner_exit": "trail_50d",
-  "skip_weak_markets": false,
-  "breakeven_r": 1.0,
-  "trail_pct": 8.0,
-  "max_positions": 5,
-  "max_hold_days": 120,
-  "slippage_bps": 10.0,
-  "buy_cost_bps": 10.0,
-  "sell_cost_bps": 10.0,
-  "auto_run": false,
-  "run_hour": 16,
-  "run_minute": 15,
-  "acknowledge_limitations": true
+  "<ISIN>": {
+    "listing_date": "YYYY-MM-DD",
+    "source": "<official listing notice URL>",
+    "verified": true
+  }
 }
 ```
 
-### Settings titles for the schema-driven form renderer
+Four issuer-sourced listing dates (RAINBOW, KFINTECH, HOMEFIRST and ANGELONE) are now bundled in reference_data/history_evidence.json. Other dates are not guessed. Missing evidence excludes a symbol
+from new IPO backtests and prevents IPO entries in paper; existing positions
+continue through the ordinary exit engine unless the gap guard halts the cycle.
+No eligible IPO inputs produces an actionable error. Verified evidence is frozen
+into the first input candle of each new run, without modifying the provider cache.
 
-Use these API field titles for the common trading inputs. UI-specific overrides are Screen,
-Base screen, Strategy, Portfolio name and Allocated capital (₹), as described above.
+### Breadth coverage
 
-| Field | JSON-schema title |
+When `skip_weak_markets` is enabled, entries require at least
+`market_min_coverage_pct` of the simulation universe to have a dated 200-session
+average on the signal date. The default is **80%**. Zero eligible history fails
+the gate. Exactly 200 observations are sufficient. Qualified breadth must then
+meet `market_breadth_pct`; exits continue normally. Coverage is based on symbols
+included in simulation after exclusions, not the entire exchange.
+
+Historical reports remain unchanged and may reflect earlier rules. New reports
+save the audit result and prominently state survivorship bias and unverified
+adjustment status. Historical trade explanations are reconstructions and can
+flag differences from current rules; they do not rewrite recorded fills.
+
+
+### Evidence-backed histories and split/bonus contracts (5 October 2026)
+
+Derived inputs exclude candles before the four verified listing dates. The cache
+and old reports are unchanged. PRIVISCL is quarantined entirely pending a sourced
+history reconstruction. Research excludes it visibly; paper halts if it is held.
+The UI audit distinguishes raw-cache gaps, applied history policies and unresolved
+gaps in derived inputs. Quarantine can reduce universe breadth; exclusions remain
+part of each report's disclosed assumptions.
+
+The NSE 4 January 2024 Nestle bhavcopy has close ₹27,116.40 and volume 132,390.
+The cached close is ₹1,355.80 and volume 2,647,800: approximately 20 times price
+adjustment and exactly 20 times volume adjustment, consistent with the 2024 split
+and 2025 bonus. Source:
+https://nsearchives.nseindia.com/content/historical/EQUITIES/2024/JAN/cm04JAN2024bhav.csv.zip
+This is a verified sample, not a provider-wide adjustment guarantee. The read-only
+provider corporate-action probe returned HTTP 403; no authenticated event calendar
+was obtained. Reliance's requested legacy bhavcopy URL returned 404.
+
+The engine now supports explicit verified split/bonus contracts in the private
+installation data at metadata/corporate_actions.json, keyed by current ISIN:
+
+```json
+{
+  "<ISIN>": [{
+    "id": "<unique action id>", "kind": "split",
+    "ex_date": "YYYY-MM-DD", "share_factor": 2,
+    "price_basis": "raw", "volume_basis": "raw",
+    "verified": true, "source": "<issuer/exchange action notice>",
+    "basis_source": "<independent raw-versus-provider OHLCV comparison>"
+  }]
+}
+```
+
+The share factor is new shares per old share (a 1:1 bonus uses 2). Validate the
+ex-date, not just record/allotment dates. No live adjustment contracts are seeded:
+unknown raw/adjusted basis is not guessed. Mixed price/volume bases, duplicate
+same-date contracts, fractional share entitlements, dividends, rights and
+mergers/demergers are unsupported and must halt for review. Use already_adjusted
+for BOTH basis fields only after independently checking that the provider already
+adjusted the series. Such a contract leaves it unchanged.
+
+For raw contracts, indicator context adjusts previous OHLC and volume only for
+actions effective by that signal/session. Future actions cannot alter past signals.
+Raw execution prices remain intact. Held quantity multiplies and entry/stop/best
+prices divide by the verified factor before ex-date stop checks. Cash, aggregate
+cost basis, fees and monetary initial risk remain unchanged. Action IDs are
+checkpointed for idempotent restart. Original buy fills and initial quantities
+remain recorded; closed trades add exit_quantity for the changed unit count.
+Reconstructed chart stop traces are omitted when a trade crosses a share action.
+
+Existing processed-provider revisions still halt paper via its fingerprint guard.
+This does not automatically reconcile an already-adjusted provider rewriting old
+bars while a physical paper position is open. That requires a separately verified
+reconciliation; do not bypass the fingerprint. Backtest findings are audited on the
+contract-normalized price view before simulation.
+
+New runs and paper cycles record exact source-file hashes, dependency versions,
+Git revision/dirty status when available, and input history evidence. Docker lacks
+Git metadata but still records the exact source tree. Historical reports receive
+no invented revision identity.
+
+### Frozen-input audit, recovery and validation
+
+Use a new output and replay directory for the full saved-input audit:
+
+```powershell
+.venv/Scripts/python.exe scripts/audit_data.py --frozen --replay-dir artifacts/new-replays --output artifacts/new-frozen-audit.json
+```
+
+Separate replays use current code and verified history policies; originals stay
+unchanged. Unresolved gaps block reruns, and metric deltas cannot be attributed to
+one repair alone. This can take minutes for large saved input collections.
+
+A production backup was copied to this computer and restored into a separate
+ignored artifacts/production-backups directory. All 512 files passed manifest/path
+and content checksum validation; private credentials were excluded. Archive and
+server SHA256 matched. This proves that backup's restore path, not an automatic
+ongoing off-server backup schedule. Live production storage was not replaced.
+
+The fixed candidate, data gate, future holdout and decision log are recorded in
+[VALIDATION_PLAN.md](architecture.md#validation-plan). Historical membership and unresolved
+corporate actions keep the edge-validation gate closed.
+
+
+### Official NSE listing import
+
+The official NSE EQUITY_L.csv provides a DATE OF LISTING column. The new
+scripts/refresh_listing_evidence.py matches it by exact ISIN AND symbol and accepts
+EQ/BE/BZ equity series. A conflicting prior date or duplicate ISIN stops import;
+no candle dates or company-name guesses are used. The import stores source URL
+and complete downloaded-master SHA256 with each verified date.
+
+The current master matched **497/500** universe instruments in both environments.
+BAGMANE, BIRET and EMBASSY were not matched by this equity master; their listing
+eligibility remains unverified rather than invented. The bundled four issuer
+records are a fallback, not the complete installed metadata. The master dates
+establish NSE listing eligibility, not historical index membership or adjusted
+prices. Re-import a new official master when changing the universe.
+
+```powershell
+.venv/Scripts/python.exe scripts/refresh_listing_evidence.py --data-dir data --report artifacts/new-listing-import.json
+```
+
+A downloaded official CSV can be supplied with --csv for reproducible import.
+Dates and action metadata are frozen once per simulation/audit. New unheld listings
+without sufficient history wait for warmup and do not block the whole paper cycle;
+held symbols with insufficient context still halt. No history is fabricated.
+
+
+**Exchange listing is not IPO age.** The NSE master can include secondary venue
+listings (for example long-established Nestle or Force Motors). Dates from this
+master limit unverified NSE-source history; they never automatically establish
+IPO youth. IPO predicates additionally require ipo_verified=true, ipo_date and
+ipo_source for the original public listing. The four issuer-sourced IPO records
+carry that evidence; the remaining imported venue dates do not. A manual initial
+IPO record can use the listing date as ipo_date only when that fact is verified.
+Unknown initial IPO dates block IPO entries. This distinction can reduce the
+eligible IPO universe even though venue-date coverage is 497/500.
+
+The broad frozen-input audit found input issues in 110 of 112 reports. Applying
+listing-history policies still left unresolved gaps, so those 110 corrected
+replays remained blocked. The current derived cache has 10 unresolved gaps after
+31 raw-cache findings. No original report was deleted or retroactively relabeled
+as profitable/unprofitable. Remaining names: ABREL, COHANCE, HEGAM, IIFL, NMDC,
+SIEMENS, TATACHEM, TATACOMM, TMPV and VEDL. These require event-specific evidence,
+especially demergers; a split/bonus factor is not a substitute.
+
+### Initial IPO evidence expansion — 5 October 2026
+
+Bundled initial IPO evidence now covers eight instruments. Added BAJAJHFL
+(16 September 2024), HYUNDAI (22 October 2024), SWIGGY (13 November 2024), and
+VMM (18 December 2024). Each record contains its issuer or NSE publication URL
+and evidence location. This changes eligibility evidence, not the IPO age,
+trend, liquidity or volume rules. The publications were reviewed retrospectively;
+this is not a point-in-time IPO discovery universe or an untouched holdout.
+
+The price-history audit now reports exchange-listing and initial-IPO evidence
+coverage separately. Counts include instruments without cached prices and do
+not imply eligible warmup, acceptable adjustment history or a qualifying signal.
+Unknown original IPO dates remain blocked. Exchange-master imports preserve the
+independent sourced IPO fields. Remaining data reconstruction work is unchanged.
+
+### Exact-row correction — 7 October 2026
+
+COHANCE's ten March 2020 BE candles were left raw while its adjacent EQ history
+was bonus adjusted. NSE daily files and issuer bonus evidence now support a
+derived-only correction with exact-row matching and immutable source checksums.
+The 60% false discontinuity becomes the actual 20% market opening decline.
+Original caches, reports and ledgers remain unchanged. Paper history using a newly
+changed repair policy must be reconciled before resuming. The unresolved gap
+count falls from ten to nine; this does not certify the rest of the history.
+
+See [CORPORATE_ACTION_REVIEW.md](architecture.md#corporate-action-review) for sources, scope,
+validation and remaining entitlement/accounting work for all ten investigations.
+
+<a id="corporate-action-review"></a>
+
+## Corporate-action history investigation — 7 October 2026
+
+Original provider candles and saved reports are preserved. An event announcement
+does not certify the provider's price/volume basis or account for distributed
+securities. Nine unresolved instruments remain blocked by the gap check.
+
+| Instrument | Cached gap date | Evidence reviewed | Outcome |
+|---|---|---|---|
+| COHANCE (formerly SUVENPHAR) | 24 March 2020 | Ten NSE BE candles are raw; adjacent EQ candles are adjusted for the later sourced 1:1 bonus. | Exact-row derived repair verified; no gap adjustment inferred. |
+| ABREL (formerly Century Textiles) | 11 October 2019 | [UltraTech allotment filing](https://www.ultratechcement.com/content/dam/ultratechcementwebsite/pdf/stock-exchange-communication/Century%20Allotment.pdf) records one UltraTech share per eight Century shares, record date 14 October. | Demerger identified; historical identity/basis and entitlement accounting remain unresolved. |
+| HEGAM | 7 September 2026 | [NSE instrument record](https://www.nseindia.com/get-quote/equity/HEGAM/HEG-Advanced-Materials-Limited) lists demerger ex-date and record date 7 September 2026. | Demerger identified; distribution, credit/tradability and provider bases remain unresolved. |
+| IIFL | 30 May 2019 | [Issuer tax-basis filing](https://nsearchives.nseindia.com/corporate/IIFL_12062019180115_SEIntimationCostofAcquisition_285.pdf) and [scheme memorandum](https://nsearchives.nseindia.com/corporates/offerdocument/scheme/IM_IIFLSecurities.pdf) document securities/wealth demergers and 31 May record date. | Requires multiple resulting securities and fractional-entitlement treatment. |
+| NMDC | 27 October 2022 | [NSE circular FAOP54132](https://archives.nseindia.com/content/circulars/FAOP54132.pdf) gives the demerger ex-date. NSE daily file gives raw 27 October open 92.25 and volume 38,603,184. | Cached open 27.88/volume 115,821,134 do not establish an exact consistent factor; earlier and later bases must be reconstructed. |
+| SIEMENS | 7 April 2025 | [Resulting-company filing](https://www.siemens-energy-india.com/pdf/outcome-of-board-meeting-13-02-2026.pdf) records 7 April entitlement record date and June listing. | Demerger identified; unlisted entitlement valuation and execution timing remain unresolved. |
+| TATACHEM | 4 March 2020 | [Issuer annual-report governance section](https://www.tatachemicals.com/tata/sites/default/files/2025-09/corporate-governance-report-2019-20_1758691856.pdf) describes price discovery/adjustment at the 5 March record date for Consumer Products demerger. | Requires resulting-company holdings and independently verified price/volume basis. |
+| TATACOMM | 17 September 2019 | [Issuer January 2021 presentation](https://tatacommunications.com/hubfs/47271964/investor-presentations/pdfs/TCOM-Investor-Presentation-Jan-21.pdf) documents HPIL land demerger, 18 September record date and later October 2020 listing. | Unlisted entitlement valuation, credit and eventual sale must be modelled. |
+| TMPV (formerly TATAMOTORS) | 14 October 2025 | [NSE circular FAOP70615](https://nsearchives.nseindia.com/content/circulars/FAOP70615.pdf) gives demerger ex-date 14 October; [issuer scheme release](https://www.tatamotors.com/press-releases/demerger-of-cv-business-undertaking-of-tata-motors-ltd-into-a-separate-listed-company/) states one resulting CV share per original share. | Requires both businesses and instrument identity/date mapping. |
+| VEDL | 30 April 2026 | [NSE circular FAOP73857](https://nsearchives.nseindia.com/content/circulars/FAOP73857.pdf) gives demerger ex-date 30 April. | Multi-company distribution cannot be treated as a split. |
+
+### Verified COHANCE repair
+
+All OHLCV values of the ten cached BE sessions from 9–23 March 2020 match the
+NSE daily files exactly by date, ISIN INE03QK01018, symbol SUVENPHAR and series BE.
+Those rows were left on the raw basis. EQ samples on 24/25 March and 24 September
+have prices at half the exchange value (within 0.026 rupees rounding tolerance)
+and volumes exactly twice the exchange quantity. The 29 September sample matches
+raw prices and volume after the bonus. The [issuer annual report](https://nsearchives.nseindia.com/corporate/SUVENPHAR_06082021185831_SUVENPHARAGMNoticeAR06082021.pdf)
+documents the 1:1 bonus, 28 September record date and 29 September allotment.
+
+Normalize only the ten exact documented BE rows: divide OHLC by two and multiply
+volume by two. Keep exact mathematical half prices; do not invent provider tick
+rounding. This changes the 24 March opening gap from -60% to -20%, consistent with
+the exchange's actual opening move. It does not eliminate the real market loss.
+
+`reference_data/candle_repairs.json` stores exact expected/replacement values,
+per-file SHA256 and source URL, issuer basis evidence, and all four EQ controls.
+The derived-input code rejects any matching date whose source row is neither the
+documented bad row nor the verified replacement. Corrected rows are idempotent;
+source cache and raw fingerprint checks remain intact. Historical paper cycles
+halt when applied repairs to already processed dates differ from their saved
+cycle evidence. Reconciliation never rewrites cash, fills or positions.
+
+Corrections strictly before every saved cycle's maximum required signal, market,
+RS and exit context need no historical decision reconciliation. Missing context
+evidence requires a full check. Blue Sky's long lookback remains protected.
+`scripts/reconcile_candle_repairs.py` can replay frozen, single-session, no-fill
+checkpoints with old and new inputs. It emits evidence only if both complete
+ledgers exactly match the saved ledger and every raw processed fingerprint
+matches the frozen source. The record is bound to portfolio ID, complete ledger,
+configuration, cycles, membership, fingerprints and repair policy hashes. Changes
+invalidate it. Broader or fill-bearing checkpoints remain unsupported and halt.
+
+No event is automatically converted into a split/bonus contract. Frozen backtest
+inputs and repair evidence are retained with new results. Earlier reports keep
+their original inputs and results; they need separate replays before comparison.
+
+### Remaining reconstruction
+
+For each of the nine demergers: verify the historical instrument identity, exact
+exchange price/volume series, entitlement ratio, shares credit date, tradability,
+fractional-share settlement and resulting-company price history. Then implement
+and test an entitlement ledger before evaluating positions across the event.
+Do not use tax cost-allocation percentages as market-price adjustment factors.
+
+<a id="validation-plan"></a>
+
+## Frozen validation plan — registered 5 October 2026 (IST)
+
+This is a research protocol, not a claim of profitability or a live-trading launch.
+Current data is not cleared for edge validation. Do not optimize around these
+acceptance criteria or call a previously inspected period an untouched holdout.
+
+### Candidate
+
+Use one VCP candidate, Nifty 500, next-session open, starting research cash
+₹1,000,000. Freeze these values before new experiments:
+
+| Rule | Value |
 |---|---|
-| `name` | Run name |
-| `pattern` | Banana screen |
-| `capital` | Starting capital (₹) |
-| `base_days` | Base length (sessions) |
-| `max_depth_pct` | Maximum base depth (%) |
-| `volume_multiple` | Volume / prior 50-session mean |
-| `sma_days` | Trend SMA (sessions) |
-| `require_long_trend` | Require price above 200-day SMA |
-| `require_rising_long_trend` | Require rising 200-day SMA (20 sessions) |
-| `min_rs_rating` | Minimum 126-session RS percentile (0 disables) |
-| `candidate_rank` | Simultaneous signal priority |
-| `market_breadth_pct` | Minimum market breadth (%) |
-| `minimum_warmup_sessions` | Minimum comparison warmup (sessions) |
-| `min_turnover` | Minimum average turnover (₹) |
-| `vcp_window_days` | VCP contraction window (sessions) |
-| `vcp_volume_multiple` | VCP final volume / 50-session mean |
-| `blue_sky_lookback_days` | Blue-sky prior high lookback (sessions) |
-| `multiyear_base_days` | Multiyear base length (sessions) |
-| `multiyear_max_depth_pct` | Multiyear maximum base depth (%) |
-| `entry_mode` | Entry price |
-| `risk_pct` | Risk per trade (%) |
-| `stop_pct` | Initial stop (%) |
-| `winner_exit` | Winner exit |
-| `skip_weak_markets` | Skip weak markets |
-| `breakeven_r` | Breakeven trigger (R) |
-| `trail_pct` | Trail below best close (%) |
-| `max_positions` | Maximum open positions |
-| `max_hold_days` | Maximum holding sessions |
-| `slippage_bps` | Slippage per side (bps) |
-| `buy_cost_bps` | All-in buy charges (bps) |
-| `sell_cost_bps` | All-in sell charges (bps) |
-| `start` | Test from |
-| `end` | Test through |
-| `acknowledge_limitations` | I understand this is an exploratory backtest |
+| VCP windows | Three consecutive 10-session windows |
+| Breakout volume multiple | 1.5 |
+| Final contraction volume multiple | 0.8 |
+| Trend average | 50 sessions |
+| Long trend / rising long trend | Enabled / enabled |
+| Minimum turnover | ₹50,000,000 |
+| Candidate priority | 126-session RS |
+| Market gate | Enabled, breadth ≥40%, coverage ≥80% |
+| Risk / initial stop / positions | 1% / 8% / 5 |
+| Breakeven / winner exit / maximum hold | 1R / 50-day trail / 120 sessions |
+| Slippage per side | 20 bps |
+| Buy / sell charges | 15 / 25 bps aggregate assumptions |
 
-Research provenance note: the following section is maintained by the research/enhancement work.
-Its references to "this thread" and statements that no deployment/commit/push was performed
-describe that research work, not the separate deployment thread recorded later in this document.
+Freeze the complete config, source-tree hashes, input hashes and membership
+snapshot in the run. The fee values are assumptions, not a verified brokerage
+schedule. Stress slippage to 40 bps per side without changing other rules.
 
-## Research decisions, reproducible configurations and results from this thread
+### Data gate
+
+Before performance evaluation: resolve or explicitly exclude every suspect
+instrument with sourced evidence; reconcile corporate actions and raw/adjusted
+price AND volume bases; verify listing dates for IPO experiments; obtain dated
+membership and delisted history for historical edge claims. Record exclusions
+and their effect. The official listing import covers 497/500 current-universe symbols; three unmatched instruments remain unverified. Listing dates alone do not clear the other data gates.
+An anomaly detector passing is insufficient. Unsupported mergers/demergers and
+provider revisions remain blocks, not permission to infer split factors.
+
+### Retrospective diagnostics
+
+All dates through 5 October 2026 must be treated as previously available research
+data. Once cleared, use chronological yearly evaluations and cost sensitivity,
+reporting returns, drawdown, expectancy, exposure, turnover, concentration and
+trade count. Compare with a dated Nifty 500 total-return benchmark. Do not
+substitute an equal-weight basket or a price-only index and call it the TRI.
+If benchmark data is unavailable, mark the comparison unavailable.
+
+Separate bullish, bearish and sideways diagnostics using a rule fixed beforehand
+(for example benchmark above/below its dated 200-session average and its slope).
+These are diagnostics, not independently unseen validation. Never train using
+later periods or change rules after seeing a validation outcome without declaring
+a new candidate and a new holdout.
+
+### Prospective holdout and graduation
+
+Reserve observed sessions from **6 October 2026** onward. This document does not
+create or replace a production portfolio or allocate capital. Observe the frozen
+candidate for at least 12 months AND 100 closed trades, whichever comes later.
+It cannot graduate before the data gate passes.
+
+Provisional acceptance rules: positive net expectancy under baseline and stressed
+costs; maximum marked drawdown no greater than 20%; positive excess return over
+the chosen total-return benchmark across the complete observation window; no
+unresolved accounting/data failures. Report uncertainty and concentration: a
+small sample or one dominant winner requires continued observation, not a pass.
+These thresholds express this candidate's research gate, not universal investment
+standards. Passing paper simulation still requires a separate live execution test.
+
+For edge decay, assess rolling 50-trade expectancy, six-month drawdown and data
+health against the frozen baseline after each month. Record meaningful failures
+in the decision log; investigate before changing rules. Never reset losing history.
+No new automation or notification is created by this plan.
+
+### Decision log
+
+| Date (IST) | Decision | Evidence / implication |
+|---|---|---|
+| 5 Oct 2026 | No global split adjustment | Nestlé sample has prices adjusted by approximately 20 and volume by exactly 20; another adjustment would corrupt it. |
+| 5 Oct 2026 | Reject prelisting inputs for four sourced IPOs | Preserve provider cache, filter only derived research inputs; do not invent listing dates for other instruments. |
+| 5 Oct 2026 | Quarantine PRIVISCL | Corporate restructure plus implausible old price history; no verified reconstruction yet. |
+| 5 Oct 2026 | Keep edge gate closed | Historical membership, remaining actions and provider history still unresolved. |
+
+## Research decisions, reproducible configurations and results from the original Swing study
 
 Scope: decisions and implementation from the custom-screener/Nifty 500 research conversation,
 through 4 October 2026. This section records completed simulations, not a live strategy deployment.
@@ -2277,12 +3468,667 @@ for frontend changes. Record an engine hash/version with future runs as a propos
 current saved run metadata does not automatically contain one. Analytical artifacts live under
 artifacts/; they are optional evidence and must not be needed to interpret this document.
 
-## Complete deployed MVP specification and recovery runbook
+<a id="banana-pattern-comparison"></a>
 
-This section records the final decisions and implementation from the deployment thread on
-4 October 2026 (IST). It is the current specification, not the future PostgreSQL/Redis roadmap.
-All required deployment files are reproduced below. Private credentials cannot be reconstructed
-from a public document; preserve them separately or re-enter them after recovery.
+## Banana Patterns versus our breakout signals
+
+Checked 8 October 2026. This is a read-only comparison; no screen settings,
+paper checkpoints, data caches or orders were changed.
+
+### Scope and evidence
+
+Compare the production Swing paper portfolio's actual custom **Blue sky**
+configuration with Banana Patterns' built-in **Blue sky** screen. The Banana
+screen was inspected in the signed-in browser at https://bananapatterns.com/screens,
+showing Updated EOD 07/10/2026. Its Fresh breakouts view was filtered by breakout
+day to 1 and 5 October. These are the signal dates for our processed next-open
+paper sessions of 5 and 6 October respectively.
+
+Important limitation: Banana's list is its 7 October stage classification filtered
+by historical breakout date, not an archived screen captured on 1 or 5 October.
+Stocks may since have changed stage or failed. The comparison proves different
+displayed selections and explains concrete local rejections; it is not a measured
+historical recall rate or complete parity audit of all four screens.
+
+Production cached eligible daily history ended on 6 October. An empty local result
+for 7 October would mean missing input, not a completed scan with no signals.
+No new provider fetch or paper cycle was submitted for this investigation.
+
+### Observed selections
+
+Our results below are raw pattern matches, before breadth, account sizing and
+position limits. They were recomputed read-only inside the deployed container from
+the portfolio's frozen Nifty 500 membership, listing-filtered cached history and
+corporate-action-adjusted context as of each signal date.
+
+| Signal date | Banana Blue sky Fresh list, viewed 7 October | Our custom Blue sky matches |
+| --- | --- | --- |
+| 1 October | D.P. Abhushan (DPABHUSHAN), Ram Ratna Wires (RAMRAT) | STLTECH, WELSPUNLIV |
+| 5 October | Aditya Infotech, Marine Electricals, India Homes, TD Power Systems, Precision Wires India, Shukra Pharmaceuticals, Jaykay Enterprises, One Point One Solutions, Leela Palaces Hotels & Resorts | LGEINDIA, STLTECH |
+
+There was no overlap in these displayed date-filtered lists. Both names on
+1 October are outside our portfolio universe. On 5 October only Aditya Infotech
+(CPPLUS) and TD Power Systems (TDPOWERSYS) belong to the portfolio's eligible
+membership; the remaining seven names are outside it.
+
+The two in-universe discrepancies have specific local causes:
+
+| Stock, 5 October | Our close | Prior loaded-history intraday high | Volume / prior 50-session average | Local rejection |
+| --- | ---: | ---: | ---: | --- |
+| CPPLUS | 3,989.50 | 4,094.00 | 1.01 | Close does not exceed prior high |
+| TDPOWERSYS | 812.90 | 817.55 | 4.17 | Close does not exceed prior high |
+
+Both passed our trend/liquidity predicate and volume threshold. Banana listed
+both as base-pivot breakouts. Thus universe differences alone cannot explain the
+mismatch: our breakout threshold also differs.
+
+Our other raw matches were CUPID on 30 September, and AETHER, BHEL and STLTECH
+on 6 October. These are research signals, not new committed paper orders.
+
+### Rules that differ
+
+1. **Universe.** Banana covers liquid NSE and BSE stocks. Its current Blue sky
+   drawer showed market cap at least 300 crore and median turnover at least
+   1 crore/day. Our portfolio uses frozen Nifty 500 membership, no market-cap
+   predicate and a minimum of 5 crore/day calculated as the prior 50-session
+   mean of close times volume. Mean versus median and NSE-only versus combined
+   exchange turnover are different measurements. Older Banana guides still
+   mention a 500 crore / 5 crore floor; use dated observed settings rather than
+   assuming those guides describe today's defaults.
+2. **Breakout threshold and base identity.** Banana describes its pivot as a
+   base's highest close, tracks bases and assigns stages. Its live Blue sky
+   preset showed Structure level at most L1 and pre-breakout position between
+   20% below the pivot and the pivot. Our `blue_sky` predicate requires today's
+   close strictly above the highest prior intraday high within up to 5,000
+   loaded sessions. It does not identify a proper base or its lifecycle. A close
+   above a base pivot can remain below an older intraday wick, as the two local
+   rejection examples demonstrate. Conversely a new high on several consecutive
+   days can qualify repeatedly locally rather than represent one tracked base
+   breakout. Limited loaded history is not proof of a lifetime all-time high.
+3. **Relative strength.** Banana's observed preset requires RS at least 70.
+   The paper portfolio has `min_rs_rating=0`, disabling this filter. Our optional
+   RS implementation ranks 126-session price returns in the run's eligible
+   universe; equivalence to Banana's RS recipe is unverified.
+4. **Volume.** Our active rule requires signal volume at least 1x the prior
+   50-session mean. Banana's displayed breakout-volume measure is relative to
+   the prior 20-session median. Its Blue sky drawer had volume dry-up unrestricted;
+   a displayed volume statistic is not by itself proof of a mandatory entry
+   threshold. Do not invent an unobserved Banana volume gate.
+5. **Dates, stages and execution.** A Fresh list includes up to five sessions;
+   a raw local scan evaluates one signal day. Paper fills at the next session
+   open, starts 5 October and advances only through unprocessed completed sessions.
+   A screen match is not automatically an account fill. The old breadth gate
+   blocked our four candidates for the two processed paper sessions. It is now
+   disabled and applies to subsequent sessions, without replaying skipped ones.
+6. **Data.** Banana identifies NSE/BSE and Accord as its feeds; ours uses Upstox
+   daily candles plus explicit sourced listing/corporate-action reconciliation.
+   Adjustment conventions and history coverage can change pivots. No full
+   cross-provider candle reconciliation was performed, so data differences are
+   a possible additional cause, not a demonstrated explanation for every name.
+
+VCP is also an approximation: our predicate uses three fixed windows with
+strictly falling high-low ranges and mean volumes. Banana's published anatomy
+uses a detected base and an ATR contraction ratio between its halves. Identical
+screen names do not establish equivalent algorithms. Multi-year and IPO screens
+also lack verified reference-site parity; they were not stock-list audited here.
+
+### Implication and next comparison
+
+Our current screen names describe inspiration, not reproduced Banana outputs.
+Changing only the weak-market setting cannot make the selections match. A fuller
+comparison needs a chosen reference preset, the same universe and completed
+signal dates, archived stage lists including failures, and documented base/pivot,
+RS, liquidity and adjustment definitions. Record candidate-level rejection reasons
+before comparing account trades. Any base-detector change would materially change
+the research strategy and requires fresh backtests; do not silently rewrite the
+running portfolio or historical ledger to force agreement.
+
+Sources: [live screens](https://bananapatterns.com/screens),
+[Blue sky guide](https://bananapatterns.com/learn/blue-sky-breakout-pattern),
+[method](https://bananapatterns.com/how-it-works),
+[site and pivot definition](https://bananapatterns.com/).
+Local source: `strategies/swing_patterns/patterns/signals.py`,
+`core/portfolio/paper.py`, and the deployed portfolio's configuration/cycle snapshots.
+
+<a id="base-pivot-research"></a>
+
+## Base-and-pivot research — 8 October 2026
+
+Neither experimental variant passes the frozen research-candidate rule. Keep the
+existing paper portfolio; do not promote either variant based on these results.
+Owner decision: retired on 8 October 2026. The experimental UI option and runtime
+support were removed after the failed comparison. It was never deployed. Completed
+results, frozen inputs and replay code remain archived locally.
+
+### Matched results after modeled costs
+
+Historical = 1 January 2020–31 December 2025. Recent 2026 = 1 January–1 October 2026.
+Each window starts independently with cash and ends with liquidation; returns
+across windows must not be added. Every run uses the identical frozen 347-stock
+input snapshot and trading assumptions. These are net hypothetical returns, not
+production portfolio performance or reference-site backtest results.
+
+| Window | Variant | Net return | Max drawdown | Trades | Win rate | Profit factor | Run ID |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | --- |
+| historical | blue_sky | +25.44% | 27.65% | 330 | 42.73% | 1.14 | `7fc90f9e42c2` |
+| historical | base_pivot | +24.60% | 31.66% | 242 | 45.45% | 1.19 | `a424d263580b` |
+| historical | base_pivot_rs70 | +25.04% | 22.93% | 288 | 43.06% | 1.15 | `1a3a958d1f8b` |
+| recent_2026 | blue_sky | -9.57% | 9.66% | 44 | 31.82% | 0.60 | `fedc63d0a1ee` |
+| recent_2026 | base_pivot | -15.49% | 15.49% | 42 | 26.19% | 0.34 | `a6647e40707c` |
+| recent_2026 | base_pivot_rs70 | -18.09% | 18.09% | 41 | 21.95% | 0.26 | `e3bb534623d6` |
+
+### Decision and learnings
+
+The predeclared gate requires positive return and greater return than Blue sky in
+both windows, with drawdown no greater than 20% in each. It is a research heuristic,
+not an owner-approved live risk limit. Both variants fail: neither beats baseline
+in either window; both lose in 2026 and exceed 20% historical drawdown.
+
+- A closing-pivot base detector does not automatically improve returns. The
+  historical unfiltered variant has fewer trades and a higher win rate, but lower
+  net return and deeper drawdown. Entry timing and subsequent cash/slot paths matter.
+- RS70 reduces historical drawdown relative to the unfiltered base variant, yet
+  produces the largest 2026 loss. One useful historical statistic does not establish
+  robustness. RS filtering can alter later account paths, so filtered trades are not
+  necessarily a simple subset of the unfiltered trade ledger.
+- The current baseline also loses in 2026 and has 27.65% historical drawdown. Keeping
+  it as the comparison baseline is not a profitability endorsement.
+- These findings evaluate our defined approximation, not Banana Patterns' actual
+  engine. Differences in its stock list never proved superior returns.
+- No parameters were retuned after observing these six results. Neither variant
+  warrants replacing the baseline or starting an automatically promoted paper account.
+  A future revised hypothesis must be defined before testing and ultimately collect
+  an untouched forward record.
+
+### Frozen hypotheses and shared account assumptions
+
+Baseline: the current custom Blue sky settings, with Skip weak markets off.
+Capital 100,000; next-session open swing entries; 1% risk; 8% stop; +25% winner exit;
+1R breakeven; 8% fallback trail; five positions; 120-session holding limit; buy cost
+35 bps, sell cost 50 bps and slippage 10 bps per side. Candidate priority remains
+alphabetical. SMA50; prior-50-session mean turnover >=50,000,000; volume >=1x the
+prior-50-session mean; long-trend flags off; Blue sky history cap 5,000 sessions.
+All three use 260-session pre-start warmup. The frozen baseline configuration in
+study_plan is authoritative for every parameter.
+
+Base-and-pivot uses a closing-history high instead of an intraday-history high and
+adds base identity: choose the most recent prior bar touching the maximum prior
+close within the history cap. Require 15–120 sessions since that touch, prior-base
+low no more than 35% below the closing pivot, signal close strictly above the pivot,
+and the unchanged trend/liquidity/volume checks. The signal bar is excluded from
+base construction. Equal touches restart base age; a new closing high resets the
+next base, avoiding a new base signal on every consecutive high.
+
+The third variant changes only min_rs_rating to70. This uses our existing local
+126-session cross-sectional price-return percentile, not Banana's proprietary RS.
+No ATR contraction or volume-dry-up requirement was added or claimed. This detector
+is a testable hypothesis, not an exact reproduction of Banana Patterns.
+
+### Data and validation limits
+
+The source was local cached data, prepared through current listing/corporate-action
+contracts. Of 500 current constituents, 144 were excluded by the common history or
+quarantine checks. Nine more had unresolved audited gaps and were explicitly
+excluded from every variant: ABREL, HEGAM, IIFL, NMDC, SIEMENS, TATACHEM, TATACOMM,
+TMPV and VEDL. No audit check was disabled, no prices were repaired for this study,
+and excluded names were not accepted as clean data. Full-universe runs remain
+blocked until these data issues are resolved through evidence.
+
+The fixed restricted cohort is a retrospective diagnostic: exclusions use today's
+available history, including information later than the earlier test dates.
+Current membership, history exclusions and provider adjustment limitations create
+selection/survivorship bias. Results cannot be generalized to all Nifty 500 stocks.
+Both periods had already been examined in earlier research; neither is an untouched
+holdout. Shared freezes isolate algorithm differences but do not remove these biases.
+
+The normal simulation omits actual liquidity participation, circuit locks, broker
+non-fills and some historical corporate-action/membership uncertainties. Assumed
+costs are not a verified historical brokerage/tax schedule.
+
+### Reproduction and saved artifacts
+
+Study output: `artifacts/base-pivot-study-20261008/` (ignored private research artifacts).
+`code/` preserves the engine source used for these runs. `data/study_plan.json`
+contains settings, exact configs, source hashes, cohort, manifests and gap findings.
+`data/study_results.json` contains all six result summaries. `data/runs/<id>.json`
+contains full reports/trades/curves; `data/run_data/<id>.json` contains frozen inputs.
+No source Settings, jobs, runs index, prices or paper ledger were changed.
+
+Input SHA256: `52dc9cc0075a849ae7a4f2c9c0ba878d0e183239561b6d1278390010739d2bbe`.
+Plan SHA256: `112302b0e3c6f2c1fcfe1a18454e630b9ba4c5e90478292649d88eba548ba8fd`.
+Every completed worker asserted input-hash equality. Run each replay with the frozen
+code and configuration; normal BacktestConfig comparison_run_id references the
+frozen run_data. Do not overwrite old reports or silently refresh their inputs.
+
+To create a new study with explicitly documented gap exclusions:
+
+```powershell
+.venv/Scripts/python.exe artifacts/base-pivot-study-20261008/code/scripts/compare_base_pivot.py --source-data data --baseline-config artifacts/base-pivot-study-20261008/baseline.json --output artifacts/new-base-pivot-study --exclude-unreviewed-gaps
+```
+
+The baseline JSON must use Blue sky, swing holding, next_open entries and cover the
+study windows (2020 start through a 2026 end). Without the explicit exclusion flag,
+unresolved gaps halt the run. The output data path must be separate from source data.
+Use a fresh output directory and freeze a copy of code before execution.
+
+The UI option, BacktestConfig additions, signal/engine/chart branches and active
+comparison CLI have been removed. Current application schemas reject this pattern;
+the paper portfolio continues to use its existing Blue sky rule. Archived reports
+must be viewed or replayed with the preserved study code, not imported into the
+current dashboard. The final removed module/CLI/test files are additionally saved
+under `retired-source/` inside the study artifact directory.
+
+At implementation verification, 177 Python tests and frontend checks passed.
+The isolated study verified identical input, plan and frozen source hashes for all
+six reports. Feature-specific tests are archived with the retired implementation;
+application regression checks are rerun after removing it.
+
+Removal verification: all 171 remaining Python tests and frontend checks/tests passed.
+The current schema rejects base_pivot and omits base_pivot_max_days. All six saved
+reports and frozen input snapshots, plus archived replay source, remain present.
+
+<a id="fundamental-ranking-comparison"></a>
+
+## Fundamental ranking comparison
+
+Period: 2026-06-01 to 2026-10-01; five positions; ₹10 lakh starting capital.
+
+Identical frozen prices, universe, costs, signal rules and exits within each pair. Ranking is the only changed setting. This comparison does not add the live score/coverage buy filter.
+
+Nifty 500 snapshot: 389 eligible price histories; 111 excluded by the frozen reference/warmup. Costs: 10 bps slippage per side, 35 bps buy charges, 50 bps sell charges. Next-open entries, 8% initial stop, 1.5% risk per trade, +25% winner exit, and the saved market-breadth gate. VCP uses 10-session contraction windows and 0.9 final-volume multiple. Both pairs share the same price-manifest and financial-evidence checksums.
+
+| Screen | Priority | Return | Max drawdown | Trades | Win rate | Trades with usable score | Mean entry score |
+|---|---|---:|---:|---:|---:|---:|---:|
+| blue_sky | alphabetical | -11.09% | 14.26% | 24 | 20.83% | 22/24 | 50.00 |
+| blue_sky | fundamental_score | 1.04% | 5.84% | 25 | 36.00% | 25/25 | 62.00 |
+| vcp | alphabetical | 0.42% | 5.87% | 16 | 37.50% | 12/16 | 48.75 |
+| vcp | fundamental_score | -6.80% | 11.86% | 21 | 33.33% | 17/21 | 55.88 |
+
+Downloaded retrospectively. Only filings published by the decision time are used. The archive is incomplete and may omit intermediate quarters or earlier revisions; current constituent survivorship and archival selection bias remain. Missing, stale or flagged scores rank last; score ties use coverage then symbol. Ranking does not change the fundamental eligibility filter.
+
+Scores use publication dates and verified raw filing checksums. Intermediate historical quarters are incomplete. The short window and current constituents limit conclusions. A higher score is a financial quality preference, not a forecast of price returns.
+
+Run IDs: e35cbccbd328, 4de96e51f267, 357dfbc435ba, e37151bf1fcc
+
+<a id="momentum-deep-research"></a>
+
+## Intraday momentum: research and experiment review
+
+Research date: 8 October 2026. Scope: improve the existing NSE equity opening-range strategy. Practitioner descriptions are hypotheses; empirical papers establish results only for their own data and execution assumptions. This review uses authors' papers, their own websites and first-person interviews, rather than treating social-media popularity as evidence.
+
+### Assessment
+
+Our implementation has useful safeguards: same-clock relative volume, prior-session liquidity/ATR, completed-bar signals, conservative fills, costs, frozen inputs and compulsory intraday exits. It has not demonstrated a profitable edge. Its principal research gaps are stock selection beyond the top 50 by turnover, event context, higher-timeframe context, and execution realism. Adding more indicators alone does not resolve those gaps.
+
+The earlier eight-session experiment lost 1.0548%; a 0.1 ATR buffer reduced that to a 0.5560% loss. VWAP entry confirmation made no difference. These observations motivate investigation, not a new default.
+
+### Ideas from researchers and practitioners
+
+| People / source | What the source actually proposes or finds | What it means for ours |
+|---|---|---|
+| Carlo Zarattini, Andrea Barbon, Andrew Aziz — [original ORB paper](https://concretumgroup.com/wp-content/uploads/2026/02/A-Profitable-Day-Trading-Strategy-For-The-U.S.-Equity-Market.pdf) | US stock ORB research, 2016–2023, uses opening direction, stop entries and relative opening volume. Ordinary ORB is substantially weaker than volume-selected stocks in play. The paper includes delisted stocks. Its illustrated protective distance is 0.1 daily ATR. | Our 0.5 ATR stop, completed-close entry, current constituents and narrow liquid scan are material departures. Test selection and timing; do not call ours a reproduction or transplant US returns. Copying the tight stop under our costs could be especially harmful. |
+| Derek Melchin / QuantConnect — [replication and code](https://www.quantconnect.com/research/18444/opening-range-breakout-for-stocks-in-play/p1) | Uses 1,000 liquid stocks and the top 20 by relative opening volume. Examines opening durations and ATR thresholds; its displayed backtest covers 2016. | Our top-50 prefilter may remove the very unusual stocks the method seeks. A broader scan needs additional frozen minute data. This replication shares the original hypothesis; it is not wholly independent evidence for India. |
+| Ross Cameron — [Warrior Trading's own rules](https://www.warriortrading.com/momentum-day-trading-strategy/) | Emphasizes elevated relative volume, low float, strong daily structure, catalysts, bull flags/flat-top breaks, defined stops and partial profit-taking. | Relative volume thresholds are immediately testable. Historical float and time-stamped news are missing. US small-cap and premarket rules cannot be assumed to fit liquid NSE stocks; partial exits require separate accounting and execution tests. |
+| Mike Bellafiore — [SMB first-person momentum example](https://www.smbtraining.com/blog/i-see-momentum-buying) | Describes aggressive buying on a news day and why an unusual stock can offer intraday and later opportunities. The description relies on observing offers and the tape. | Five-minute volume is only a proxy for participation. OHLCV cannot reconstruct aggressive buyers, order-book absorption or liquidity at the offer. Keep such claims outside our simulated signal until appropriate data exists. |
+| Kristjan Kullamägi, crediting Pradeep Bonde — [episodic pivots](https://qullamaggie.com/how-to-master-a-setup-episodic-pivots/) | Describes large gaps, exceptional early volume, a surprising catalyst and opening-range-high entries. He discusses different opening durations, daily-low stops and stocks quiet for several months. | Catalyst continuation is a distinct hypothesis. A gap is not proof of news; a retrospective winner gallery is not an unbiased backtest. Intraday forced exits capture only part of the multiday repricing thesis. Need point-in-time event and earnings data. |
+| Brian Shannon — [multiple-timeframe guidance](https://alphatrends.net/market-structure-chart-thank-you/) and [VWAP/pullback interview](https://alphatrends.net/archives/podcast/secrets-from-30-years-of-day-trading-trader-interview-08-06-23/) | Uses broader market structure for context, shorter charts for entries, and VWAP/anchored VWAP around meaningful price events. His timeframe guidance distinguishes context, risk assessment and execution. | Supports testing 10-minute signals with hourly context, not a mandatory timeframe. Event anchors must be selected using information available at entry; choosing a future low as the anchor creates look-ahead. Session VWAP confirmation alone is already redundant on our initial sample. |
+| Linda Bradford Raschke — [first-person Active Trader interview](https://lindaraschke.net/wp-content/uploads/2026/03/raschke_pt2_0304.pdf) | Describes trend pullbacks to a 20-period EMA after strong momentum, with a 14-bar ADX above 30 on the relevant timeframe; discusses a sequence across 15-, 30-, 60- and 120-minute charts. | A trend-pullback strategy is different from entering the first opening breakout. ADX measures strength, not long/short direction. Requires warmed-up indicators and an explicit resumption trigger; use a separate strategy hypothesis rather than stacking every filter on ORB. |
+| Lei Gao, Yufeng Han, Sophia Zhengzi Li, Guofu Zhou — [author publication page and paper link](https://sites.google.com/site/szlwebpage/) | Market intraday momentum concerns prediction of the last half-hour from the return measured from the previous close through the first half-hour. | Overnight and opening returns must remain separate in any implementation. This is a market-level late-session strategy, not evidence that the first five-minute stock breakout works. Our 15:00 cutoff prevents testing the NSE final half-hour. |
+| Guido Baltussen, Zhi Da, Sten Lammers, Martin Martens — [published author-hosted paper](https://academicweb.nd.edu/~zda/intramom.pdf) | Across more than 60 futures, 1974–2020, the return from the previous close up to the final half-hour predicts that half-hour. It generally outperforms the early-return predictor and links the effect to hedging demand. | A late-session index strategy deserves its own experiment. Individual equities, NSE closing arrangements, product choice and fees differ. Do not infer an option-dealer gamma state from equity candles. |
+| Steven Heston, Robert Korajczyk, Ronnie Sadka — [intraday cross-sectional patterns](https://arxiv.org/abs/1005.3535) | Finds same-clock half-hour return continuation across days alongside reversals over intervals shorter than an hour. | Supports accounting for clock time and cautions against assuming every short-term price rise persists. Same-clock historical return ranking differs from today's ORB and today's relative volume. |
+| Tobias Moskowitz, Yao Hua Ooi, Lasse Pedersen — [AQR original research](https://www.aqr.com/Insights/Research/Journal-Article/Time-Series-Momentum) | Own-return momentum across futures/forwards at longer horizons differs from cross-sectional stock momentum. | Useful context, but a monthly trend result does not validate intraday RSI, ROC or MACD. Match each indicator's horizon to the return horizon being predicted. |
+| David Bailey, Jonathan Borwein, Marcos López de Prado, Qiji Zhu — [backtest-overfitting paper](https://www.davidhbailey.com/dhbpapers/backtest-prob.pdf) | Selecting among many historical trials creates selection bias; a holdout alone does not account for how many configurations were tried. | Declare the trials, keep failures and count repeated tests. Neither eight sessions nor one additional month supports reliable Sharpe-based model selection. |
+
+These sources converge on a useful hypothesis: unusual participation plus a coherent trend/catalyst can matter more than the name of an oscillator. They do not establish a universally best momentum strategy.
+
+### The 10-minute and hourly candle question
+
+Three concepts need separate controls:
+
+1. **Opening range:** the first 5/10/15/30 minutes determines the initial high, low, direction and relative-volume interval.
+2. **Signal confirmation:** a completed 5/10/15/30/60-minute close confirms a break of that range. Larger candles can reject short spikes but enter later and give up movement. This is now implemented independently of the opening range.
+3. **Trend context:** for example, the last completed hourly close relative to a warmed-up hourly EMA, its slope, or ADX plus directional confirmation. This was a research proposal at that review. Later completed EMA/MACD implementations and their results are recorded in the indicator study; ADX remains unimplemented.
+
+We can derive larger OHLCV candles from complete five-minute inputs: first open, maximum high, minimum low, final close, summed volume. Volume-weighted measures should retain their original five-minute calculation rather than change solely because the display timeframe changes. [Upstox's V3 documentation](https://upstox.com/developer/api-documentation/v3/get-historical-candle-data/) also supports minute/hour intervals; local aggregation gives comparisons a common input source and avoids unnecessary downloads.
+
+Session alignment is explicit: a 10-minute candle starts 09:15 and closes 09:25; an hourly candle starts 09:15 and closes 10:15. Neither is usable before its close. Our confirmation implementation checks the final five-minute constituent at those boundaries and fills at the next five-minute open. It retains five-minute stop/target handling throughout. It does not use the eventual high/low of an unfinished hour.
+
+A 20-bar hourly EMA needs prior sessions; twenty five-minute bars are a different horizon. Define whether shortened final-session candles are included, how missing/special sessions are handled and how much initialization history is required. Until that is implemented and tested, hourly breakout confirmation must not be described as hourly trend confirmation.
+
+### Experiments declared before reviewing new trial outcomes
+
+Twelve one-factor trials: baseline replay; 10-minute confirmation; hourly confirmation; 10-, 15- and 30-minute opening ranges; relative volume thresholds 2 and 3; last entry 10:00; long only; short only; 0.1 ATR breakout buffer. All preserve the reference capital, risk, universe, cost assumptions and frozen daily/minute inputs. There is no parameter grid or automatic best-configuration promotion.
+
+The Momentum dashboard's **Research ideas** button runs this suite; **Compare refinements** retains the earlier six-trial suite. The CLI equivalent is:
+
+```powershell
+.venv\Scripts\python.exe scripts/run_momentum.py --compare <reference-id> --suite research
+```
+
+March 2026 was chosen as an additional calendar-month check after daily data passed the quality audit, before inspecting intraday returns. It is a separate exploratory period, not a statistically sufficient untouched holdout. Current Nifty 500 membership remains a survivorship limitation. The unresolved September 2026 HEGAM discontinuity is not silently patched or excluded to make a later test pass.
+
+### Completed local results
+
+Two frozen-input suites completed: `85ae3e8075b3` against March control `28d677c85493`, and `3781a3169343` against initial control `ebef4eacf96f`. All 24 trials are retained as dashboard reports. Requested March dates were 2–31 March 2026; the input contains 19 observed sessions, 2–30 March. The original window contains eight observed sessions, 26 August–4 September. No annualized performance claim is made.
+
+| Trial | March net return | March drawdown | March trades | Aug/Sep net return | Aug/Sep trades |
+|---|---:|---:|---:|---:|---:|
+| Baseline replay | -5.1040% | 5.1040% | 54 | -1.0548% | 21 |
+| 10-minute confirmation | -4.6059% | 4.6059% | 50 | -1.1040% | 21 |
+| Hourly confirmation | -2.7755% | 2.7755% | 34 | -0.5955% | 17 |
+| 10-minute opening range | -2.7584% | 3.1472% | 52 | -0.7702% | 24 |
+| 15-minute opening range | -2.5789% | 2.5789% | 50 | -1.0089% | 21 |
+| 30-minute opening range | -2.9235% | 2.9235% | 45 | -0.7668% | 15 |
+| Opening relative volume >= 2 | -4.8319% | 4.8319% | 36 | -0.5605% | 16 |
+| Opening relative volume >= 3 | -2.7804% | 2.7804% | 17 | +0.1494% | 8 |
+| Entries through 10:00 | -4.3863% | 4.3863% | 45 | -1.2241% | 18 |
+| Long only | -1.9760% | 1.9760% | 30 | -0.9738% | 18 |
+| Short only | -3.8862% | 3.9482% | 44 | -1.3909% | 15 |
+| 0.1 ATR breakout buffer | -3.7189% | 3.7189% | 43 | -0.5560% | 18 |
+
+Every March variant is negative overall and in both chronological segments. Relative volume >=3 is positive in the eight-session window but negative in March: a concrete example of why we must not promote the best short-sample result. Ten-minute confirmation is slightly worse than baseline in the original window despite improving March. Hourly confirmation and the ATR buffer reduce losses in both windows, but have not demonstrated positive expectancy.
+
+March control: 489 daily symbols eligible (11 excluded by preparation), at most 50 scanned daily. 1,917 stock-sessions were required including relative-volume context; 30 were reused and 1,887 missing sessions were fetched in 125 batches. Net P&L was -₹51,040.14; modeled fees plus slippage were ₹28,680.37. Adding their recorded impact back leaves -₹22,359.77. This is attribution on actual fills, not a separate zero-cost simulation. Costs matter, but removing them does not explain away the control loss.
+
+Long-only/short-only trials reselect and rank candidates under the direction restriction; they are not simply sums of the baseline long/short ledger. Fewer trades also changes exposure. Compare expectancy, opportunity counts and drawdown alongside return, rather than interpreting a smaller loss as greater alpha.
+
+The first comparison attempt (`47dc781a74ed`) failed on its second trial with the generic local-integrity error; its completed control remains recorded. Frozen hashes subsequently verified and the entire suite completed on retry. A server restart temporarily marked the March download job failed while its CLI worker continued; the worker ultimately saved a successful report. Neither operational interruption was hidden as a strategy result.
+
+The two windows total only 27 observed sessions and use present-day constituents. They establish implementation behavior and reject a confident profitability claim; they do not establish the absence of an edge across all regimes. Full exchange-calendar completeness, intraday equity drawdown and executable short/circuit behavior remain unverified. Defaults remain unchanged.
+
+### Priorities after these checks
+
+| Priority | Proposed experiment | Required evidence/data | Decision rule |
+|---|---|---|---|
+| 1 | Wider eligible scan, then same-clock RV ranking | Minute warmup for the broader daily liquidity universe; historical constituents/delistings where available | Compare against the narrow scan on identical dates and costs. Check participation and concentration. |
+| 2 | Ten-minute confirmation plus independent hourly trend context | Session-aligned hourly history, initialized EMA/ADX, missing-bar checks | Test each component separately before combinations. Verify all feature timestamps precede entry. |
+| 3 | Catalyst/gap continuation | Historical announcement timestamps and earnings surprises; corporate-action verification | Separate verified catalysts from price-only gap proxies. Include failed events, not only winners. |
+| 4 | Cost/stop and capacity gates | Broker charge model, spread/fill observations and interval volume | Reject economically too-small moves; retain conservative cost stresses. Lowering assumed costs is not a discovered signal edge. |
+| 5 | Noise-band trend with completed-bar VWAP exits | Same-clock historical movements; explicit entry/exit cadence | A separate Concretum-style strategy, not simply another ORB checkbox. Their [SPY paper](https://concretumgroup.com/wp-content/uploads/2026/02/Beat-the-Market.pdf) uses time-varying bands, half-hour decisions and different sizing, including leverage in its final version. |
+| 6 | Final-half-hour market momentum | Tradable index/ETF/futures minute history, product costs, close/auction and cutoff rules | Separate signal research from executable returns. Do not extend equity short holding assumptions implicitly. |
+
+Default strategy settings should change only after repeatable positive net expectancy across additional periods, tolerable drawdowns, realistic costs and operational validation. The minimum meaningful improvement is better evidence; fewer trades or a smaller historical loss alone does not establish a profitable strategy.
+
+<a id="momentum-stronger-rules"></a>
+
+## Stronger momentum entries — 8 October 2026
+
+This variant addresses the marginal TCS breakout discussed in the recorded March trade. Stronger means stricter evidence at entry, not a proven increase in profitability. Existing saved runs remain unchanged and the default ORB config remains the control.
+
+### Fixed candidate rules
+
+- Keep the five-minute opening range and prior liquidity/ATR selection.
+- Wait for a complete hourly confirmation candle, aligned to 09:15 IST. Earliest fill is 10:15; entries remain allowed through 11:30.
+- Require a close beyond the opening high/low **plus 0.1 prior daily ATR** in the trade direction.
+- Require the close above cumulative session VWAP for longs, below for shorts. VWAP uses five-minute typical-price/volume inputs.
+- Require a close in the **top 30% of the completed hour's range** for longs, bottom 30% for shorts. This discourages buying after a large retracement from the hour's high or shorting after a large rebound.
+- Require directional movement from the hourly open to its close of at least **0.1 prior daily ATR**. This rejects a negative long candle or a tiny positive body despite a nominal breakout.
+- Keep five-minute fills and protective exits, 0.5 daily ATR stop, existing risk/capital limits, mandatory 15:00 exit and the reference's modeled charges/slippage. No leverage, re-entry or target changes.
+
+The two new candle-quality fields default to disabled. Aggregate hourly open/high/low/close come only from the twelve completed five-minute constituents. Future candles cannot alter them. Filters can defer an entry to a later eligible hour; rejecting one signal does not necessarily eliminate that stock's whole session.
+
+### Predeclared comparison
+
+Seven trials: reference replay; hourly control; hourly + VWAP; hourly + buffer; hourly + close-position filter; hourly + directional-body filter; combined stronger hourly rules. Run the same seven trials on both frozen reference windows, retaining every result. No threshold sweep or winner selection.
+
+Dashboard: **Test stronger entries** on a baseline report. CLI:
+
+```powershell
+.venv\Scripts\python.exe scripts/run_momentum.py --compare 28d677c85493 --suite stronger
+.venv\Scripts\python.exe scripts/run_momentum.py --compare ebef4eacf96f --suite stronger
+```
+
+Limitations remain: just two short periods, current-constituent bias, approximate VWAP, assumed costs, unverified short/circuit/participation constraints and session-end drawdown. Filtering away trades can reduce losses merely by reducing exposure. Inspect trade counts and expectancy as well as return; zero trades is not evidence of an edge.
+
+### Completed results
+
+Frozen-input comparison IDs: March `e9723b9dbb6f`; August/September `aeb6eab8c0cf`. All fourteen trials are retained in the dashboard.
+
+| Trial | March return | March trades | Aug/Sep return | Aug/Sep trades |
+|---|---:|---:|---:|---:|
+| Baseline replay | -5.1040% | 54 | -1.0548% | 21 |
+| Hourly control | -2.7755% | 34 | -0.5955% | 17 |
+| Hourly + VWAP | -2.2892% | 32 | -0.5955% | 17 |
+| Hourly + 0.1 ATR buffer | -0.9464% | 19 | -0.4188% | 14 |
+| Hourly + close in trend-side 30% | -1.4501% | 25 | -0.5955% | 17 |
+| Hourly + directional body >= 0.1 ATR | -2.4605% | 32 | -0.5955% | 17 |
+| Stronger hourly confirmation | -1.2620% | 17 | -0.4356% | 12 |
+
+All variants remain negative in both windows. The combined filters reduce loss and activity relative to the original control, but hourly + buffer alone has better net return than the combined variant in both windows. The combined March trial also has negative expectancy (-0.3639 R), not merely a smaller total loss. Additional filters cannot be described as a proven improvement in edge.
+
+Carry forward hourly + 0.1 ATR buffer as the simpler research candidate alongside the full-quality variant, preserving the original control. No default changes or live/paper enablement follow from these short samples. Tests do not include hourly EMA/ADX context, verified catalysts, broader stock selection or calibrated broker fills.
+
+For the TCS 30 March 10:15 signal, the completed-hour open/high/low/close were 2375.10 / 2398.00 / 2355.00 / 2379.80. The new long buffer requires a close above 2384.46; VWAP was 2383.06; close position was 57.67% versus the required 70%; directional body was 0.0802 ATR versus 0.1. All four gates fail. No TCS trade was taken that day by the combined variant. This is a retrospective explanation of that recorded example, not the basis for optimizing thresholds.
+
+<a id="momentum-indicator-research"></a>
+
+## Momentum indicator loop — declared 8 October 2026
+
+Existing opening-range variants have no reliable positive after-cost result. The March 2026 and August–September 2026 windows are already inspected; results from them are development diagnostics, not independent validation.
+
+### Primary-source research
+
+- [Ross Cameron's MACD video](https://www.youtube.com/watch?v=mfGQr2tHoX0) was located through web search. Accessible video metadata does not provide a full transcript; this research does not claim to have watched or reproduced every rule.
+- [Warrior Trading's own indicator documentation](https://support.warriortrading.com/support/solutions/articles/19000141884-4-chart-indicators-wt) lists 9/20 EMAs and MACD. It motivates explicit trend/momentum hypotheses; the particular filters below are our adaptations, not a verified Cameron system.
+- [SMB's Fashionably Late Scalp rules](https://www.smbtraining.com/blog/wp-content/uploads/2024/04/The-Fashionably-Late-Scalp-Cheat-Sheet.pdf) describe a rising EMA9 crossing VWAP with measured-move risk/target rules. This is a different entry setup, worth a separate experiment. Its advertised success figures are not evidence for NSE returns.
+- [StockCharts MACD histogram documentation](https://chartschool.stockcharts.com/table-of-contents/technical-indicators-and-overlays/technical-indicators/macd-histogram) supplies the indicator definition: EMA12 minus EMA26, signal EMA9 of MACD, histogram MACD minus signal.
+
+### Fixed experiments before results
+
+Seven trials: original control; 10-minute confirmation with 0.1 prior-ATR buffer; that control plus EMA9/20; plus MACD; plus both; hourly buffered control; hourly control plus EMA9/20. All other selection, stops, sizing, cutoff, and cost assumptions stay inherited from the reference. Run the suite on original baseline references to avoid inheriting unrelated tuned fields.
+
+EMA gate for long: completed candle close above EMA9, EMA9 above EMA20, EMA9 rising from its previous completed candle. Reverse every inequality for shorts. MACD gate: directional MACD, directional positive histogram, and histogram increasing in the trade direction. The two-filter trial requires both gates.
+
+Aggregate cached five-minute OHLC into bins aligned to 09:15 IST, separately per session. Only full bins update the indicator; incomplete bins cannot signal. Carry EMA state across regular sessions, with SMA seeds and at least 60 prior candles for EMA or 100 for MACD. Warmup uses the existing prior opening-volume sessions, bars through 15:00, dropping terminal partial bins. This deliberately omits the final half hour from warmup; do not compare directly with broker charts using full-session inputs. Price-basis verification for corporate-action crossings is required, so these trials halt rather than infer adjustment factors. Entry remains next five-minute open and stops remain five-minute; indicator and confirmation timeframes are separate.
+
+### Validation criteria and next windows
+
+Before viewing new-period minute results: test February 2025, then May 2025 and November 2025, subject to source coverage and daily data audit. Keep every trial including operational or data-quality failures. New periods become research data once inspected; reserve another untouched period for any selected candidate. Start with the same prior-turnover top-50 scan to isolate indicators; broaden selection separately.
+
+A candidate is eligible for further validation only if net return is positive in each of at least three additional windows, aggregate trades number at least 100, no window's session-end drawdown exceeds 5%, and aggregate net return stays positive with 50% higher assumed charges and slippage. These are screening thresholds, not statistical proof. Fewer trades, mixed periods, or failure after costs means no good indicator yet. Do not optimize these thresholds after seeing results. An eligible candidate still needs an untouched final period, liquidity/fill checks, and paper observation before deployment.
+
+No strategy is promoted automatically and no live orders are authorized.
+
+### Audit log and additional windows
+
+May 2025 halted before minute testing: SIEMENS's 7 April 2025 discontinuity is in the daily warmup. [NSE's official circular](https://nsearchives.nseindia.com/content/circulars/FAOP67393.pdf) confirms a demerger on that date. A demerger is not a simple share split; this code does not invent a price adjustment. November 2025 halted for TMPV's 14 October 2025 discontinuity. Both blocked windows remain in the research log and do not count as successful tests.
+
+Before inspecting their minute returns, add June 2025 (2–30 June) and January 2026 (2–30 January) as further windows using the same seven declared trials and assumptions. Their daily audits pass. The initial February 2025 control downloaded 1,895 missing stock-sessions, reused five, and returned approximately −4.06% after costs over 53 trades. Every indicator variant in February also loses money; the hourly EMA variant returns approximately −0.99% over 14 trades. No candidate passes the screening gate.
+
+March comparison: `497e425172e6`. February comparison: `2560dd357cdd`. Full precision, individual run IDs, frozen data, and all trial metrics are saved in the dashboard's local reports.
+
+### Next loop: fixed pullback setup
+
+Declared before any pullback results: seven trials on the original February, June and January controls. Original replay; 10-minute buffered control; flag with ATR stop; flag with pullback-extreme stop; flag with pullback stop and 2R target; the latter plus EMA; the latter with opening relative volume >=2. Same costs, stock-selection framework, cutoff, capital and frozen data throughout.
+
+[Cameron's published momentum discussion](https://www.warriortrading.com/momentum-day-trading-strategy/) describes a directional move, a short pullback, then renewed buying, with the pullback low as a stop. Our mechanical India adaptation requires a completed directional impulse body >=0.25 prior ATR, exactly two adverse candles with declining directional closes, a pullback retracement <=50% of the impulse body, and a directional resumption close beyond both pullback candles and the buffered opening range. Mirror for shorts. These numeric definitions are our research choices; the US float/news/small-cap selection is not reproduced. Optional pullback stops are known at signal close and risk sizing uses the actual next-open slipped fill-to-stop distance; a gap leaving nonpositive risk distance cancels entry.
+
+These windows have already been inspected for other strategies. Pullback results are exploratory too; they cannot become an untouched final validation merely because this pattern is new.
+
+### Results of these two loops
+
+All 28 indicator trial runs lose after the modeled costs across March 2026, February 2025, June 2025 and January 2026. The three newly downloaded windows reused existing cached inputs and fetched 1,895, 1,964 and 1,865 missing stock-sessions respectively (5,724 total). The seven-rule suite always uses matching inputs within each window.
+
+| Rule | March 2026 | February 2025 | June 2025 | January 2026 |
+|---|---:|---:|---:|---:|
+| Original control | −5.10% | −4.06% | −5.72% | −3.62% |
+| 10-minute buffered control | −2.91% | −3.50% | −2.68% | −1.65% |
+| 10-minute EMA9/20 | −1.88% | −2.61% | −2.10% | −1.54% |
+| 10-minute MACD | −1.26% | −2.49% | −2.38% | −1.64% |
+| 10-minute EMA + MACD | −1.26% | −2.49% | −2.38% | −1.64% |
+| Hourly buffered control | −0.95% | −1.86% | −2.38% | −3.32% |
+| Hourly EMA9/20 | −0.46% | −0.99% | −1.35% | −3.33% |
+
+The 10-minute EMA variant totals 125 trades and −₹81,371.77 net across the four independent capital resets; its before-cost attribution is still −₹6,717.41. The MACD variant totals 109 trades and −₹77,687.58 net, with −₹12,088.63 before-cost attribution. The hourly EMA variant totals 65 trades and −₹61,218.78 net, with −₹21,728.04 before-cost attribution. Adding independent-window rupee P&L is a diagnostic, not a compounded portfolio simulation. The negative aggregate before-cost attribution means assumed charges alone do not explain these losses; it is not a zero-cost rerun.
+
+All five active flag variants make zero trades in each of February, June and January. Thus the 21 pullback-suite runs consist of six losing control replays and fifteen zero-trade trials. Zero trades is insufficient evidence. Rejection-funnel replays retain the same signal logic and save separate diagnostics: most candidate candles fail the fixed impulse threshold (177 February, 157 June, 215 January); others fail two adverse candles or have insufficient completed current-session candles. Counts are evaluated candidate candles, not distinct stocks or independent trades.
+
+Pullback comparisons: `36fd1389ee15`, `80caf606e4a8`, `ca6498746fc0`. The first CLI briefly showed interrupted after another dashboard process restarted; its worker finished and all seven reports were saved successfully. The CLI now waits for its actual worker rather than trusting a transient persisted interruption marker.
+
+Next declared experiment: expand the prior-turnover scan from 50 to 200 stocks on the same three additional windows, then repeat the fixed suites on each new frozen reference. This tests selection coverage separately; it does not relax the impulse threshold to manufacture trades. A distinct EMA/VWAP crossover setup remains a separate research direction. No candidate has passed the validation gate or been promoted.
+
+<a id="momentum-fundamentals-research"></a>
+
+## Fundamentals before momentum entry
+
+Implemented at the user's request. New dashboard momentum forms enable the fundamentals filter; old saved configurations retain their original behavior for faithful replay. The dashboard's **Test fundamentals filter** action runs a matched pair: the chosen reference configuration without the gate and the identical configuration with it. Prices, costs, capital, stock selection and one frozen fundamental archive are shared.
+
+Entry requires score >=60, evidence coverage >=80%, financial period age <=180 days, and no scorer risk flags. The score reuses the project's transparent earnings/revenue growth, profitability, debt, interest coverage, cash generation, pledge and concern checks. Thresholds are editable and saved per experiment. The same quality gate applies before either a long or short position; this is a universe-quality screen, not a bearish fundamentals thesis. Blocked selected slots are not replaced.
+
+Only verified archived NSE filing bytes are used, with checksum and identity validation. Historical snapshots are reconstructed in publication order. The exact entry time in IST determines which version is available, including same-day releases. Today’s score never substitutes for a missing historical score. These are retrospectively reconstructed research snapshots, not evidence of a contemporaneously made trading decision. The archive lacks some historical quarters/revisions and financial-sector coverage; that can materially bias the subset that trades.
+
+### Matched results
+
+| Window | Without gate | With gate | Allowed / checked |
+|---|---:|---:|---:|
+| March 2026 | −5.1040%, 54 trades | 0.0000%, 0 trades | 0 / 54 |
+| 26 August–4 September 2026 | −1.0548%, 21 trades | +0.1161%, 3 trades | 3 / 21 |
+
+March: 25 entries lack historical financial evidence. The other 29 have stale, incomplete evidence and fail the score/coverage thresholds. Zero trades is not validation of an improvement.
+
+August–September: 18 entries blocked, including nine with missing historical scores. Allowed trades: HINDCOPPER long on 26 August (score 80, coverage 80%, +₹3,047.35); LT short on 26 August (score 60, coverage 85%, +₹388.40); MARUTI long on 2 September (score 60, coverage 80%, −₹2,274.75). Net +₹1,161.00 on ₹10 lakh starting capital after assumed charges and slippage. Different sizing under the evolving equity curve is recomputed by the backtester, rather than subtracting blocked trades from the original ledger.
+
+This is an exploratory three-trade positive result, far below the research requirement of 100 trades and multiple positive windows. No strategy has been promoted. No February 2025 archived versions exist, so a strict February fundamental gate would block every entry; later filings must not be backfilled into that period.
+
+March comparison `89ca875c2cee`, filtered run `47ecdcf8d557`. August–September comparison `bce9e414edbb`, filtered run `92aa48f278b7`. Each saved report includes every proposed entry's pass/block reasons, scores, coverage, period age, filing availability and check time; both matched reports retain the archive hash and frozen evidence.
+
+<a id="momentum-reverse-research"></a>
+
+## Reversed intraday momentum experiment
+
+Original net return **-50.356%**; reversed net return **-54.422%**. Difference: -4.066 percentage points. These are reduced-universe, modeled-cost results.
+
+Requested window: **2024-10-08–2026-10-07**. Observed sessions: 496, 2024-10-08–2026-10-07.
+
+Original signals, opening-volume ranking and next-bar entry timing are preserved. Reverse execution shorts buy signals and buys sell signals. Protective stops/targets use the actual position direction. Fees and adverse slippage are recalculated; this is not a sign flip of old P&L.
+
+Universe: current nifty500; 444 eligible daily symbols. Explicit event exclusions: HEGAM, SIEMENS, TMPV, VEDL. The unfiltered attempt failed its price-gap audit (job `77fdb4d0c2a5`); these four exclusions apply to both runs before liquidity ranking. Another 52 symbols lacked eligible daily inputs. This reduced-universe result does not establish the full-universe result.
+
+Control `836c4463d21b`; reverse `84ac8b96d58b`. Daily manifests, minute snapshot hashes, costs and all configuration fields except name/execution mode/reference are identical.
+
+Regular-opening candle exclusions: ITC:2025-01-06, HINDUNILVR:2025-12-05. Both runs skip these stock-sessions and any candidate whose opening-volume history uses them; the rest of each stock’s history remains eligible.
+
+Matched entries: 1316; control-only: 0; reverse-only: 0.
+
+| Measure | Original | Reversed |
+|---|---:|---:|
+| Starting capital (INR) | 1,000,000.00 | 1,000,000.00 |
+| Final equity (INR) | 496,441.40 | 455,782.83 |
+| Net return (%) | -50.356 | -54.422 |
+| Maximum session-end drawdown (%) | 51.725 | 54.422 |
+| Trades | 1,316 | 1,316 |
+| Win rate (%) | 35.71 | 33.13 |
+| Profit factor | 0.546 | 0.476 |
+| Expectancy (R) | -0.285 | -0.314 |
+| Modeled fees (INR) | 289,457.72 | 256,036.83 |
+| Modeled slippage (INR) | 289,457.79 | 256,036.80 |
+
+| Calendar portion | Original return | Reversed return | Original / reversed trades |
+|---|---:|---:|---:|
+| 2024 | +0.286% | -9.126% | 125 / 125 |
+| 2025 | -32.328% | -32.484% | 667 / 667 |
+| 2026 | -26.850% | -25.713% | 524 / 524 |
+
+![Matched equity curves](artifacts/momentum_reversal_equity.png)
+
+Cost attribution on actual trades: P&L with modeled fees/slippage added back is INR 75,356.91 for the original and INR -32,143.55 for the reversed strategy. This adds costs back to recorded fills, not a separate zero-cost backtest; costs also influence sizing and stops.
+
+Parameters: five-minute opening range/confirmation; relative opening volume ≥1.5; top 50 prior-turnover stocks; up to five positions; 0.25% risk; 0.5 ATR stop; no profit target; last entry 11:30; square-off 15:00 IST. Starting capital INR 1,000,000. Slippage 10 bps each side; buy and sell charges 10 bps each.
+
+Special sessions are omitted from normal-clock momentum eligibility, including any candidate whose 14-session opening-volume context contains one. Added 1 November 2024 Muhurat timing from [NSE circular CMTR64628](https://nsearchives.nseindia.com/content/circulars/CMTR64628.pdf); the existing 21 October 2025 special-session policy also applies. These days remain in the equity calendar with zero trading activity where ineligible.
+
+Exploratory results: current constituents and retrospective exclusions introduce bias; corporate-action checks remain incomplete. Costs are assumptions, short eligibility/circuits/participation are unverified, and drawdown is measured at session ends. The entire historical window is exploratory. Defaults and live/paper behavior remain unchanged.
+
+Reproduce the report: `.venv/Scripts/python.exe scripts/report_momentum_reversal.py 836c4463d21b 84ac8b96d58b`.
+
+<a id="nse-intraday-strategy-review"></a>
+
+## NSE intraday long and short strategy review
+
+Reviewed 9 October 2026. This is a research assessment, not a new profitable backtest or a change to trading defaults. Public performance numbers below are publisher claims, not independently reproduced results. Scope is principally NSE cash equities; index spot, futures and options results are not interchangeable.
+
+### Conclusion
+
+Prioritize cost calibration, stock selection and intraday setup design over adding more indicators. The saved research already tests several indicator refinements without establishing positive net expectancy. Keep daily swing screens as watchlists if useful, but test completed intraday confirmation rather than assuming yesterday's breakout predicts today's open-to-cutoff return. Evaluate long and short portfolios separately before combining them.
+
+### What the local project actually shows
+
+`core/research/intraday_long.py` and `intraday_short.py` qualify stocks on the previous daily session and enter at today's first bar open. They inherit percentage exits (8%, 15%, 25%) and daily moving-average trails from swing research. `core/research/config.py` has an 8% stop default. Actual saved configuration matters: these defaults do not prove that every losing report used them. This is a horizon mismatch worth testing, not a demonstrated explanation of every loss.
+
+The dedicated `core/research/momentum.py` is different: it already implements opening relative volume, intraday confirmation, ATR risk, next-bar execution and optional VWAP/indicator filters. The scalping engine is a third strategy. Avoid treating their results as one system.
+
+Verified directly against saved momentum reports `836c4463d21b` and `84ac8b96d58b`, covering 8 October 2024–7 October 2026:
+
+| Measure | Original momentum | Reversed execution |
+|---|---:|---:|
+| Trades | 1,316 | 1,316 |
+| Net return | -50.36% | -54.42% |
+| Profit factor | 0.546 | 0.476 |
+| Modeled fees | Rs 289,457.72 | Rs 256,036.83 |
+| Modeled slippage | Rs 289,457.79 | Rs 256,036.80 |
+
+Original direction attribution, from the same shared-capital run:
+
+| Direction | Trades | Net P&L | Win rate | Profit factor |
+|---|---:|---:|---:|---:|
+| Buy/long | 687 | -Rs 284,087.51 | 33.92% | 0.531 |
+| Sell/short | 629 | -Rs 219,471.09 | 37.68% | 0.564 |
+
+These are trade attribution figures, not separately sized standalone portfolios. Neither side is profitable. Adding the original run's fees and slippage back to net P&L gives approximately +Rs 75,356.91. That is cost attribution on recorded trades, not a zero-cost simulation: costs affect sizing, stops and subsequent capital.
+
+`MOMENTUM_INDICATOR_RESEARCH.md` records 28 negative indicator trials across March 2026, February 2025, June 2025 and January 2026. EMA and MACD subsets also have negative aggregate before-cost attribution. Thus friction is material, but cannot explain every variant. Fixed flag trials produced no trades; that is insufficient evidence. `MOMENTUM_STRONGER_RULES.md` similarly shows less loss and fewer trades, without positive expectancy. These periods are inspected development data, not untouched validation.
+
+The two-year reports use current constituents, reduced eligible inputs and explicit event exclusions. Historical membership, corporate actions, executable liquidity and short eligibility remain limitations. Session-end drawdown understates possible intraday extremes.
+
+### Online claims and their evidential limits
+
+| Source | Published result or approach | Assessment |
+|---|---|---|
+| [Intraday Lab: Nifty ORB](https://intradaylab.com/blog/nifty-orb-breakout-strategy-backtest) | Reports 2,122 trades, 48.7% winners, profit factor 1.23 and +91.6%; says shorts contribute 75% of profits. | Uses index spot and excludes costs. Its published code skips stop/target checks on the entry candle, prioritizes a long if both boundaries break, and uses the final available close despite the stated 14:30 exit. Timestamp convention and sizing also need verification. Useful hypothesis, insufficient executable evidence. |
+| [DailyBulls: four ORB exits](https://dailybulls.in/orb-intraday-trading-strategy-backtest/) | 42 long Nifty-futures signals, July–October 2025. RSI exit has 71.4% winners and 1.54% return; fixed 1.5R exit has 57.1% winners and 2.88% return. | Small sample; highest win rate is not highest return. Does not establish a short-side edge or independently reproducible after-cost performance. |
+| [MarketNetra: VWAP setups](https://marketnetra.in/blog/vwap-trading-strategy-indian-stocks-intraday-nse) | Describes trend pullbacks, gap-day rejection, band breakout and RSI-divergence reclaim; quotes win rates around 55–65%+. | No auditable trade ledger, holdout or full costed study supports those figures on the page. It explicitly labels sample figures illustrative. Institutional-flow explanations are hypotheses, not evidence obtainable from OHLCV. |
+| [LeadFinn: basic ORB](https://leadfinn.co/strategies/opening-range-breakout) | Reports RELIANCE 15-minute ORB, 2021–August 2026: 629 trades, -21.76% after charges, PF 0.67. | Counterexample to universal ORB profitability. Single stock; entry at signal close needs execution scrutiny. Proposed filters were not part of its reported run. |
+| [LeadFinn: VWAP](https://leadfinn.co/strategies/vwap) | Reports 2,894 trades and -66.48% for its mechanical VWAP baseline after charges. | Shows that VWAP alone need not create an edge. The article's assertion that filters improve expectancy is not a published validation of a profitable filtered variant. |
+| [LeadFinn: previous-day levels](https://leadfinn.co/strategies/previous-day-high-low-breakout-strategy) | Reports 1,623 trades over 15 stocks, 42% winners, -27.9% after charges. | Basic PDH/PDL breakouts are not established as profitable. Independently verify unusual result/accounting relationships before relying on figures. |
+| [LeadFinn: Supertrend](https://leadfinn.co/strategies/supertrend) | Describes Supertrend with trend/VWAP filters, but says its exact strategy has no published engine result. | Claims of optimal settings are not supported by a demonstrated optimization/holdout on this page. Low priority after our unsuccessful EMA/MACD work. |
+| [Public VWAP/EMA report](https://huggingface.co/spaces/aru21/nse-indices-bot-live-dashboard/blob/main/vwap_strategy/results/REPORT.md) | A 13-session cash-equity study with stated Indian charges reports negative results across its tested families. | Short window, overlapping configurations and close fills limit inference. Aggregate trades across variants are not independent observations or one deployable portfolio. Useful negative evidence, not proof that every VWAP strategy fails. |
+| [Wang and Gangwar: NSE breakout research](https://papers.ssrn.com/sol3/papers.cfm?abstract_id=5198458) | Search-accessible author abstract calls for better data coverage, cost modeling and significance tests. | Full paper access failed during this review. Do not claim its methods or complete results were audited. Its abstract does not establish a ready-to-trade profitable system. |
+
+The CastleGate/Wizzer post surfaced in search but its page failed to load. Its promotional return claim is excluded from verified findings. Anonymous forum claims and retrospective winner charts are discovery leads, not performance evidence.
+
+### Costs: first diagnostic to improve
+
+The verified original momentum config uses 10 bps slippage per side plus 10 bps charges per side: approximately 40 bps round-trip friction. The paper fill adapter applies flat percentage charges; it does not calculate capped brokerage and separate dated levies.
+
+For illustration, [Zerodha's published cash-intraday schedule](https://zerodha.com/charges/) gives roughly Rs 82.68 total charges on one Rs 100,000 buy and one equal-value sell, before spread/slippage, rounding and tiny additional levies. This is 8.27 bps of one-way notional. It is an example, not the user's Upstox tariff or a historical cost schedule. Slippage must be measured separately, not reduced until the curve turns green.
+
+For the scalping defaults, 0.05–0.5% price stops and 1.5R targets imply target moves of only 0.075–0.75%. A 0.40% friction assumption overwhelms the smaller targets. Reject trades with insufficient movement relative to measured costs; a tighter stop is not automatically better.
+
+Add dated broker fees, buy/sell taxes, brokerage caps and adverse execution assumptions. Compare fixed-size gross attribution with full costed reruns; the latter are necessary to account for different sizing and capital paths. Show gross edge, fees, spread/slippage and net edge separately.
+
+### Three strategy candidates worth testing
+
+These are proposed hypotheses, not validated recommendations. Numeric settings should be declared before new outcomes are inspected.
+
+1. **Stocks-in-play breakout/retest.** Select a wider *liquid* universe by unusual opening volume relative to the same clock interval, then compare against the existing top-turnover prefilter. Long: completed opening-high breakout and successful retest; short: opening-low breakdown and failed rebound. Add index/sector direction as a separate experiment. Use current information only; full-day volume and future event labels would leak information.
+2. **VWAP trend pullback/rejection.** Long: established upward structure, rising session VWAP, pullback that holds/reclaims it and a completed resumption trigger. Short: declining structure, falling VWAP and a rebound rejected below it. Stop beyond the observed pullback extreme. This is a separate entry pattern, not another Boolean filter on every ORB signal. Define flatness, touch tolerance, slope and resumption mechanically.
+3. **Failed-breakout reversal.** Short: break above a known opening/prior-day high, completed close back inside, then failed retest. Long: break below support, reclaim, then hold. Stop beyond the failed extreme. Test separately from continuation; reversing all old signals has already failed. Distinguish genuine event-driven continuation from a failed auction using only information available then.
+
+Use session VWAP for location/direction, same-clock relative volume for unusual participation, ATR for volatility/risk and at most one explicit trend filter. RSI, MACD and Supertrend deserve an additional role only if an ablation demonstrates incremental net benefit. Spot indices lack traded volume: use a documented tradable volume source if calculating an index VWAP.
+
+Cash-equity shorts need dated broker/product eligibility, circuit and cover assumptions. [SEBI's short-selling framework](https://www.sebi.gov.in/legal/circulars/jan-2024/framework-for-short-selling_80448.html) is the regulatory reference; the broker's actual allowed instruments and operational cutoff still need verification. Index spot cannot be bought or shorted directly; futures and options require their own executable prices, margin and cost models.
+
+### Experiment order and acceptance
+
+First audit costs and direction attribution on existing frozen reports. Then compare selection changes alone. Only then compare the three distinct entry patterns, each long-only and short-only, with a shared control and identical inputs/cost assumptions. Examine rejection funnels when there are no trades.
+
+Use chronological development and untouched test periods, followed by forward paper observation. Require positive net expectancy and profit factor above one on unseen data, report uncertainty with session-block resampling, and stress costs by at least 50%. A preferred additional safety margin such as PF 1.2 is a research choice, not a guarantee. Check yearly/regime concentration, symbol concentration, trade count, capital concurrency, turnover, intraday marked drawdown and participation feasibility. Preserve every trial and failure; do not select a favorable weekday or stock retrospectively and call it validation.
+
+No new strategy was backtested in this review. Existing code and saved settings were left unchanged. The strongest current conclusion is that we have not demonstrated a deployable intraday edge, and further indicator stacking has lower priority than these diagnostics.
+
+## Deployment and database operations
+
+The runbook retains dated deployment evidence. Current deployment/database summaries follow it. Local source changes do not prove deployment. Application and database backups are independent; neither substitutes for off-server recovery. Restore into an isolated target and validate checksums/accounting before deliberate replacement.
 
 ### Environment boundaries and final decisions
 
@@ -2291,7 +4137,7 @@ from a public document; preserve them separately or re-enter them after recovery
 | Source | Shared repository main | Same shared source main |
 | TRADER_ENV | local (default) | production, explicitly set by Compose |
 | Market data, screens, backtests, jobs | Independent local files | Independent production files |
-| Paper portfolio/API/scheduler | Hidden/blocked; no scheduler recovery/start | Enabled capability; owner creates/configures portfolio |
+| Swing paper/API/scheduler | Hidden/blocked; no weekday scheduler | Enabled capability; owner creates/configures portfolio |
 | Token | Own Settings save/private file | Own Settings save/private file |
 | Data root | repository/data by default | Host /srv/trader/data → container /state/data |
 | Private root | DATA/private by default | Host /srv/trader/private → container /state/private |
@@ -2299,9 +4145,7 @@ from a public document; preserve them separately or re-enter them after recovery
 | Login | Optional Basic Auth, normally unset | No website authentication, explicitly owner-selected |
 
 Production starts fresh. Do not seed it from local candles, screens, settings, runs, paper
-ledgers or credentials. Subsequent deployment updates retain production files. No shared database,
-database service, local/production synchronization or automatic merging is implemented or wanted
-now. Both environments use the same algorithms, schemas and UI source. Local research/backtests
+ledgers or credentials. Subsequent deployment updates retain production files. Trader still uses independent JSON; the separately authorized PostgreSQL archive imports existing market inputs without merging application/portfolio state. No automatic application-state synchronization exists. Both environments use the same algorithms, schemas and UI source. Local research/backtests
 may run independently; only the production process owns paper activity. Do not infer runtime mode
 from the hostname: TRADER_ENV controls paper availability; TRADER_PUBLIC_ORIGIN controls proxy
 hostname/origin acceptance. Neither variable establishes authentication.
@@ -2472,13 +4316,21 @@ The pre-stop active-job check is not an atomic admission lock: avoid initiating 
 backup window; a job queued between the check and stop can be interrupted and recovered normally.
 
 For a consistent file copy, stop the trader container, install an EXIT trap to restart it, and
-export all non-secret JSON into /srv/trader/backup-state. Ignore any private path and .tmp file;
-reject other non-JSON input files. Hash exact JSON file bytes with SHA256. manifest.json is
-{version: 1, files: {relative_filename: lowercase_64_character_sha256}}; blobs/<sha>.json.gz holds
-the original bytes compressed with empty gzip filename and mtime=0. Identical input files share
-one blob. New blobs must parse as JSON and pass credential-key/JWT scans. Write blobs/manifest
-via temporary files and atomic replace; remove unreferenced blobs from the current staging set.
-These scans are safeguards, not a general guarantee that arbitrary JSON contains no sensitive data.
+export non-secret JSON and archived financial source HTML into /srv/trader/backup-state.
+Ignore private paths and ephemeral .tmp/.lock files. HTML is allowed only at
+company/filings/<sha256>.html and its bytes must match that filename; reject other file types.
+Hash exact file bytes with SHA256. manifest.json is
+{version: 2, files: {relative_filename: lowercase_64_character_sha256}}; blobs/<sha>.json.gz
+or blobs/<sha>.html.gz holds the original bytes compressed with empty gzip filename and mtime=0.
+Identical bytes of the same file type share one blob. JSON must parse; both types pass
+credential-key/JWT scans. Write blobs/manifest via temporary files and atomic replace; remove
+unreferenced blobs. Restore supports legacy version 1 JSON archives and version 2 mixed archives,
+requires an empty destination, confines paths, excludes private files and verifies every hash.
+These scans are safeguards, not a general guarantee that arbitrary text contains no sensitive data.
+The first backup after the October 9 fundamentals pull exposed the old JSON-only rejection of
+financial HTML. The version 2 format fixes that failure without changing live data formats.
+Regression tests cover mixed-file round trips, legacy restore, credentials, corrupt blobs,
+unsafe paths and invalid filing names/checksums.
 
 Archive that complete staging set to /srv/trader/backups/data-<UTC timestamp>.tar.gz. Cleanup
 removes matching archives older than seven days using find -mtime +7 (mtime-day semantics, not
@@ -2569,869 +4421,500 @@ approval review, and the copies remained ignored under artifacts/migration and
 artifacts/trader-data.tar.gz. An optional empty-body public token-write check was also blocked;
 no credential was changed. These tool outcomes do not imply a failing application endpoint.
 
-### Exact deployment files to recreate
+<a id="deploy-readme"></a>
 
-Copy the following blocks to the named relative paths. Keep shell/Python/YAML/Dockerfile line
-endings LF and save all source as UTF-8. Deployment paths/UID/origin must match the contracts above.
+## Trader MVP deployment
 
-#### Dockerfile
+### Environment separation
 
-```dockerfile
-FROM python:3.13-slim
-WORKDIR /app
-COPY requirements-lock.txt .
-RUN pip install --no-cache-dir -r requirements-lock.txt
-COPY core core
-COPY strategies strategies
-COPY dashboard dashboard
-RUN useradd --uid 10001 --create-home trader
-USER trader
-CMD ["python", "-m", "uvicorn", "dashboard.api.main:app", "--host", "127.0.0.1", "--port", "8765", "--proxy-headers", "--forwarded-allow-ips", "127.0.0.1"]
-```
+The owner authorized remote research/paper hosting on 4 October 2026. Live broker execution remains deferred. Trader continues to read its environment's JSON data and private credentials. On 9 October 2026 the owner authorized a separate shared PostgreSQL market-data database on the same VM and an import of existing local/production market inputs. See [database deployment and import notes](architecture.md#deploy-market-data-readme). Completed market refreshes now sync automatically from local and production. Trader's source files and paper ledgers remain preserved; database-backed application readers are not enabled yet.
 
-#### compose.yaml
+`TRADER_ENV=local` is the default. Local runs support market data and backtests, hide paper trading, reject paper API requests and never start the paper scheduler. `TRADER_ENV=production` explicitly enables paper APIs and the scheduler. Compose sets this for the VPS. A portfolio still must be created and configured in the production UI; no portfolio or automatic cycle is enabled merely by deploying.
 
-```yaml
-services:
-  trader:
-    build: .
-    restart: unless-stopped
-    network_mode: host
-    environment:
-      TRADER_ENV: production
-      TRADER_PUBLIC_ORIGIN: https://trader.manojmathivanan.com
-      TRADER_DATA_DIR: /state/data
-      TRADER_PRIVATE_DIR: /state/private
-    volumes:
-      - /srv/trader/data:/state/data
-      - /srv/trader/private:/state/private
-    stop_grace_period: 60s
-    logging:
-      driver: json-file
-      options:
-        max-size: 10m
-        max-file: '3'
-```
+### Runtime
 
-#### deploy/Caddyfile
+DigitalOcean `manoj-projects`, Bangalore, Ubuntu 24.04, 1 vCPU / 1 GB RAM / 25 GB disk. Caddy terminates HTTPS for `trader.manojmathivanan.com`. Docker Compose runs one application process with the worker and production paper scheduler. Uvicorn binds only to `127.0.0.1:8765`; Caddy strips forwarded client IPs. Host and browser origin checks remain enabled. The website has no login by owner choice, so its research and paper actions are public. These checks are not authentication.
 
-```caddyfile
-trader.manojmathivanan.com {
-    reverse_proxy 127.0.0.1:8765 {
-        header_up -X-Forwarded-For
-    }
-}
-```
+Install Docker, Compose, Caddy, Git and Python. Run `deploy/bootstrap.sh` and clone the public repository into `/opt/trader`. No GitHub credential or write deploy key is needed by the server. Copy `deploy/Caddyfile` to `/etc/caddy/Caddyfile` and reload Caddy. Cloudflare's DNS-only A record `trader` points to the VPS. The root domain remains reserved for future projects.
 
-#### deploy/bootstrap.sh
-
-```bash
-#!/bin/bash
-set -euo pipefail
-install -d -o 10001 -g 10001 /srv/trader/data /srv/trader/private
-chmod 700 /srv/trader/private
-install -d /opt/trader /srv/trader/snapshots /srv/trader/backups
-if [ ! -f /swapfile ]; then
-    fallocate -l 2G /swapfile
-    chmod 600 /swapfile
-    mkswap /swapfile
-    swapon /swapfile
-    printf '/swapfile none swap sw 0 0\n' >>/etc/fstab
-fi
-systemctl enable --now docker caddy
-```
-
-#### deploy/backup.sh
-
-```bash
-#!/bin/bash
-set -euo pipefail
-exec 9>/run/trader-backup.lock
-flock -n 9 || exit 0
+```sh
 cd /opt/trader
-python3 - <<'PY'
-import json
-from pathlib import Path
-p = Path('/srv/trader/data/jobs.json')
-if p.exists() and any(j['status'] in ('queued', 'running') for j in json.loads(p.read_text())):
-    raise SystemExit('Backup deferred: a job is active. Run manually after completion.')
-PY
-docker compose stop trader
-trap 'cd /opt/trader; docker compose start trader' EXIT
-mkdir -p /srv/trader/backup-state /srv/trader/backups
-python3 deploy/data_snapshot.py snapshot /srv/trader/data /srv/trader/backup-state
-tar -czf /srv/trader/backups/data-$(date -u +%Y%m%dT%H%M%SZ).tar.gz -C /srv/trader/backup-state .
-find /srv/trader/backups -name 'data-*.tar.gz' -mtime +7 -delete
+docker compose up -d --build
 ```
 
-#### deploy/data_snapshot.py
+### Files and credentials
 
-```python
-"""Content-addressed, compressed snapshots of non-secret Trader JSON state."""
-import gzip
-import hashlib
-import json
-import re
-import shutil
-import sys
-from pathlib import Path
+- `/srv/trader/data`: production JSON research and paper state, owned by UID/GID 10001.
+- `/srv/trader/private/upstox.json`: production plaintext UI-saved token, mode 600; directory mode 700. Enter a fresh token in the production Settings UI. It is excluded from Git, images and data backups.
+- Local defaults remain `data/` and `data/private/` in the local checkout. Existing local histories remain intact; legacy encrypted token records are still readable with their original `.local-key`.
+- GitHub `main` contains shared source, tests, dependencies, architecture and deployment configuration. No data branch, history, ledgers, backups, environment secrets or private keys are published. No server process commits or pushes to GitHub.
+- Python does not load `.env` automatically. Supply process environment explicitly. Compose supplies production variables. Optional Basic Auth remains supported, but is not configured.
 
+### Production backups
 
-def snapshot(source, target):
-    blobs = target / 'blobs'
-    blobs.mkdir(parents=True, exist_ok=True)
-    manifest = {}
-    for path in sorted(source.rglob('*')):
-        if not path.is_file() or 'private' in path.relative_to(source).parts or path.suffix == '.tmp':
-            continue
-        if path.suffix != '.json':
-            raise ValueError(f'Unexpected file: {path}')
-        with path.open('rb') as stream:
-            digest = hashlib.file_digest(stream, 'sha256').hexdigest()
-        blob = blobs / (digest + '.json.gz')
-        if not blob.exists():
-            raw = path.read_text(encoding='utf-8')
-            json.loads(raw)
-            if re.search(r'"(?:access_token|encrypted_token|api_key|api_secret|password|private_key)"\s*:', raw, re.I) or re.search(r'eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+', raw):
-                raise ValueError(f'Credential found: {path}')
-            del raw
-            pending = blob.with_suffix('.tmp')
-            with path.open('rb') as src, pending.open('wb') as dst:
-                with gzip.GzipFile(filename='', mode='wb', fileobj=dst, mtime=0) as compressed:
-                    shutil.copyfileobj(src, compressed)
-            pending.replace(blob)
-        manifest[path.relative_to(source).as_posix()] = digest
-    target.mkdir(parents=True, exist_ok=True)
-    pending = target / 'manifest.tmp'
-    pending.write_text(json.dumps({'version': 1, 'files': manifest}, indent=2) + '\n', encoding='utf-8')
-    pending.replace(target / 'manifest.json')
-    used = set(manifest.values())
-    for blob in blobs.glob('*.json.gz'):
-        if blob.name.removesuffix('.json.gz') not in used:
-            blob.unlink()
-    print(f'Snapshot: {len(manifest)} files, {len(used)} unique blobs.')
+Install `deploy/backup.sh` as `/usr/local/sbin/trader-backup`, with the provided backup service/timer under `/etc/systemd/system`, and enable the timer. It runs around 01:30 IST, briefly stopping the container and restarting it with an EXIT trap. Active jobs defer the backup; run it manually after completion. The exporter checks JSON and rejects credentials, storing immutable content-addressed gzip blobs and a filename manifest. Identical candle snapshots share a blob; live application files retain their original format. Archives remain under `/srv/trader/backups` for seven days.
 
-
-def restore(source, target):
-    manifest = json.loads((source / 'manifest.json').read_text())
-    if manifest['version'] != 1:
-        raise ValueError('Unsupported snapshot version')
-    if target.exists() and any(target.iterdir()):
-        raise ValueError('Restore destination must be empty')
-    target.mkdir(parents=True, exist_ok=True)
-    for name, digest in manifest['files'].items():
-        path = (target / name).resolve()
-        if not path.is_relative_to(target.resolve()) or 'private' in Path(name).parts or path.suffix != '.json' or not re.fullmatch('[a-f0-9]{64}', digest):
-            raise ValueError('Unsafe snapshot manifest')
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with gzip.open(source / 'blobs' / (digest + '.json.gz'), 'rb') as src, path.open('wb') as dst:
-            shutil.copyfileobj(src, dst)
-        with path.open('rb') as stream:
-            if hashlib.file_digest(stream, 'sha256').hexdigest() != digest:
-                raise ValueError(f'Corrupt snapshot: {name}')
-    print(f'Restored {len(manifest["files"])} verified files.')
-
-
-if __name__ == '__main__':
-    {'snapshot': snapshot, 'restore': restore}[sys.argv[1]](Path(sys.argv[2]), Path(sys.argv[3]))
+```sh
+systemctl start trader-backup.service
+systemctl status trader-backup.service
+systemctl list-timers trader-backup.timer
 ```
 
-#### deploy/trader-backup.service
+Backups currently share the server's failure domain. They are not off-server disaster recovery. Provider backups were not purchased; download archives periodically until a separate backup destination is selected. Re-enter the Upstox token after a restore. Check `df -h` and `free -h` as datasets grow; large backtests may need a larger server.
 
-```ini
-[Unit]
-Description=Back up production Trader state locally
-After=docker.service
+### Updates and restore
 
-[Service]
-Type=oneshot
-ExecStart=/usr/local/sbin/trader-backup
-TimeoutStartSec=3600
+Code updates leave live data directories intact. Back up before updating; fast-forward the public source branch and rebuild:
+
+```sh
+cd /opt/trader
+git pull --ff-only origin main
+docker compose up -d --build
 ```
 
-#### deploy/trader-backup.timer
+For restore, extract the chosen archive into a temporary snapshot directory. Run `python3 deploy/data_snapshot.py restore /path/to/extracted-snapshot /srv/trader/restored-data`. The destination must be empty and every file's checksum is verified. Stop Trader, preserve current live data separately, move restored data into place, restore ownership to 10001, then restart. Never overwrite a current paper ledger simply because a code deployment failed.
 
-```ini
-[Unit]
-Description=Nightly production Trader backup
+Verify `/api/bootstrap`, Settings, charts, reports, production paper controls and mobile rendering after changes. Run exactly one server process without reload or multiple workers. Local research can run independently because local mode never schedules paper cycles.
 
-[Timer]
-OnCalendar=*-*-* 20:00:00 UTC
-Persistent=true
-RandomizedDelaySec=120
+<a id="deploy-market-data-readme"></a>
 
-[Install]
-WantedBy=timers.target
+## Shared market-data database
+
+### Automatic refresh synchronization — 9 October 2026
+
+Completed `market_fetch.json` results trigger background database synchronization
+in both environments. The server's `market-data-refresh.timer` checks every minute;
+the Windows task `Trader Market Database Sync` does the same while the user session
+can run tasks. Local bundles upload over SSH; only the server worker holds database
+credentials. Transfers and imports add latency beyond the polling interval.
+Existing provider downloads and JSON application/backtest readers are unchanged.
+
+The worker selects market JSON written during the completed refresh, excludes frozen
+run inputs, and normalizes only the requested daily/five-minute windows. Refreshed
+files remain archived exactly. Partial provider results are retained; successful
+observations still import. Failed transfers/imports retry. Identical completed
+refreshes are not imported twice.
+
+`market.refreshes` records environment, job ID, provider refresh start/completion,
+database synchronization time and the original result. Candles retain `fetched_at`.
+`market.fundamentals` stores each current full record with `last_checked_at` and
+`last_pulled_at`; older checks cannot overwrite newer ones. Earlier fundamentals
+were backfilled from the verified original database archives.
+
+Server receipts/status live under `/srv/market-data/sync`; local receipts/status
+live under `data/private/market-db-sync`. Inspect `progress.json`, `last-error.json`
+and server `reports/`, or `journalctl -u market-data-refresh.service`. Completed
+manifests/receipts remain; transfer payloads are removed after verification.
+These workers do not initiate provider downloads or paid research.
+
+Both last completed refreshes were synced and independently verified on 9 October:
+production job `381c05672afa` and local job `b8b503e6e1b7`, with zero unmatched candles.
+All 750 queryable fundamental records matched their source archives and timestamps.
+Repeated observer runs left four completed imports total (two original bulk imports
+and two refresh imports). Evidence: `artifacts/market-db/refresh-sync-verification.json`.
+
+Install the supplied refresh service/timer under `/etc/systemd/system`, then run
+`systemctl enable --now market-data-refresh.timer`. Run
+`deploy/market-data/install_local_sync.ps1` on Windows with the appropriate SSH
+target/key and data directory. The observer syncs the latest completed refresh;
+it is not a durable queue of multiple refreshes completed while it is offline.
+
+**Verified imported snapshot — 9 October 2026.** The completed local and production
+imports cover 750 instruments, with overlapping identical provider candles deduplicated.
+There are 1,429,437 daily candles (2016-10-03 through 2026-10-08) and 3,747,161
+five-minute candles (2024-09-17 through 2026-10-08). These ranges describe available
+cached observations, not continuous coverage for every instrument. The database
+occupies approximately 2.44 GiB after import. Import reports and the independent
+archive audit are retained under `/srv/market-data/imports`; original JSON remains
+in place. The independent audit verified all 60,986 stored archives against their
+source SHA256 and byte lengths; both imports have zero unmatched candles. The
+streaming audit completed with a 145.5 MiB memory peak. Its local report is
+`artifacts/market-db/database-verification.json`. Future data, maintenance and
+backups need additional disk space.
+The full post-import backup completed successfully at
+`/srv/market-data/backups/market-data-20261009T111908Z.dump` (1,312,906,179 bytes).
+Its archive listing passed `pg_restore --list`; a full restore has not been tested.
+Normal server memory limits were restored, and Trader's bootstrap returned HTTP 200.
+
+PostgreSQL runs independently of Trader on the existing DigitalOcean VM.
+Deploy files live at `/opt/market-data`; persistent state lives at
+`/srv/market-data/postgres`. The Trader container and its JSON source files are
+preserved. Completed market refreshes sync into PostgreSQL automatically. Application/
+backtest readers remain on JSON; provider downloads use the existing refresh flow.
+
+The service binds **127.0.0.1:5432** only. Memory is capped at 320 MiB (448 MiB
+including permitted swap), with 64 MiB shared buffers, 2 MiB work memory and
+12 connections. Keep client pools small. Database passwords are generated on
+the server in root-only `/srv/market-data/private` files; they are never in
+Git, bundle exports or shell arguments.
+
+### Contents
+
+- `market.instruments`: current cached provider instrument metadata, keyed by ISIN.
+- `market.candles`: validated daily (1440 minutes) and five-minute OHLCV bars,
+  uniquely keyed by ISIN, interval and source timestamp in milliseconds.
+- `market.daily_bars`, `market.five_minute_bars`, `market.coverage`: query views.
+- `market.candle_revisions`: differing overlapping cached prices from either
+  environment. The newest source `fetched_at` wins the current candle; equal
+  timestamps keep the existing value. Conflicting versions remain inspectable.
+- `market.blobs` and `market.source_files`: original market JSON bytes stored as
+  SHA256-addressed gzip blobs and per-environment import manifests. This includes
+  the cache source records, frozen daily/minute/fundamental backtest inputs,
+  company/fundamental data, universe snapshots, metadata and provider repair
+  evidence. Frozen derived prices never replace the provider candle tables.
+- `market.imports`: source manifest, expected counts, checksums, coverage and
+  completed verification record. A source universe snapshot is marked as the
+  snapshot it actually is; it does not invent historical membership.
+
+Tokens, private credentials, settings, paper portfolios, jobs, research report
+outputs and application state are excluded. These continue to live in their
+existing files. Retained source files make provenance and future migration
+possible without losing repair/adjustment metadata.
+
+### Provision and import
+
+Copy this directory's files and `scripts/market_data_bundle.py` plus
+`scripts/import_market_data.py` to `/opt/market-data`. Install `python3-venv`
+if needed, then:
+
+```sh
+python3 /opt/market-data/provision.py
+python3 -m venv /opt/market-data/venv
+/opt/market-data/venv/bin/pip install -r /opt/market-data/requirements.txt
+python3 /opt/market-data/market_data_bundle.py /srv/trader/data /srv/market-data/imports/production --environment production
+/opt/market-data/venv/bin/python /opt/market-data/import_market_data.py /srv/market-data/imports/production --report /srv/market-data/imports/production-verification.json
+/opt/market-data/venv/bin/python /opt/market-data/create_reader.py
 ```
 
-#### .dockerignore
+Local export needs only standard-library Python:
 
-```text
-.git
-.env
-*.env
-.local-key
-data
-artifacts
-node_modules
-.venv
-**/__pycache__
+```powershell
+.venv/Scripts/python.exe scripts/market_data_bundle.py data artifacts/market-db/local --environment local
 ```
 
-#### .gitattributes
+Transfer the bundle privately over SSH, then import it with the same importer.
+For a large tar bundle, `import_uploaded_bundle.py` can run as a transient systemd
+job, wait for its known byte size, safely unpack the five allowed payload files,
+and continue independently of the SSH connection. Run it with the bundle's
+directory name and tar byte size; inspect progress with `journalctl -u
+market-data-import-local.service`. The initial import job is limited to 256 MiB
+plus up to 256 MiB swap and runs with lower CPU priority.
 
-```gitattributes
-* text=auto
-*.sh text eol=lf
-*.py text eol=lf
-*.yml text eol=lf
-*.yaml text eol=lf
-Dockerfile text eol=lf
+If an SSH upload drops, `resume_upload.py inspect` reports its byte count and
+SHA256. Compare that prefix against the local original, transfer only the
+remaining suffix, then use `finish` with prefix/suffix/full-file checksums.
+It assembles and fsyncs a new file, checks the complete SHA256, and publishes
+it atomically. Never append unverified bytes to a market bundle.
+
+Export destinations must be empty. Checksums cover source bytes and all CSV
+payloads. Source files changing during an export halt it. Imports use a database
+advisory lock. Archives commit in bounded resumable batches; canonical candles,
+coverage verification and completion commit together. Duplicate source candle
+keys, invalid OHLCV or incomplete verification abort the candle transaction.
+Re-running an already completed identical manifest returns its stored result.
+
+### Read access and queries
+
+`market_reader` is a read-only role group. `market_research` is a verified login
+in that group with default read-only transactions and a 120-second statement
+timeout. Its password lives at `/srv/market-data/private/reader_password`.
+Additional projects should receive their own login/password or authenticated
+API key when their integration is implemented. Do not expose PostgreSQL publicly.
+
+An SSH tunnel supports private local access before the shared HTTPS API exists:
+
+```powershell
+ssh -N -L 15432:127.0.0.1:5432 -i "$env:USERPROFILE/.ssh/manoj_projects_ed25519" root@143.244.142.226
 ```
 
-#### .env.example
+Connect a PostgreSQL client to `127.0.0.1:15432`, database `market_data`, using
+the read-only login. Keep credentials outside code. Example SQL:
 
-```dotenv
-# Optional Basic Auth for the LOCAL RESEARCH app. Set both in the process environment.
-# The server fails to start if only one is configured.
-DASHBOARD_ADMIN_USER=
-DASHBOARD_ADMIN_PASSWORD=
-# Enter the Upstox token in Settings, never here. New saves are plaintext private files.
-# Python does not load this file automatically. Supply variables explicitly.
-TRADER_PUBLIC_ORIGIN=
-TRADER_DATA_DIR=
-TRADER_PRIVATE_DIR=
-TRADER_ENV=local
-# Remote deployment uses https://trader.manojmathivanan.com and /srv/trader storage.
+```sql
+SELECT session_date, timestamp_ms, open, high, low, close, volume
+FROM market.five_minute_bars
+WHERE isin = 'INE001B01026'
+  AND timestamp_ms >= 1790567100000 AND timestamp_ms < 1790653500000
+ORDER BY timestamp_ms;
+
+SELECT * FROM market.coverage WHERE isin = 'INE001B01026';
+SELECT environment, status, verification FROM market.imports;
 ```
 
-#### .github/workflows/checks.yml
+The timestamp range uses the primary index; batch reads into local memory/cache
+for simulation rather than issuing one remote query per candle.
 
-```yaml
-name: Checks
-on:
-  push:
-    branches: [main]
-  pull_request:
-jobs:
-  test:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.13'
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-      - run: pip install -r requirements-lock.txt
-      - run: npm ci && npm run check && npm test
-      - run: python -m unittest discover -s tests -q
+### Backups
+
+`backup.sh` creates a consistent PostgreSQL custom-format dump while the app
+continues running, checks its archive listing, and keeps about three days of dumps.
+The dump client runs in a separate container capped at 256 MiB (384 MiB with swap).
+For PostgreSQL's large BYTEA COPY buffers, the server temporarily permits 512 MiB
+(768 MiB with swap); an exit trap restores its normal 320/448 MiB limits. This
+maintenance window still runs on the existing 1 GB VM using its configured swap.
+Install it as `/usr/local/sbin/market-data-backup` with the accompanying systemd
+service/timer. The timer runs at **02:30 IST** (21:00 UTC on the preceding day).
+This timer backs up PostgreSQL; it does not download fresh market data.
+Backups remain on the VM until an off-server destination is configured.
+
+```sh
+systemctl start market-data-backup.service
+docker compose -f /opt/market-data/compose.yaml ps
+docker compose -f /opt/market-data/compose.yaml logs --tail 30 postgres
+df -h /
+free -h
 ```
 
-## Future production design — not the current runtime
+Keep the imported manifests and verification reports. Compressed transfer
+bundles can be removed after database checksum verification and a successful
+backup, preserving all original local/production JSON files. A restore should
+target a separate database for validation before any deliberate replacement.
 
-The numbered sections below preserve the production architecture and intent. Section references
-such as §3/§4.2 inside this roadmap refer to the numbered production sections, not the current
-shared rebuild. The remote file-based MVP is deployed; that does not complete the proposed Timescale/Redis/live-broker platform. Database and queue migration are deferred by owner decision. Preserve the shared UI and independent environment histories; future migration must be explicit and must never overwrite paper ledgers.
+<a id="core-market-data-readme"></a>
 
-## 1. What this is — future production scope
+## Upstox feed schema
 
-A personal, multi-strategy automated trading platform for NSE/BSE (Indian equities), starting with
-rules-based swing trading and expanding over time to intraday momentum, scalping, and options
-strategies — all run by one person (the owner), from one codebase, on one cheap VPS.
+`MarketDataFeed.proto` is the provider's V3 market-feed schema, downloaded from
+[Upstox's official schema](https://assets.upstox.com/feed/market-data-feed/v3/MarketDataFeed.proto).
+`MarketDataFeed_pb2.py` is generated from that file using `grpcio-tools` 1.84.0
+(protobuf code generator 7.35.1). Production requires protobuf, not the generator.
 
-The owner's workflow for every strategy, present or future, is the same: pick a pattern/strategy →
-backtest it → paper trade it for some weeks → go live with real capital — independently per
-strategy.
+Regenerate from the repository root with:
 
-This is one project within the owner's personal portfolio website (where each project gets its own
-subdomain and repository). The purchased parent domain is manojmathivanan.com and Trader uses trader.manojmathivanan.com. The root domain and other projects are reserved, not implemented by this MVP. Current Trader DNS/hosting are specified above.
-
-### Explicit non-goals
-- Not a SaaS product, not multi-tenant, not for managing other people's money.
-- Not high-frequency / sub-millisecond trading — "scalping" here still means seconds-to-minutes
-  holding periods, not co-located HFT.
-- Not trying to minimize infrastructure cost at the expense of correctness (e.g. we still use a
-  real relational database, not spreadsheets) — but we do consistently pick the cheapest tool that
-  is still correct, because this runs on a single inexpensive VPS for one user.
-
----
-
-## 2. Design reference: bananapatterns.com
-
-The owner's inspiration for the *methodology and presentation* (not the code) is
-[bananapatterns.com](https://bananapatterns.com/) — a rules-based NSE/BSE stock screener. Its
-relevant characteristics, which this platform's UI and reporting should carry over:
-
-- **Methodology, not tips.** Every pattern is a published, fixed rule applied uniformly across the
-  whole universe — no hand-picking, no results selected after the fact.
-- **Risk-first framing.** Risk per trade is decided before entry (e.g. ~1.5% of capital), with a
-  hard stop (e.g. ~8%), a move to breakeven once a trade is working, then a trailing stop. The
-  site states plainly that it wins roughly 1 in 3 trades, and that the edge is the asymmetry
-  between large winners and small, capped losses — not prediction accuracy.
-- **Full transparency in backtests.** Losing trades are shown beside winners; nothing is cherry
-  picked. Backtests are explicitly labeled hypothetical, not a live track record.
-- **UI characteristics to emulate:**
-  - Light cream theme with green accents by default (dark toggle may remain available), minimal,
-    clean typography and no clutter.
-  - Candlestick/OHLC charts — the reference site uses
-    [KLineChart](https://github.com/klinecharts/KLineChart) (Apache 2.0 licensed, free to reuse).
-  - A "today's scan" / live view surfacing current signals (their "breakout record" — every
-    breakout in the last few trading days).
-  - A per-symbol search that pulls up a chart annotated with how that stock relates to the pattern.
-  - A plain-language "how this works" explanation attached to each screen/pattern.
-  - A step-by-step depiction of the trade lifecycle (buy the breakout → set a stop → move to
-    breakeven → trail the stop → exit when the trend breaks).
-  - A disclaimer footer (not investment advice, not SEBI-registered, backtests are hypothetical) —
-    relevant here too since this is personal software making real trading decisions, not a
-    regulated advisory product.
-
-For this platform: the same visual language (light cream/green default, clean charts, transparent backtest
-reporting, explicit risk framing) should be applied **per strategy tab** (see §4.7) rather than per
-"screen" as on the reference site, since this platform has one portfolio/account per strategy
-rather than one unified screener.
-
----
-
-## 3. Functional requirements
-
-These are the decisions that constrain every module below. Treat them as acceptance criteria.
-
-1. **Multi-strategy, start with one.** Phase 1 ships swing trading only using the Banana-aligned
-   VCP, Blue sky, Multi-year and IPO-base screens on NSE equities. Intraday momentum, scalping, and options are
-   planned future phases, not built now — but the architecture must not need a rewrite to add them.
-2. **One Portfolio per strategy (1:1).** Each strategy has exactly one Portfolio: its own capital
-   allocation, its own paper/live ledger, tracked completely independently of every other strategy.
-3. **Paper → live is a mode transition, not a fork.** When a strategy's portfolio is ready to go
-   live, its `mode` flips from `paper` to `live` on the *same* portfolio record — it does not spawn
-   a second, parallel portfolio. The paper-trading history should remain visible after the switch
-   (for comparing pre/post-live behavior), distinguished by mode and timestamp.
-4. **Execution adapter (broker) differs per portfolio.** Different strategies may trade through
-   different brokers (e.g. swing via Zerodha, intraday via Upstox). The broker adapter is resolved
-   per portfolio, not configured globally.
-5. **Position sizing is configurable per portfolio, and the sizing *algorithm* itself is pluggable**
-   — not just its parameters. Equity strategies (swing/intraday/scalping) use a percent-of-capital
-   risk sizer; options strategies will need a Greeks/premium-at-risk based sizer later. A portfolio
-   references which sizer it uses plus that sizer's own config.
-6. **Database and data ingestion are shared infrastructure**, used by every strategy — one
-   database, one ingestion subsystem — but internally split by data granularity (daily bars,
-   intraday bars, ticks, options-chain snapshots) because volume and shape differ enormously
-   between them.
-7. **Dashboard/UI is one shared application, navigated as one tab per strategy** — not a single
-   generic/combined page. Each tab is self-contained and shows only that strategy's own portfolio
-   (paper or live), own data pipeline status, own configuration, own backtests/jobs/logs. A future
-   "combined" tab that cross-references signals from multiple strategies is anticipated but
-   explicitly out of scope for now — it will be purpose-built later, not auto-generated.
-8. **Everything operationally tunable must be configurable from the UI, without a deploy:** which
-   data source is active, which symbols/universe are scanned, each pattern's thresholds, each
-   portfolio's capital/mode/broker account/sizer choice and that sizer's parameters, and which jobs
-   run automatically. Backend code changes are reserved for **bug fixes** and for **adding new
-   types** (a new strategy, a new sizer algorithm, a new broker adapter, a new data source) — not
-   for routine tuning.
-9. **New strategies get their own tab automatically.** Each pluggable strategy (and sizer, broker
-   adapter, data source) declares its own small config schema (field names/types/defaults)
-   alongside its code. The dashboard has one reusable "strategy tab" template that renders a
-   settings form generically from whatever schema a plugin declares, plus standard
-   data/jobs/portfolio sections. Adding a new strategy should require backend work only — no
-   hand-built frontend screen per strategy.
-10. **Every triggered action is a trackable Job.** Whether triggered by a nightly cron schedule or
-    manually from the UI (e.g. "re-fetch today's data", "run a backtest"), the action is recorded
-    with a status (queued/running/success/failed) and structured logs, retrievable from the UI.
-    This is the mechanism for "show me what went wrong" when a trigger fails.
-11. **Broker credentials are managed through the UI and encrypted at rest.** Once saved, a secret
-    is never redisplayed in plaintext.
-12. **Backtests must avoid survivorship bias** — the historical instrument universe must include
-    delisted/merged symbols, not just symbols currently listed.
-13. **One shared risk/sizing *implementation* (code) across backtest, paper, and live, for a given
-    portfolio** — the same `position_sizer.py`/`stop_manager.py` code path, not three separate
-    implementations, so tested behavior and real behavior cannot silently diverge. **This is about
-    code, not config or capital:** each portfolio still has its own independent `sizer_config`
-    (its own risk %, stop %, trailing rule) — risk parameters are never pooled or shared *across*
-    strategies. "Shared" means swing's backtest/paper/live all run swing's numbers through the same
-    formula; it does not mean swing and intraday share a risk budget.
-14. **Runs on a single inexpensive VPS.** Every infrastructure choice below is picked to be the
-    cheapest option that is still correct for a solo operator — not the most scalable option in the
-    abstract.
-15. **Live stops are exchange-side resting orders, not software-polled.** A stop-loss for a live
-    position must be a real resting order placed on the exchange via the broker (e.g. an SL-M
-    order), kept at the level `stop_manager.py` computes and modified as a trade trails. A VPS
-    crash or network blip must not mean the stop-loss stops existing — if the process is down, the
-    exchange still holds the protective order. Paper mode may keep simulating this in software
-    since there is no real exchange order to place.
-16. **Backtest and paper execution must both model realistic trading costs** — brokerage, STT,
-    exchange charges, and an explicit slippage assumption — using the same cost model in both
-    places. Without this, Phase 6's "does paper match backtest" check could look clean while both
-    numbers are optimistic in the same direction.
-17. **Every runner must reconcile against the broker's actual state before resuming trading
-    after a restart.** If `batch_runner`, `streaming_runner`, or the job worker restarts while a
-    live position is open, it must pull `BrokerAdapter.get_positions()`/order status and compare
-    against local DB state *before* placing or modifying any order, halting and alerting on a
-    mismatch rather than silently continuing on possibly-stale local state.
-
----
-
-## 4. Architecture
-
-### 4.1 Shape
-
-A shared core kernel, plus thin per-strategy plugins, plus a first-class Portfolio concept that
-isolates capital/account/sizing per strategy, plus a Jobs framework that makes every action
-(scheduled or manual) trackable, plus a dashboard with one tab per strategy built from a reusable
-template.
-
-```
-                 ┌─────────────────────────────────────────────────────┐
-                 │                     Dashboard (UI)                   │
-                 │  one tab per strategy, rendered from a shared        │
-                 │  template + each plugin's declared config schema     │
-                 └───────────────────────┬───────────────────────────────┘
-                                          │ (triggers / reads)
-                 ┌────────────────────────▼───────────────────────────┐
-                 │                    Jobs framework                    │
-                 │   every trigger (cron or manual) = a tracked Job      │
-                 │   with status + structured logs                      │
-                 └───────────────────────┬───────────────────────────────┘
-                                          │
-     ┌──────────────┬──────────────┬─────▼──────┬──────────────┬───────────────┐
-     │  Ingestion    │   Strategy   │  Backtest  │  Portfolio    │  Execution     │
-     │ (market data) │   plugins    │   engine   │ (capital/acct)│ (broker calls) │
-     └──────┬────────┴──────┬───────┴─────┬──────┴──────┬───────┴───────┬────────┘
-            │               │             │             │               │
-            └───────────────┴─────────────┴─────────────┴───────────────┘
-                                          │
-                                 ┌────────▼─────────┐
-                                 │     Database       │
-                                 │ Postgres+Timescale  │
-                                 └─────────────────────┘
+```powershell
+python -m grpc_tools.protoc -I core/market_data --python_out=core/market_data core/market_data/MarketDataFeed.proto
 ```
 
-### 4.2 Module map
-
-**Shared core (one instance, used by every strategy):**
-
-| Module | Responsibility |
-|---|---|
-| `core/instruments/` | `Instrument` base + `Equity` / `Future` / `Option` subtypes; symbol/lot-size/expiry/strike registry, including delisted symbols (survivorship-bias avoidance). |
-| `core/market_data/` | `MarketDataProvider` interface; `historical/` (EOD + intraday historical pulls), `realtime/` (broker websocket streaming, phase 2+), `options_chain.py` (phase 3+). One interface regardless of data source. |
-| `core/db/` | SQLAlchemy models + Alembic migrations. One database, tables split by granularity (see §4.5). |
-| `core/events/` | Redis pub/sub wrapper — the shared nervous system once live ticks need to reach multiple consumers at once (strategy, execution, dashboard). Dormant/unused until phase 2 (intraday). |
-| `core/risk/` | `position_sizer.py` (the pluggable-per-portfolio sizer interface + a `PercentRiskSizer` implementation for phase 1), `stop_manager.py` (computes stop-loss / breakeven / trailing levels — shared code across backtest/paper/live, but each portfolio's own `sizer_config` parameters; for live portfolios this feeds `order_manager.py`, which is responsible for actually placing/modifying the real exchange-side stop order — see requirement 15, §3), `account_risk.py` (a lighter check: only relevant when two *live* portfolios happen to share one real broker account, verifying their combined margin use doesn't exceed that account's capacity). |
-| `core/execution/` | `broker_adapter.py` (interface: place/modify/cancel order, get status, get positions), `broker_account.py` (maps a `broker_account_id` to a concrete adapter instance + credentials), `adapters/` (`paper.py`, `kite.py`, `upstox.py`, ...), `order_manager.py` (order state machine: PENDING → SENT → FILLED/REJECTED/CANCELLED; for live positions, keeps a real resting stop-loss order on the exchange and modifies it as `stop_manager.py` trails it — requirement 15; reconciles local state against `BrokerAdapter.get_positions()` both periodically *and* mandatorily on every process start before resuming any trading action — requirement 17), `position_manager.py` (per-portfolio positions/P&L ledger, costs included — see `backtest/metrics.py`). |
-| `core/backtest/` | `engine.py` (orchestrates a run), `simulators/` (`daily_bar.py` for phase 1, `intraday_bar.py` / `tick.py` / `options_chain.py` for later phases — all behind one `MarketSimulator` interface), `metrics.py` (win rate, R-multiples, drawdown, equity curve, **and modeled trading costs — brokerage, STT, exchange charges, slippage, requirement 16** — one shared implementation, same cost model used by the paper adapter's simulated fills, so every strategy is scored identically and paper vs. backtest comparisons aren't both optimistic in the same direction). |
-| `core/portfolio/` | `models.py` (the `Portfolio` entity — see §4.3), `manager.py` (CRUD + the read paths the dashboard needs), `executor.py` (fans a strategy's signals out to its one bound portfolio: size the signal via that portfolio's sizer, apply stops, call its broker adapter — see §4.4). |
-| `core/jobs/` | `models.py` (`Job` entity: type, strategy, status, timestamps, triggered-by), `queue.py` (thin wrapper over RQ, using the same Redis instance as the event bus), `logger.py` (structured logging helper every ingestion/backtest/scan module writes through, so logs land in a queryable `job_logs` table), `worker.py` (the RQ worker process that actually executes queued jobs — its own systemd service). |
-
-**Strategy plugins (the only non-shared part — one package per strategy type):**
-
-| Module | Responsibility |
-|---|---|
-| `strategies/swing_patterns/` | Migrate the current VCP, Blue sky, Multi-year and IPO predicates into production `Pattern` plugins with a common interface; retain explicit legacy backtest compatibility. Add historical relative-strength filters only after sourcing and validating that data. `scanner.py` performs the nightly universe scan; `strategy.py` implements `core.strategy.base.Strategy` and declares its UI config schema. |
-| `strategies/intraday_momentum/` | Phase 2. Same shape as swing_patterns; `trigger_mode=STREAMING`, `granularity=INTRADAY_1M`. |
-| `strategies/scalping/` | Phase 2/3. Same shape; reacts to ticks (`on_tick`) rather than bars. |
-| `strategies/options/` | Phase 3. Same shape; adds `greeks.py` (Delta/Gamma/Theta/Vega) and uses a Greeks-aware sizer instead of `PercentRiskSizer`. |
-
-**Orchestration:**
-
-| Module | Responsibility |
-|---|---|
-| `runners/batch_runner.py` | Cron/systemd-timer triggered. For `BATCH`-mode strategies (swing today): pull latest data → `strategy.on_bar()` → `core/portfolio/executor.py` → notify. Each invocation is wrapped as a Job. |
-| `runners/streaming_runner.py` | Phase 2+. Long-running process with a market-hours lifecycle, subscribes to the event bus, calls `on_tick()`/`on_bar()`, routes through the same portfolio executor. Runs as its own systemd service so a crash doesn't affect batch jobs or the dashboard. |
-
-**Dashboard:**
-
-| Module | Responsibility |
-|---|---|
-| `dashboard/api/` | FastAPI app. Basic auth from day one (this app can trigger real actions and, eventually, will hold live broker credentials — it is not "read-only until public"). **Owner decision: Basic Auth is accepted through Phase 7; 2FA and rate-limiting are optional future improvements, not prerequisites added by this document.** Routers: one generic "strategy tab" router parameterized by strategy name (config, data/pipeline status, jobs/backtests/logs, portfolio/positions — rendered from that strategy's declared schema and its one Portfolio), plus `jobs.py` (trigger/list/logs), plus `broker_accounts.py` (CRUD, writes go through encryption, reads never return the raw secret). |
-| `dashboard/web/` | Frontend. One reusable "Strategy Tab" component instantiated per registered strategy (reading the backend's strategy registry) — not a bespoke screen per strategy. A distinct, separately-built "combined" view is anticipated for later (§3, requirement 7) but not built now. |
-
-**Other:**
-
-| Module | Responsibility |
-|---|---|
-| `notifications/telegram.py` | Scan-complete / signal / order / error alerts. Shared across every strategy. |
-| `ingestion/` | `eod_equity.py` (phase 1), `intraday_bars.py` / `options_chain_snapshot.py` (later phases). Each ingestion run executes as a Job. |
-
-### 4.3 The Portfolio model
-
-```python
-class PortfolioMode(str, Enum):
-    PAPER = "paper"
-    LIVE = "live"
-
-class Portfolio:
-    id: str
-    name: str                     # e.g. "swing", "intraday_momentum"
-    strategy_name: str             # 1:1 with a strategy
-    mode: PortfolioMode             # paper -> live is a transition on this same row
-    mode_changed_at: datetime | None  # when it last flipped, so paper history stays distinguishable
-    capital_allocated: float
-    broker_account_id: str | None   # which real broker/credentials this portfolio trades through; null while paper
-    sizer_type: str                 # e.g. "percent_risk", later "greeks_aware"
-    sizer_config: dict              # e.g. {"risk_pct": 1.5, "stop_pct": 8, "trail_rule": "..."}
-    status: str                     # "active" | "paused" | "closed"
-```
-
-A strategy's `on_bar()`/`on_tick()` produces `Signal` objects with no capital or account attached.
-`core/portfolio/executor.py` is what turns a signal into a sized, risk-checked, routed order for
-that strategy's one portfolio — this is the seam between "what to trade" (strategy) and "with what
-money, through what account" (portfolio).
-
-### 4.4 Execution: shared interface, swappable implementation
-
-`BrokerAdapter` (interface) and `order_manager.py` / `position_manager.py` (broker-agnostic logic)
-are shared. The *concrete* adapter — which real broker, which credentials — is selected per
-portfolio via `broker_account_id`. A `broker_accounts` table holds, per account, which broker it is
-and a reference to its (encrypted) credentials; a portfolio's `broker_account_id` points at one.
-Paper-mode portfolios skip this and always use the `PaperBrokerAdapter`.
-
-### 4.5 Config vs. code boundary
-
-This is the principle behind requirement 8 (§3) — stated explicitly because it should guide every
-future addition to this codebase:
-
-- **Code** (repo, touched only for bug fixes or to add a new *type*): pattern-matching logic, sizer
-  formulas, broker API call mechanics, backtest simulation mechanics.
-- **Config** (database, edited via the UI, takes effect without a deploy): which data source is
-  active, the scan universe, each pattern's thresholds, each portfolio's capital/mode/broker/sizer
-  choice and that sizer's parameters, which jobs auto-run.
-
-The mechanism that makes "new strategy = backend only, UI just works" true: every pluggable thing
-(a `Pattern`, a `Strategy`, a sizer, a broker adapter, a data source) declares its own config schema
-next to its code (field names, types, defaults — e.g. a small Pydantic model). The dashboard's
-strategy-tab template renders a settings form generically from whatever schema a plugin declares.
-Nobody hand-builds a form per strategy.
-
-### 4.6 Jobs framework
-
-Every action — the nightly cron batch run *and* a manual "run backtest now" click in the UI — goes
-through the same `Job` wrapper: a row is created (`queued`), handed to an RQ worker (over the same
-Redis used for the event bus — no new infrastructure piece), execution logs are written through
-`core/jobs/logger.py` into a `job_logs` table keyed by the job's id, and the row is updated to
-`success`/`failed` on completion. The dashboard's jobs view lists recent runs (filterable by
-strategy/type/status) and lets you open any run's logs — this is the answer to "let me see what
-went wrong."
-
-### 4.7 Dashboard structure
-
-Navigation is one tab per registered strategy (read from the backend's strategy registry — adding
-a strategy makes its tab appear with no frontend changes). Each tab, built from one shared
-template, shows:
-
-1. **Config** — this strategy's tunable fields, rendered from its declared schema (universe
-   selection where applicable, pattern thresholds, portfolio capital/mode/broker/sizer).
-2. **Data/pipeline status** — last ingestion run, success/failure, record counts.
-3. **Jobs/backtests/logs** — trigger a backtest or a manual data refresh, see job history and logs.
-4. **Portfolio** — this strategy's one portfolio: positions, P&L, equity curve, trade log (paper or
-   live, whichever mode it's currently in).
-
-A separate "combined" tab — cross-referencing signals across multiple strategies — is a known
-future requirement but is explicitly **not** part of this build; it will need custom logic when
-it's actually built, unlike the per-strategy tabs which share a template.
-
-Visual style should follow §2 (light cream/green default, clean OHLC charts via KLineChart, transparent backtest
-reporting with both wins and losses shown, explicit risk-first framing, a disclaimer note since
-this platform makes real trading decisions).
-
-### 4.8 Database schema (tables)
-
-| Table | Purpose |
-|---|---|
-| `instruments` | Symbol master: equities/futures/options, lot sizes, tick sizes, listing/delisting dates. |
-| `daily_bars` | EOD OHLCV — phase 1. Timescale hypertable, chunked by month. |
-| `intraday_bars` | Minute bars — phase 2. Hypertable, chunked by day. |
-| `ticks` | Tick data — phase 2/3. Hypertable, chunked by day, compressed after ~7 days, pruned after 30-90 days (keep aggregated bars long-term instead). |
-| `options_chain_snapshots` | Strike/expiry/OI/IV/Greeks snapshots — phase 3. |
-| `broker_accounts` | id, broker name, alias, reference to encrypted credentials. |
-| `portfolios` | The Portfolio model from §4.3. |
-| `signals` | Every signal a strategy emitted (any mode), for audit/analysis. |
-| `orders` | Order state-machine rows, tagged by `portfolio_id`. |
-| `positions` | Open/closed positions, tagged by `portfolio_id` and mode. |
-| `backtest_runs` / `backtest_trades` | One row per backtest execution / per simulated trade. |
-| `jobs` | Every triggered action (cron or manual): type, strategy, status, timestamps. |
-| `job_logs` | Structured log lines keyed by `job_id`. |
-
-### 4.9 Repository layout
-
-```
-trader_all/
-├── README.md                    # this document
-├── requirements.txt             # see §9
-├── .env.example                 # see §9 — infra-level config only, NOT broker secrets
-├── .gitignore                   # see §9
-├── core/
-│   ├── instruments/
-│   ├── market_data/
-│   │   ├── historical/
-│   │   └── realtime/
-│   ├── db/
-│   │   └── migrations/
-│   ├── events/
-│   ├── risk/
-│   ├── execution/
-│   │   └── adapters/
-│   ├── backtest/
-│   │   └── simulators/
-│   ├── portfolio/
-│   └── jobs/
-├── strategies/
-│   ├── swing_patterns/
-│   │   └── patterns/
-│   ├── intraday_momentum/
-│   ├── scalping/
-│   └── options/
-├── runners/
-├── ingestion/
-├── dashboard/
-│   ├── api/
-│   │   └── routers/
-│   └── web/
-├── notifications/
-├── infra/
-│   ├── docker-compose.yml
-│   ├── Caddyfile
-│   └── systemd/
-└── tests/
-```
-
----
-
-## 5. Deployment architecture
-
-- **Repo:** public `manoj-mathivanan/trader_all`, shared code/configuration on main. Agent commits/pushes are authorized by the owner; server-side commits/pushes and data publication are not. The services below describe a future platform, not the current one-container deployment.
-- **Host:** a single inexpensive VPS (Hetzner/DigitalOcean class, ~$5-20/month).
-- **Services (Docker Compose):**
-  - `db` — `timescale/timescaledb` image (Postgres + the Timescale extension; one engine, no
-    separate time-series database).
-  - `redis` — used both as the event bus (pub/sub) and the job queue (RQ).
-  - `dashboard` — the FastAPI app (`uvicorn dashboard.api.main:app`).
-  - `worker` — the RQ worker process consuming queued jobs.
-  - (phase 2+) a `streaming` service for `runners/streaming_runner.py`.
-- **Reverse proxy:** Caddy, auto-HTTPS, routes `trader.<domain>` → the dashboard container.
-- **Scheduling:** a systemd timer triggers `runners/batch_runner.py` shortly after NSE close
-  (15:30 IST) on weekdays; the streaming runner (phase 2+) runs continuously during market hours as
-  its own systemd service, independent of the dashboard/batch services so a crash there doesn't
-  affect anything else.
-- **CI/CD:** manual deploys (SSH + `docker compose up -d` / `git pull` on the VPS) through Phase 6
-  (paper trading). Revisit before Phase 7 — once a portfolio is about to go live with a real broker
-  and real capital, deploys should become a deliberate, reviewed step (e.g. GitHub Actions running
-  tests before a manual-approval deploy), not auto-push-to-prod.
-- **Secrets:**
-  - Infra-level connection strings (`DATABASE_URL`, `REDIS_URL`) and a server-side
-    `SECRET_ENCRYPTION_KEY` live in `.env` (never committed — see `.gitignore`).
-  - Broker API credentials are entered through the dashboard UI, encrypted at rest using that
-    server-side key, and never redisplayed in plaintext once saved.
-- **Site-level context (not part of this repo's build):** this project is reachable at its own
-  subdomain (`trader.<domain>`) as one project among several on the owner's personal portfolio
-  site; DNS/subdomain wiring is a separate, non-blocking task.
-
----
-
-## 6. Plan of action (build phases)
-
-**Phase 0 — Edge validation gate for production progression**
-The original ordering required this spike before building any dashboard. The owner superseded that
-ordering: the local dashboard and real-data research increment were built first so rules can be
-inspected and tuned interactively. Production paper simulation and the file-based remote MVP are also authorized. The gate still
-applies before live trading or production infrastructure. Use a plain Python/pandas script or the local engine with a fixed data snapshot and
-walk-forward split.
-- Validate the four implemented screens (VCP, Blue sky, Multi-year, IPO base) against the
-  explicit predicates and configurable defaults in the current specification. Add missing
-  historical RS/universe/adjustment inputs before claiming reference parity. Legacy breakout
-  remains compatibility behavior for saved experiments, not a fifth visible built-in screen.
-- **Walk-forward, not fit-and-test-on-the-same-data:** tune parameters on an earlier slice, validate
-  on a held-out later slice. The local working range is ten years or less; an eight-year walk-forward
-  remains the production research target.
-- Include trading-cost modeling (brokerage, STT, slippage — requirement 16) from the start, so the
-  edge estimate isn't inflated.
-- **Gate:** only proceed to live trading and production infrastructure if the out-of-sample
-  result shows a credible edge (positive
-  expectancy, a believable win-rate/R-multiple asymmetry — not just a curve-fit on the full
-  window). If it fails the gate, revise and retest the rules using the local research
-  engine before progressing to production infrastructure or live execution.
-- The local dashboard/backtest increment is already implemented. Keep this gate as a research
-  decision, not as a reason to remove the working control panel.
-
-**Phase 1 — Foundation**
-Scaffold the repo layout (§4.9). Stand up the VPS skeleton: Docker Compose with `db` (Timescale),
-`redis`, `caddy`, `worker` — running but mostly empty. Define the core data models: `Instrument`,
-`Portfolio`, `broker_accounts`, `Job`/`job_logs`, and the `daily_bars` table (other granularity
-tables scaffolded but unused).
-
-**Phase 2 — Dashboard shell + Jobs framework**
-Build the FastAPI app with basic auth, the generic strategy-tab template, and the Jobs
-router (trigger/list/logs) with the RQ worker wired up — prove the whole chain end-to-end with a
-test-only diagnostic job (trigger → queued → run → logged → visible). Migrate the existing real
-job handlers afterward; diagnostic fixtures must never appear as market data or portfolio results.
-
-**Phase 3 — Data pipeline (swing scope)**
-Use the owner's existing Upstox account as the primary historical EOD data source (no new vendor
-signup needed to start) and build EOD ingestion as a Job type — start with Nifty 50 to validate the
-pipeline, then expand to the full liquid NSE/BSE universe. Populate the instrument registry,
-including delisted symbols. **Known risk to check early:** broker historical APIs (Upstox
-included) typically only cover currently-listed instruments, not delisted/merged ones — and the
-backtest window is long enough that survivorship bias (requirement 12,
-§3) is a real concern. Before relying on Upstox alone for the full 8-year backtest, verify it
-actually returns data for delisted/merged NSE/BSE symbols over that window; if it doesn't, a
-supplementary source for delisted-symbol history (e.g. a paid vendor, just for that gap) will be
-needed — don't silently backtest survivorship-biased.
-
-**Phase 4 — Swing strategy + backtesting**
-Refine the Banana-aligned screen rules in `Pattern` plugins —
-starting from whatever parameters pass the Phase 0 gate, using the proper backtest engine.
-Build the daily-bar backtest simulator and the shared metrics module (including cost modeling,
-requirement 16), backtesting against the available validated history using the same walk-forward discipline
-as Phase 0 (tune on an earlier slice, validate on a held-out later slice — not fit-and-tested on the
-same window). Make backtests triggerable from the UI with parameters (date range, pattern
-selection); show results and logs in the swing tab. The working Banana screen thresholds and
-execution defaults are specified in the authoritative implementation contract above; they remain
-UI-editable hypotheses until RS and historical-universe parity is validated.
-
-**Phase 5 — Portfolio, risk, and paper execution**
-Implement the swing Portfolio with `PercentRiskSizer` *defaults* of **risk_pct = 1.5, stop_pct = 8,
-winner exit = 50-day trail** (with 30-week trail and +25% alternatives) — these are pre-filled
-values on the portfolio's config form, not hardcoded constants; the owner can change risk_pct,
-stop_pct and the winner-exit rule from the UI at any time (requirement 8). `capital_allocated` is likewise a plain configurable field on the
-Portfolio, set by the owner when the portfolio is created in the dashboard — no spec-level default
-is needed for it. Build the `PaperBrokerAdapter`, order manager,
-and position manager — the paper adapter's simulated fills must deduct the same modeled brokerage/
-STT/slippage costs as the backtest engine (requirement 16), so paper P&L is never flattering
-relative to what live would actually cost. Wire `batch_runner.py` so the nightly cycle (itself a
-Job) runs: ingest → scan → signal → size via the portfolio's sizer → paper order (net of costs) →
-notify. Swing tab now shows live paper positions and an equity curve.
-
-**Phase 6 — Paper trading run**
-Let it run nightly for several weeks. Monitor via the dashboard and Telegram alerts. The key
-check: does paper performance track what the backtest predicted? Drift between the two usually
-means a bug in the shared risk/execution path (since backtest and paper should use identical logic
-— requirement 13, §3).
-
-**Phase 7 — Go live (swing only)**
-No broker is pre-selected for live trading — the owner wants to paper trade first and decide the
-live broker later, which is exactly what the `BrokerAdapter` interface (§4.4) is for: whichever
-broker is chosen, it's a new adapter implementation behind the existing interface, not a redesign.
-When ready: implement that real `BrokerAdapter`, create the `broker_account`, enter its credentials
-via the UI (encrypted at rest), and flip the swing portfolio's `mode` to live with a small starting
-capital. Everything upstream (strategy, risk, portfolio executor) is unchanged — only the adapter
-and real money are new. Revisit CI/CD (§5) before this phase.
-
-**Phase 8 and beyond — Expand to the next strategy types**
-Repeat phases 3-7 for `intraday_momentum` (this is where `StreamingRunner` and the Redis event bus
-get used for the first time), then `scalping`, then `options` (introduces the Greeks-aware sizer,
-options-chain ingestion, and multi-leg order support). Each gets its own Portfolio, its own tab, and
-optionally its own broker account.
-
-**In parallel, non-blocking:** register/confirm the domain and wire up the `trader.<domain>`
-subdomain pointing at the dashboard — can happen any time before the dashboard needs to be
-reachable from outside the VPS.
-
----
-
-## 7. Open questions
-
-Resolved since the first draft of this document:
-
-- **Broker for live trading** — deliberately not chosen yet. Paper trade first; the
-  `BrokerAdapter` interface (§4.4) means any broker can be plugged in later without changing
-  anything upstream. No action needed now beyond keeping that interface broker-agnostic.
-- **Historical EOD data source** — use the owner's existing Upstox account as the primary source
-  (see Phase 3 caveat about delisted-symbol coverage below — this is downgraded from "open" to "a
-  risk to verify early," not a blocking unknown).
-- **Domain** — purchased: manojmathivanan.com, Cloudflare registrar/DNS. Trader HTTPS and DNS are configured at trader.manojmathivanan.com; root/other projects remain future work.
-- **Sizer defaults** — confirmed: `risk_pct = 1.5`, `stop_pct = 8`, trail-to-breakeven-then-trail
-  (bananapatterns-style), per owner confirmation.
-- **Backtest history** — the local working range is `2019-01-01` through `2026-10-05` subject to
-  provider availability; Banana comparison uses `2020-01-01` through `2025-12-31`. An eight-year
-  walk-forward remains the production research target, not a hardcoded UI range.
-- **CI/CD** — confirmed: manual deploys until a portfolio is about to go live with a real broker
-  (§5); revisit then.
-
-Also resolved, from a design review pass:
-
-- **Edge validation before building infrastructure** — confirmed: a Phase 0 spike (§6) gates entry
-  into production Phase 1. Timescale/Redis/event bus remain gated; the local dashboard and
-  production paper simulator and file-based remote MVP are authorized and implemented; local mode is research-only.
-- **Options phase ordering** — confirmed: options stay deferred to Phase 8. They need tooling
-  (Greeks-aware sizer, chain data) the platform doesn't have yet, and carry materially higher risk
-  than equity swing — proving out the operational discipline (reconciliation, exchange-side stops,
-  monitoring) on the lower-risk strategy first takes priority over options' larger trading volume.
-- **Live stops, cost modeling, restart reconciliation** — all resolved as hard requirements (15,
-  16, 17 in §3), not left open. See those requirements and the updated module descriptions in §4.2.
-
-Also resolved, in a later round:
-
-- **Pattern parameter defaults** — resolved for the current increment: start from the Banana screen
-  values in the authoritative implementation contract above. All are exposed as UI-editable fields
-  on the Swing backtest schema; exact reference parity still depends on RS and historical-universe data.
-- **Starting capital** — resolved: it's simply the `capital_allocated` field on the Portfolio,
-  set by the owner when creating the portfolio in the dashboard. No spec-level default needed.
-- **Dashboard authentication strength** — current public MVP has no login by owner choice.
-  Basic Auth remains implemented but unset. Earlier acceptance of Basic Auth for a future
-  Phase 7 is a roadmap proposal and does not authorize live execution in this public MVP.
-  Revisit access controls explicitly before enabling any live broker account/order path;
-  stronger authentication or SSH/VPN/IP restrictions are future options, not current requirements.
-
-Still open — resolve before the relevant phase:
-
-1. **Upstox delisted-symbol coverage** (see Phase 3). Needs to be verified empirically early in
-   Phase 3 (and during the local research gate, if the run uses the full validated history) — if
-   Upstox's historical API doesn't return data for delisted/merged NSE/BSE symbols, the backtest
-   will need a supplementary source for that gap specifically, to avoid survivorship bias
-   (requirement 12, §3).
-2. **SEBI compliance for the chosen live broker.** Not resolvable until a broker is actually
-   chosen (Phase 7) — SEBI's framework around algorithmic/API trading access typically expects the
-   broker itself to enforce controls (e.g. 2FA) on API access; confirm the chosen broker's specific
-   requirements before going live, not after.
-
----
-
-## 8. Guardrails for whoever builds this
-
-- **Never commit secrets.** `.env`, broker credentials, DB dumps must never be committed — see
-  the current `.gitignore` specification above. Future broker credentials belong in encrypted `broker_accounts` storage, not in
-  code or `.env`.
-- **Source publication is authorized:** the agent may commit/push shared code/configuration on the owner's behalf. Never publish local/production state or credentials; the production server must never write to GitHub.
-- **Keep paper and live code paths identical** except for which `BrokerAdapter` instance a
-  portfolio resolves to. Any divergence between them defeats the purpose of paper trading.
-- **Avoid survivorship bias** in backtest data — include delisted/merged instruments in the
-  historical universe.
-- **Prefer the cheapest correct option**, consistent with "runs on one VPS for one user":
-  Timescale as a Postgres *extension* (not a separate time-series DB), RQ over the existing Redis
-  (not a new broker like Celery/RabbitMQ), systemd timers (not Airflow/Prefect).
-- **Every new pluggable piece declares a config schema** (pattern, strategy, sizer, broker adapter,
-  data source) so the dashboard's generic strategy-tab template can render its settings without new
-  frontend code — this is what keeps "add a new strategy" a backend-only change.
-- **One Portfolio per strategy**, capital/account/sizer isolated — do not introduce cross-strategy
-  capital pooling or netting beyond the lightweight `account_risk.py` check (§4.2), which only
-  applies when two live portfolios explicitly share one broker account.
-- **Do not advance to live trading or the deferred database/queue platform before the Phase 0 gate passes.** The current public file-based research/paper MVP is an explicit owner-approved exception. Production paper permission does not certify the edge; local mode remains research-only.
-- **Live stops are exchange-side orders, not a polled loop** (requirement 15) — this is a safety
-  property, not an optimization; don't simplify it away under time pressure.
-- **Reconcile against the broker before resuming after any restart** (requirement 17) — never
-  assume local DB state is still accurate after a process restart with a live position open.
-- **Cost-model everything** (requirement 16) — a backtest or paper result that doesn't deduct
-  brokerage/STT/slippage is not comparable to real trading and should not be trusted as a go/no-go
-  signal on its own.
-
----
-
-## Future infrastructure configuration names
-
-Production-only packages anticipated by the module map: sqlalchemy>=2, alembic, psycopg[binary],
-redis, rq, python-dotenv, a scheduling/runtime library if needed, pandas/numpy and a selected
-backtest engine if needed, python-telegram-bot; add a selected live broker SDK only after broker
-choice. These are planned capabilities, not a second current requirements.txt. No live broker
-is selected. Production .env loading and secret handling must be implemented explicitly.
-
-| Variable | Future purpose |
-|---|---|
-| DATABASE_URL | Postgres/Timescale connection |
-| REDIS_URL | Queue and future event-bus connection |
-| SECRET_ENCRYPTION_KEY | Server-managed key for encrypted broker credentials |
-| DASHBOARD_ADMIN_USER / DASHBOARD_ADMIN_PASSWORD | Accepted Basic Auth credentials; both required together |
-| TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID | Optional notification destination once Telegram is implemented |
-
-Broker API credentials belong in encrypted broker_accounts storage entered through the UI,
-never this document, source, reports or a committed .env. Future production deployment needs
-durable Postgres/Redis volumes, secure key retention, portfolio/job/config/input-history migration,
-restart supervision and a recovery rehearsal. Retain the local .gitignore's broad data/key ignores.
+Transport follows the provider's [V3 full-feed documentation](https://upstox.com/developer/api-documentation/v3/get-market-data-feed/):
+authorize a single-use secure WebSocket URL, send a binary JSON subscription,
+and decode protobuf frames. Authentication failures and credential-bearing URLs
+are kept out of dashboard logs. This module makes no order requests.
+
+## Proposed restructuring and future scope (not implemented)
+
+The 9 October review recommends incremental improvements: separate workspace navigation from strategy selection; prioritize freshness/connection/jobs/exposure on Overview; bookmark experiment/report/trade flows; group forms by dataset, signals, sizing, exits and costs; compare parameter/input differences; retain saved-screen access on mobile. No framework rewrite is required.
+
+Split frontend into shell/routing/state, shared API/formatting/forms/tables/charts and feature modules. Extract FastAPI routers. Move strategy-specific config/signals/simulation under strategies, shared services under core. Introduce candle/run/evidence/portfolio repositories. Extend registry capability declarations for scan/backtest/paper/timeframe/environment support. Preserve shared execution/risk, atomic writes, locks, frozen inputs and provenance.
+
+Long-term requirements retained from the original roadmap:
+
+- Personal single-owner NSE/BSE platform, no SaaS/managed money/colocated HFT. Futures/options require distinct executable inputs/models.
+- One independent portfolio per strategy with its own capital/sizer/broker/ledger. Future paper-to-live transition would preserve one record and mode-tagged history; transfers/live transitions remain unimplemented.
+- Shared instrument/provider interfaces across daily/intraday/ticks/options, delisted/merged identity and dated membership; pluggable percent-risk and later Greeks/premium-risk sizing.
+- SQLAlchemy/Alembic application storage, evaluate Timescale only when justified. Separate plain PostgreSQL market archive is an initial phase, not full migration.
+- Proposed entities: instruments/subtypes, daily/intraday/ticks/option chains, strategy/config versions, portfolios/broker accounts, orders/positions/trades/equity and jobs/logs/membership.
+- Optional Redis events/RQ queues with separate API/worker/batch/market-hours streaming services and structured tracked manual/timer jobs. Existing quote paper does not imply Redis/RQ.
+- Schema-driven per-strategy config/portfolio/data/jobs; routine tuning without deployment. A combined-strategy tab is a separate future feature.
+- Per-portfolio broker adapter place/modify/cancel/status/positions; account-level capacity if independent portfolios share a live broker account.
+- Shared risk/stop/cost code per strategy's backtest/paper/live with independent parameters/capital; dated brokerage/taxes/caps and measured adverse fills.
+- Live protection requires resting exchange/broker stop orders, mandatory restart and periodic reconciliation, halting on mismatches. Software polling alone is insufficient.
+- Future encrypted broker credentials/authentication/optional 2FA/rate limits/Telegram alerts need explicit decisions. Public hosting does not authorize new paid/live exposure; production paid company research already requires Basic Auth.
+- Phases: honest reproducible data/research, frozen validation, forward paper, explicit storage/queue migration, separately authorized live adapters, then further products. Backtests never auto-promote strategies.
+- Cheap single VPS remains target; monitor memory/disk, preserve histories and establish off-server backups. Root domain/other projects remain separate.
+- Pending: Momentum paper/live, options, shared market API/database-backed readers, complete demerger entitlements, historical membership, executable liquidity and off-server recovery.
+- Future-only DATABASE_URL/REDIS_URL/live broker/Telegram names do not configure current app; no placeholder credentials/runtime services are implied.
+
+<a id="intraday-cost-diagnosis"></a>
+
+## Intraday momentum cost diagnosis — 9 October 2026
+
+Twenty-one full simulations on identical frozen inputs, 8 October 2024–7 October 2026. Reference `836c4463d21b`. No downloads or default changes. Baseline replay matches recorded equity, fees, slippage and every trade exactly.
+
+Direction-only portfolios select their own qualifying stocks and size from their own capital. They are not the buy/sell attribution of the combined portfolio. Every run starts at Rs 1,000,000.
+
+| Cost scenario | Combined return | Buy-only return | Short-only return |
+|---|---:|---:|---:|
+| Original flat costs; 10 bps slippage/side | -50.36% | -39.23% | -30.64% |
+| Zero fees and zero slippage | +10.49% | +6.96% | +17.24% |
+| Public Upstox fees; zero slippage | -3.74% | -2.86% | +7.13% |
+| Public Upstox fees; 2 bps slippage/side | -11.51% | -7.98% | +1.04% |
+| Public Upstox fees; 5 bps slippage/side | -22.25% | -16.01% | -7.12% |
+| Public Upstox fees; 10 bps slippage/side | -38.32% | -28.72% | -19.25% |
+| 150% public fees; 15 bps slippage/side | -52.64% | -40.63% | -31.68% |
+
+### Profit factor and trade counts
+
+| Scenario | Combined PF / trades | Buy-only PF / trades | Short-only PF / trades |
+|---|---:|---:|---:|
+| Original flat costs; 10 bps slippage/side | 0.546 / 1316 | 0.539 / 916 | 0.590 / 843 |
+| Zero fees and zero slippage | 1.083 / 1316 | 1.079 / 916 | 1.232 / 843 |
+| Public Upstox fees; zero slippage | 0.969 / 1316 | 0.967 / 916 | 1.097 / 843 |
+| Public Upstox fees; 2 bps slippage/side | 0.905 / 1316 | 0.908 / 916 | 1.014 / 843 |
+| Public Upstox fees; 5 bps slippage/side | 0.813 / 1316 | 0.815 / 916 | 0.905 / 843 |
+| Public Upstox fees; 10 bps slippage/side | 0.669 / 1316 | 0.667 / 916 | 0.744 / 843 |
+| 150% public fees; 15 bps slippage/side | 0.530 / 1316 | 0.528 / 916 | 0.581 / 843 |
+
+### Calendar-period attribution
+
+| Scenario / direction | 2024 partial | 2025 | 2026 partial |
+|---|---:|---:|---:|
+| zero_cost / both | +8.46% | +1.79% | +0.08% |
+| zero_cost / long | +6.17% | -0.03% | +0.78% |
+| zero_cost / short | +3.50% | +12.16% | +0.99% |
+| public_fees_slip_2 / both | +6.02% | -9.00% | -8.28% |
+| public_fees_slip_2 / long | +4.54% | -7.45% | -4.89% |
+| public_fees_slip_2 / short | +2.28% | +4.15% | -5.15% |
+| public_fees_slip_5 / both | +5.03% | -15.23% | -12.67% |
+| public_fees_slip_5 / long | +3.79% | -11.94% | -8.10% |
+| public_fees_slip_5 / short | +1.77% | -0.61% | -8.17% |
+
+### Uncertainty diagnostics
+
+| Public fees + 2 bps/side | Mean daily return | 95% block interval |
+|---|---:|---:|
+| both | -0.0239% | -0.0577% to +0.0115% |
+| long | -0.0162% | -0.0465% to +0.0147% |
+| short | +0.0026% | -0.0251% to +0.0303% |
+
+Moving blocks: five consecutive sessions, 2,000 resamples, fixed seed. These intervals describe arithmetic daily-return uncertainty in an inspected sample. They do not resolve survivorship, exclusions, model selection or executable-fill bias.
+
+### Cost model and interpretation
+
+[Upstox public fee schedule](https://upstox.com/brokerage-charges/) checked 9 October 2026. Model assumes basic brokerage min(Rs 20, 0.1% notional) per order throughout this history; actual historical account plans are unverified. Cash intraday STT applies to sells, stamp duty to buys; exchange rates change on 1 March 2026. IPFT and SEBI levies are included; GST on applicable fees is modeled conservatively. Contract-note rounding, promotions, forced square-off fees and account-specific charges are excluded.
+
+Exact nonlinear fees affect the simulated quantity, reserved capital and stop-risk budget, as well as final P&L. Slippage affects fills and protective levels; reducing it is a sensitivity experiment, not an assertion that such fills are attainable. The stress case multiplies charges by 1.5 and raises slippage from 10 to 15 bps/side.
+
+### Limits and next research
+
+This is the existing ORB setup, not a test of VWAP pullbacks or failed breakouts. Current constituents, explicit corporate-action exclusions, session-end drawdown and unverified short/circuit/participation constraints are inherited. All historical periods have already been inspected. Before claiming improvement, use a distinct untouched period and observed paper fills.
+
+If profits disappear with public fees even at zero slippage, prioritize signal/selection changes. If they survive fees but disappear with small slippage, execution quality and expected movement are binding. A less negative result remains a loss, and a positive zero-cost result does not establish a tradeable edge.
+
+Next controlled experiment: broaden liquid-stock selection without changing the entry setup, then test VWAP pullback/rejection as a separate strategy. Keep all cost assumptions and candidate thresholds declared before outcomes.
+
+### Reproduction
+
+`.venv/Scripts/python.exe scripts/research_intraday_costs.py 836c4463d21b` followed by `.venv/Scripts/python.exe scripts/report_intraday_costs.py`.
+
+Raw run ledgers, equity curves and summary are retained in `artifacts/intraday_cost_research/`; these reference the original frozen daily/minute hashes rather than duplicating inputs.
+
+
+## Sector-filter implementation
+
+Source added in the shared checkout during this consolidation: core/research/sector.py, Swing engine/paper integration and UI/API controls. This is a source snapshot, not confirmation of deployment or profitable comparison results.
+
+- Modes: off (default), trend, trend_rs. Only long Swing next_open research supports enforcement; bearish and intraday Swing reject it.
+- Fetch explicitly downloads 11 official sector constituent CSVs: Bank, Financial Services, IT, Auto, Pharma, Healthcare, FMCG, Metal, Realty, Oil & Gas, Consumer Durables. Exact ISIN membership is preferred. Bank takes precedence over Financial Services and Pharma over Healthcare only for verified membership overlaps. Otherwise use a uniquely matching official industry label; ambiguity remains unmapped. Incomplete mapping downloads retain prior mapping and fail rather than infer partial uniqueness.
+- Daily sector indices and Nifty 500 benchmark use exact Upstox NSE_INDEX identity; annual fetch chunks isolate defective years. Previous valid data remains on failures, but is not represented as fresh.
+- Signals use the completed stock signal date. trend requires close strictly above its 50-session mean and that mean strictly above the mean 20 observed sessions earlier; minimum 70 observations. trend_rs additionally requires positive sector-minus-benchmark 63-session return, with exact matching session dates. Missing mapping/session/warmup/benchmark blocks enforced entries.
+- Current constituent/industry classifications introduce historical mapping bias; pre-launch index backfills are unverified. No historical classification is invented.
+- Snapshots freeze mappings, prices, capture times, version, notice and SHA256. Replays reject changed/missing evidence. Research saves run_sector/<id>.json, report references and candidate decision checks.
+- Compare sector filters runs off/trend/trend_rs against a long Swing next-open reference with identical frozen stock, financial and sector evidence. Failures are retained; defaults are not automatically changed.
+- Swing paper has sector_observe_only=true by default. If configured, decisions are journaled without blocking until enforcement is explicitly selected. Mapping freezes after the first successful context; processed sector-price revisions halt. paper_sector/<job-id>.json and each cycle retain evidence/checks. Existing accounting is preserved.
+- APIs: GET /api/sectors audits current mappings/index histories; POST /api/jobs/sectors fetches; POST /api/jobs/sector-comparison takes reference_id. Bootstrap includes sector_fetch and latest 20 sector_comparisons. Tracked actions share the single-job worker.
+
+
+### Nonlinear intraday fee research contract
+
+core/research/intraday_costs.py defines upstox_cash_fees(price, quantity, side, day, multiplier=1), an explicit hypothesis for dates from 1 October 2024 onward. It rejects invalid side, nonpositive/nonfinite notional, quantity below one, and negative/nonfinite multiplier. Brokerage is min(20 INR, 0.001 * notional). Exchange charge is 0.0000297 * notional before 1 March 2026 and 0.0000307 after; IPFT is respectively 0.000001 and 0.000000001 * notional. SEBI levy is 0.000001 * notional; sell-only STT is 0.00025; buy-only stamp is 0.00003. GST is 18% of brokerage + exchange + IPFT + SEBI, then the multiplier applies to all fees. Contract-note rounding, actual historic plans and special/DP/forced-square-off costs remain unverified/excluded.
+
+Momentum simulate accepts an optional fee_model callback. Custom fees must be finite/nonnegative and are applied to slipped prices. Largest integer quantity satisfying exact nonlinear stop-risk and allocated-notional limits is found by bounded binary search; the callback must be nondecreasing with quantity. This research path requires breakeven trailing disabled. Default fee behavior is preserved when no callback is supplied. The 21-run suite explicitly uses separate capital/direction simulations, identical frozen data and baseline replay verification; it is not a sign flip or cost add-back.
+
+<a id="intraday-selection-research"></a>
+
+## Intraday stock-selection comparison — declared 9 October 2026
+
+Compare prior-turnover scan sizes 50 and 200 on February 2025, June 2025 and January 2026. Daily inputs and exclusions come from frozen two-year reference `836c4463d21b`. The current strategy already ranks eligible stocks by same-clock opening relative volume; this experiment broadens the pool available to that ranking, rather than introducing a new volume indicator.
+
+Run combined, long-only and short-only standalone portfolios at both 2 and 5 bps adverse slippage per side, with the public Upstox cash-equity fee hypothesis from the cost diagnosis. Preserve all opening-range, ATR-stop, entry/cutoff, capital, position-limit and relative-volume settings. Thirty-six declared simulations; no grid search or default promotion.
+
+Requested windows: 3–28 February 2025; 2–30 June 2025; 2–30 January 2026. Observed sessions depend on the frozen daily source. Each month resets capital to Rs 1,000,000; adding monthly P&L is a diagnostic, not a compounded continuous portfolio.
+
+Preflight found 345, 296 and 4,965 missing five-minute stock-sessions respectively for the 200-stock plans. Missing sessions may be fetched through the existing authenticated historical-data client. Cache inputs are normalized and checked for complete required session boundaries, then the full monthly input set is frozen and hashed. No daily replacements, silent symbol exclusions or invented candles are allowed. Failed downloads/audits remain failures.
+
+These periods have already been inspected. This pilot tests selection sensitivity; it is not independent out-of-sample proof. Historical universe membership, broker short eligibility, circuits, executable volume, slippage and intraday peak drawdown remain unverified. A candidate must survive stronger cost assumptions and a distinct untouched period before promotion.
+
+### Reproduction
+
+`.venv/Scripts/python.exe scripts/research_intraday_selection.py`
+
+Detailed ledgers, curves, input hashes and failures are saved in `artifacts/intraday_selection_research/`. Results are appended below after the declared suite completes.
+
+This selection worker was active at cleanup, with its declaration retained above. Results are not yet represented as a completed suite. JSON checkpoints/ledgers remain the authoritative progress/result evidence. The preloaded worker still depends on the temporary root INTRADAY_SELECTION_RESEARCH.md; preserve it until that process completes. Future script invocations require an explicit --markdown path and no longer read a documentation template.
+
+
+### Saved-data validation audit, 9 October 2026
+
+A read-only 750-stock audit measured local and production caches through the saved completed
+session of 2026-10-08. Its detailed stock inventories, dates, interval gaps, financial fields
+and source-validation results are in artifacts/universe-audit/report.md, local.json and
+production.json. No provider fetch, repair or deployment was performed for this audit.
+Both environments have daily files and valid OHLCV arithmetic/timestamps for all 750 stocks.
+EMBDL has 12 internal daily session gaps relative to the observed calendar, while 20 stocks
+have shorter leading history without verified listing dates; these are not confirmed missing
+pre-IPO candles. Verified exchange-listing metadata is absent for 253 stocks; only eight
+stocks have separately verified IPO evidence. Local/production histories contain bars before
+saved venue listing dates for eight/nine stocks respectively, requiring provenance review.
+All 750 stocks have complete 75 five-minute intervals for each of seven observed sessions
+between 2026-09-29 and 2026-10-08: 525 recent candles per stock. All retained five-minute
+candles passed arithmetic, duplicate, order, identity and timestamp checks: 4,167,611 local
+and 450,000 production candles. Neither environment has a one-minute cache. Completeness
+was measured for the rolling ten-calendar-day window; older retained sessions were validated
+but not certified as complete across their full calendar histories.
+All 567 saved fundamental snapshots passed archived-source hash, identity and recalculated
+metric validation; 183 stocks remain missing (118 unsupported financial issuers, 59 latest
+quarter validation failures, six with no supported Ind-AS filings). Among the 567 validated
+snapshots, missing fields are debt_equity 251, roe_pct 113, roce_pct 109, profit_growth_pct 107,
+revenue_growth_pct 61, cash_profit_ratio 51, interest_coverage 25, promoter_pledge_pct 567,
+auditor_concern 418 and governance_concern 567. Missing values remain unknown, not zero.
+There is still no complete consecutive-quarter fundamental history.
+All 750 stocks have current sector labels. Local sector benchmark mapping is a saved nifty500
+snapshot: 217 mapped, 283 unmapped/ambiguous, 250 without rows. All 12 local sector/benchmark
+index caches reach 2026-10-08; the Auto index rejected its 2018 fetch range for duplicates.
+Production has no saved sector mapping or sector-index price caches. A sector label alone
+does not establish a usable sector trend gate; current labels do not verify historical labels.
+Price-gap review after existing evidence-based history preparation flags 10 local and 25
+production stocks with >=35% discontinuities somewhere in retained history. In the latest
+year HEGAM, INDIAGLYCO, TMPV and VEDL are flagged in both environments. PRIVISCL is already
+quarantined for unresolved price continuity. Flags do not prove wrong prices or a corporate
+action; all 750 records declare adjustment status unverified. Daily gap calendars were
+saved benchmark sessions locally and majority-observed stock sessions in production, not
+independently verified exchange holiday calendars. Never synthesize missing candles or infer
+adjustment factors or listing dates from first prices to resolve these findings.
+
+
+### Remaining-data refresh and one-year fundamental history contract (9 October 2026)
+
+The owner requested the remaining data in both installations and selected one year of
+quarterly fundamentals. Backfill the four most recent published financial quarters per
+issuer; source comparables and annual filings may be older. Do not label incomplete
+publication periods or unsupported filings as complete history. Previously recorded
+567-snapshot/183-missing and 500-stock sector coverage counts describe the earlier audit,
+not the final state after this refresh.
+The parser supports exact official NSE INDAS, BANKING and NBFC_INDAS filing filenames,
+with issuer ISIN/symbol, units, basis, dates and SHA256 validation. Company type follows
+the filing taxonomy, not a blanket Financial Services exclusion. Primary P&L amounts
+are scoped to the first reporting-period table, ending before the next reporting-period
+header or segment revenue section. Conflicting values within that primary table still
+fail; segment disclosures never replace quarterly results. BANKING revenue is Total
+income and group PAT is Net profit (loss) for the period. NBFC revenue is Total Revenue
+From Operations and PAT is Total profit (loss) for period. Quarter growth compares the
+same quarter, basis and taxonomy after monetary unit normalization. ROE can use supported
+annual PAT/average-equity evidence, but banks/NBFCs never receive industrial ROCE,
+debt/equity, interest coverage or cash/PAT ratios. NPA, capital adequacy, pledge and
+risk fields remain unknown unless independently supported; template zeros are not inferred
+as sound risk metrics. Unsupported taxonomies (including unimplemented insurance forms)
+remain incomplete instead of being coerced into these formats.
+Run `python scripts/pull_fundamentals_history.py --quarters 4` with the installation's
+TRADER_DATA_DIR. Optional --symbols limits an operational retry; --workers accepts 1–3
+(default 3). Discovery retains intermediate quarters from the official 800-day index,
+up to 64 latest-revision period/basis sources; normal current-quarter discovery retains
+its existing eight-source behavior. Each period prefers consolidated when published,
+selects its year-ago quarter and available preceding March/December annual comparables,
+and retrieves at most eight files. Reuse original cached HTML only after its SHA256
+matches; otherwise request the official URL again. Validate archived bytes and recompute
+metrics before retaining a scored snapshot. Per-stock and per-period failures continue.
+New versions go to company/fundamentals/<isin>/history/<id>.json. Only a snapshot at
+or after the current financial period can update the latest record; historical collections
+cannot replace newer current evidence. Equivalent snapshots are retained without duplicate
+versions. Preserve actual source published_at and today's recorded_at: never backdate
+collection or make these newly collected snapshots eligible for earlier paper/backtest
+choices. Report each target period's added/retained/unavailable status in
+company/fundamentals_history_pull.json and refresh 750-stock cached coverage on completion.
+The remaining-data operation separately imports sourced listing dates against all 750
+ISINs, refreshes sector mappings for the Total Market universe and all 11 sector indices
+plus Nifty 500, retries EMBDL's April/May internal daily gaps, and downloads one-minute
+candles for the same rolling ten calendar days used by five-minute history. Never delete
+older sessions. Validate timezone, OHLCV, duplicates and minute boundaries before writes;
+report absent minutes and preserve gaps when providers cannot supply them. An unmapped
+sector because of ambiguous/no index classification is not fixed by inventing an index.

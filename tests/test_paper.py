@@ -129,7 +129,7 @@ class PortfolioTests(unittest.TestCase):
         self.clock.start()
         self.addCleanup(self.clock.stop)
         self.bars = [candle(date(2025, 9, 1) + timedelta(days=i)) for i in range(124)]
-        store.write('universes/nifty50', {'instruments': [{'symbol': 'TEST', 'isin': 'TEST00000001'}]})
+        store.write('universes/niftytotalmarket', {'instruments': [{'symbol': 'TEST', 'isin': 'TEST00000001'}]})
         self.save_bars()
         self.portfolio = paper.save(config(), Settings(start=date(2025, 9, 1), end=date(2026, 1, 3)), create=True)
 

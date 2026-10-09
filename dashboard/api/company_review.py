@@ -2,13 +2,13 @@
 from fastapi import APIRouter, HTTPException
 from core.research import company_review as research, store, jobs
 from core.research import fundamentals
-from core.research.config import Settings, TradingConfig
+from core.research.config import TradingConfig, current_settings
 
 router = APIRouter(prefix='/api/company')
 
 
 def settings():
-    return Settings(**store.read('settings', {}))
+    return current_settings()
 
 
 @router.get('')

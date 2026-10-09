@@ -130,11 +130,11 @@ class FundamentalsTests(unittest.TestCase):
             self.assertFalse(f.buy_check(ITEM['isin'],strategy,at=earlier,screen=screen)['buy_allowed'])
         self.assertEqual(cr.latest_snapshot(dict(fundamentals=[]),ITEM['isin'],AT)['period_end'],'2026-06-30')
 
-    def test_bulk_continues_after_bad_identity_and_unsupported_sector(self):
+    def test_bulk_continues_after_bad_identity_and_mismatched_snapshot(self):
         items=[dict(ITEM,isin='invalid'),dict(ITEM,isin='INE089C01029',sector='Financial Services'),ITEM]
         with patch.object(nse,'discover',return_value=self.index),patch.object(nse,'retrieve',return_value=self.result),patch.object(f.time,'sleep'):
             result=f.pull(items,at=AT)
-        self.assertEqual(result['counts'],dict(unsupported=2,updated=1))
+        self.assertEqual(result['counts'],dict(unsupported=1,failed=1,updated=1))
         self.assertEqual(len(result['stocks']),3)
 
     def test_bulk_continues_after_unexpected_stock_failure_without_logging_credentials(self):

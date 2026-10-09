@@ -11,8 +11,8 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, SecretStr
-from core.research import store, jobs, upstox, backtest, data_quality, market_data
-from core.research.config import Settings, DataPreferences, BacktestConfig, BearishBacktestConfig
+from core.research import store, jobs, upstox, backtest, data_quality, market_data, sector
+from core.research.config import Settings, DataPreferences, BacktestConfig, BearishBacktestConfig, current_settings
 from core.research import bearish, momentum, scalping, strategy_presets
 from core.research.strategy_presets import ScreenInput
 from core.portfolio import paper, scheduler, manager as portfolios, registry as paper_plugins
@@ -110,8 +110,8 @@ def index():
     return FileResponse(WEB / 'index.html')
 
 
-def settings():
-    return Settings(**store.read('settings', {}))
+def settings(reference_id=None):
+    return current_settings(reference_id)
 
 
 @app.get('/api/bootstrap')
@@ -125,6 +125,7 @@ def bootstrap():
         instruments.append({**item, **summary})
     return {'settings': cfg.model_dump(mode='json'), 'settings_schema': DataPreferences.model_json_schema(),
             'market_fetch': store.read('market_fetch'),
+            'sector_fetch': store.read('sector/fetch'), 'sector_comparisons': store.read('sector/comparisons', [])[:20],
             'backtest_schema': BacktestConfig.model_json_schema(), 'patterns': pattern_definitions(),
             'bearish_schema': bearish.BearishConfig.model_json_schema(), 'bearish_screens': bearish.SCREENS,
             'bearish_backtest_schema': BearishBacktestConfig.model_json_schema(),
@@ -216,7 +217,7 @@ def universe_expansion_job(value: Settings):
 
 @app.post('/api/jobs/backtest')
 def backtest_job(value: BacktestConfig | BearishBacktestConfig):
-    cfg = settings()
+    cfg = settings(value.comparison_run_id)
     backtest.prepare(cfg, value)  # Return actionable validation before creating a job.
     return jobs.submit('Backtest', lambda log, job_id: backtest.run(cfg, value, log, job_id), value.model_dump(mode='json'))
 
@@ -226,9 +227,35 @@ def backtest_window(warmup: int = Query(50, ge=50, le=2500)):
     return backtest.available_window(settings(), warmup)
 
 
+@app.get('/api/sectors')
+def sector_audit():
+    return sector.audit(store.read('universes/'+settings().universe, {'instruments':[]}))
+
+
+@app.post('/api/jobs/sectors')
+def sector_fetch_job():
+    cfg = settings()
+    return jobs.submit('Sector mappings and daily indices', lambda log, job_id: sector.fetch(cfg, log, job_id), {})
+
+
+class SectorComparisonInput(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    reference_id: str = Field(pattern=r'^[0-9a-f]{12}(?:_[a-z0-9]+)?$')
+
+
+@app.post('/api/jobs/sector-comparison')
+def sector_comparison_job(value: SectorComparisonInput):
+    cfg = settings(value.reference_id)
+    reference = store.read('runs/'+value.reference_id, {})
+    config = reference.get('config', {})
+    if not config or reference.get('strategy_id') or config.get('entry_mode') != 'next_open' or config.get('execution_horizon','swing') != 'swing' or config.get('pattern') in dict(bearish.SCREENS):
+        raise ValueError('Choose a long swing next-open backtest for sector comparison.')
+    return jobs.submit('Compare sector filters', lambda log, job_id: backtest.compare_sectors(cfg, value.reference_id, log, job_id), value.model_dump())
+
+
 @app.post('/api/jobs/momentum')
 def momentum_job(value: momentum.MomentumConfig):
-    cfg = settings()
+    cfg = settings(value.comparison_run_id)
     momentum.prepare(cfg, value)
     return jobs.submit('Momentum backtest', lambda log, job_id: momentum.run(cfg, value, log, job_id), value.model_dump(mode='json'))
 
@@ -241,7 +268,7 @@ class MomentumComparisonInput(BaseModel):
 
 @app.post('/api/jobs/momentum-comparison')
 def momentum_comparison_job(value: MomentumComparisonInput):
-    cfg = settings()
+    cfg = settings(value.reference_id)
     reference = store.read('runs/'+value.reference_id)
     if not reference or reference.get('strategy_id')!='intraday_momentum':
         raise ValueError('Choose a saved momentum experiment.')
@@ -251,7 +278,7 @@ def momentum_comparison_job(value: MomentumComparisonInput):
 
 @app.post('/api/momentum/coverage')
 def momentum_coverage(value: momentum.MomentumConfig):
-    universe, datasets, _, excluded = momentum.prepare(settings(), value)
+    universe, datasets, _, excluded = momentum.prepare(settings(value.comparison_run_id), value)
     _, plan = momentum.entry_plan(datasets, value)
     instruments = {x['symbol']:x for x in universe['instruments']}
     requests = {(x['symbol'],d) for d, candidates in plan.items() for x in candidates}
@@ -266,14 +293,14 @@ def momentum_coverage(value: momentum.MomentumConfig):
 
 @app.post('/api/jobs/scalping')
 def scalping_job(value: scalping.ScalpingConfig):
-    cfg = settings()
+    cfg = settings(value.comparison_run_id)
     scalping.prepare(cfg, value)
     return jobs.submit('Scalping backtest', lambda log, job_id: scalping.run(cfg, value, log, job_id), value.model_dump(mode='json'))
 
 
 @app.post('/api/scalping/coverage')
 def scalping_coverage(value: scalping.ScalpingConfig):
-    return scalping.coverage(settings(), value)
+    return scalping.coverage(settings(value.comparison_run_id), value)
 
 
 class ScalpingComparisonInput(BaseModel):
@@ -283,7 +310,7 @@ class ScalpingComparisonInput(BaseModel):
 
 @app.post('/api/jobs/scalping-comparison')
 def scalping_comparison_job(value: ScalpingComparisonInput):
-    cfg = settings()
+    cfg = settings(value.reference_id)
     reference = store.read('runs/'+value.reference_id)
     if not reference or reference.get('strategy_id') != 'scalping':
         raise ValueError('Choose a saved scalping experiment.')

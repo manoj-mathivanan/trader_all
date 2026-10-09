@@ -66,7 +66,7 @@ class BearishScreenTests(unittest.TestCase):
     def test_scan_ranks_weak_symbols_and_rejects_low_coverage(self):
         with tempfile.TemporaryDirectory() as folder, patch.object(store, 'DATA', Path(folder)):
             items = [dict(symbol=s, name=s, isin=s) for s in ('WEAK', 'LESS_WEAK', 'STALE', 'MISSING')]
-            store.write('universes/nifty50', dict(instruments=items))
+            store.write('universes/niftytotalmarket', dict(instruments=items))
             weak = history()
             less_weak = history()
             less_weak[-1].update(close=165, low=164, high=166, open=165)
@@ -103,7 +103,7 @@ class BearishScreenTests(unittest.TestCase):
 
     def test_today_and_future_bars_do_not_enter_scan(self):
         with tempfile.TemporaryDirectory() as folder, patch.object(store, 'DATA', Path(folder)):
-            store.write('universes/nifty50', dict(instruments=[dict(symbol='A', name='A', isin='A')]))
+            store.write('universes/niftytotalmarket', dict(instruments=[dict(symbol='A', name='A', isin='A')]))
             bars = history()
             expected = bars[-1]['date']
             bars += [dict(date='2024-10-08', open=300, high=301, low=299, close=300, volume=1000000),

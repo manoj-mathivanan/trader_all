@@ -16,6 +16,7 @@ def main():
     parser.add_argument('--reference', required=True, help='Saved swing backtest with frozen price inputs')
     parser.add_argument('--start', default='2026-06-01')
     parser.add_argument('--end', default='2026-10-01')
+    parser.add_argument('--markdown', type=Path, help='Explicitly export a Markdown report to this path')
     args = parser.parse_args()
     reference = store.read('runs/'+args.reference)
     if not reference:
@@ -60,7 +61,8 @@ def main():
         pair = [r for r in comparison['runs'] if r['pattern']==pattern]
         if len({r['price_manifest_sha256'] for r in pair}) != 1:
             raise ValueError('Comparison price inputs differ')
-    (store.ROOT/'FUNDAMENTAL_RANKING_COMPARISON.md').write_text('\n'.join(rows)+'\n', encoding='utf-8')
+    if args.markdown:
+        args.markdown.write_text('\n'.join(rows)+'\n', encoding='utf-8')
 
 
 if __name__ == '__main__':

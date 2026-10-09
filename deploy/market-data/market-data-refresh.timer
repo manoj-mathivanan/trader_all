@@ -1,0 +1,10 @@
+[Unit]
+Description=Check completed market refreshes each minute
+
+[Timer]
+OnBootSec=60
+OnUnitInactiveSec=60
+Persistent=true
+
+[Install]
+WantedBy=timers.target

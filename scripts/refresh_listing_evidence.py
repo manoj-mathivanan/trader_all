@@ -30,9 +30,9 @@ def parse_master(raw):
     return result
 
 
-def refresh(data_dir, raw):
+def refresh(data_dir, raw, universe='niftytotalmarket'):
     master = parse_master(raw)
-    universe = json.loads((data_dir / 'universes/nifty500.json').read_text(encoding='utf-8'))
+    universe = json.loads((data_dir / 'universes' / (universe + '.json')).read_text(encoding='utf-8'))
     path = data_dir / 'metadata/listings.json'
     old = json.loads(path.read_text(encoding='utf-8')) if path.exists() else {}
     selected, missing = {}, []
@@ -61,6 +61,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--data-dir',type=Path,required=True)
     parser.add_argument('--csv',type=Path,help='Use a previously downloaded official master')
+    parser.add_argument('--universe', default='niftytotalmarket', choices=['niftytotalmarket', 'nifty500', 'nifty50'], help='Current 750-stock universe; older snapshots can be audited explicitly')
     parser.add_argument('--report',type=Path,required=True)
     args = parser.parse_args()
     if args.report.exists():
@@ -70,7 +71,7 @@ if __name__ == '__main__':
     else:
         with urllib.request.urlopen(urllib.request.Request(SOURCE,headers={'User-Agent':'Mozilla/5.0'}),timeout=20) as response:
             raw = response.read()
-    report = refresh(args.data_dir,raw)
+    report = refresh(args.data_dir,raw,args.universe)
     args.report.parent.mkdir(parents=True,exist_ok=True)
     args.report.write_text(json.dumps(report,indent=2)+'\n')
     print(f"Installed sourced listing dates: {report['matched']}/{report['total']}; missing: {report['missing_symbols']}.")

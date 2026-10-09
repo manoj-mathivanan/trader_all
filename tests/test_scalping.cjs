@@ -5,7 +5,7 @@ const source=fs.readFileSync('dashboard/web/app.js','utf8');
 const context=vm.createContext({document:{addEventListener(){},querySelector(){return {open:true};}}});
 vm.runInContext(source.slice(0,source.indexOf("$('#modal').addEventListener('close'")),context);
 (async()=>{
-  vm.runInContext(`state={settings:{universe:'nifty50'},jobs:[],runs:[{id:'abcdef123456',strategy_id:'scalping',config:{name:'EMA baseline',start:'2025-02-03',end:'2025-02-07',entry_filter:'ema'},metrics:{trade_count:4,return_pct:-.2}}],scalping_schema:{properties:{},required:['start','end']}};globalThis.view=scalpingView();`,context);
+  vm.runInContext(`state={settings:{universe:'niftytotalmarket'},jobs:[],runs:[{id:'abcdef123456',strategy_id:'scalping',config:{name:'EMA baseline',start:'2025-02-03',end:'2025-02-07',entry_filter:'ema'},metrics:{trade_count:4,return_pct:-.2}}],scalping_schema:{properties:{},required:['start','end']}};globalThis.view=scalpingView();`,context);
   assert.match(context.view,/EMA baseline/);
   assert.match(context.view,/Compare confirmations/);
   assert.match(context.view,/Scalping backtest/);

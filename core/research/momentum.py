@@ -273,11 +273,21 @@ def fundamental_gate(value, cfg):
     return dict(**(value or {}),allowed=not reasons,block_reasons=reasons)
 
 
-def simulate(datasets, cfg, sessions, plan=None, *, entry_check=None, fundamental_scores=None):
+def simulate(datasets, cfg, sessions, plan=None, *, entry_check=None, fundamental_scores=None, fee_model=None):
+    if fee_model is not None and cfg.breakeven_after_r:
+        raise ValueError('Custom fee research requires breakeven trailing disabled.')
     if cfg.require_fundamentals and fundamental_scores is None:
         raise ValueError('Historical fundamental evidence is required; current scores cannot substitute.')
     plan = entry_plan(datasets, cfg)[0] if plan is None else plan
     broker = PaperBrokerAdapter(cfg)
+    def fill_order(price, quantity, side):
+        order = broker.fill(price, quantity, side)
+        if fee_model is not None:
+            fee = fee_model(order['price'], quantity, side, day)
+            if not math.isfinite(fee) or fee < 0:
+                raise ValueError('Custom research fees must be finite and nonnegative.')
+            order['fees'] = fee
+        return order
     cash = peak = cfg.capital
     max_dd = fees_total = slip_total = skipped = ambiguous = 0
     trades, curve, selections = [], [], []
@@ -382,11 +392,30 @@ def simulate(datasets, cfg, sessions, plan=None, *, entry_check=None, fundamenta
             unit_risk = distance+fill*fee_rate+stop*(exit_rate+cfg.slippage_bps/10000)
             qty = max(0, min(math.floor(max(0,equity)*cfg.risk_pct/100/unit_risk),
                              math.floor(max(0,equity)/cfg.max_positions/(fill*(1+fee_rate)))))
+            if fee_model is not None:
+                # Capped brokerage is nonlinear in quantity. Search the largest
+                # quantity satisfying both exact stop risk and reserved notional.
+                # The supplied fee schedule must be nondecreasing in quantity.
+                entry_side, exit_side = ('buy','sell') if sign == 1 else ('sell','buy')
+                budget = max(0,equity)/cfg.max_positions
+                risk_budget = max(0,equity)*cfg.risk_pct/100
+                stop_fill = stop*(1-sign*cfg.slippage_bps/10000)
+                lo, hi = 0, math.floor(budget/fill)
+                while lo < hi:
+                    trial = (lo+hi+1)//2
+                    entry_fee = fill_order(raw_entry,trial,entry_side)['fees']
+                    exit_fee = fill_order(stop,trial,exit_side)['fees']
+                    risk = sign*(fill-stop_fill)*trial+entry_fee+exit_fee
+                    if fill*trial+entry_fee <= budget and risk <= risk_budget:
+                        lo = trial
+                    else:
+                        hi = trial-1
+                qty = lo
             if not qty:
                 skipped += 1
                 no_quantity += 1
                 continue
-            entry = broker.fill(raw_entry, qty, 'buy' if sign==1 else 'sell')
+            entry = fill_order(raw_entry, qty, 'buy' if sign==1 else 'sell')
             target = fill+sign*distance*cfg.target_r if cfg.target_r else None
             if target is not None and target <= 0:
                 raise ValueError('Profit target has a non-positive price; reduce the R target.')
@@ -415,7 +444,7 @@ def simulate(datasets, cfg, sessions, plan=None, *, entry_check=None, fundamenta
                     slip = cfg.slippage_bps/10000
                     breakeven = fill*(1+fee_rate)/(1-exit_rate)/(1-slip) if sign==1 else fill*(1-fee_rate)/(1+exit_rate)/(1+slip)
                     stop = max(stop, breakeven) if sign==1 else min(stop, breakeven)
-            exit_fill = broker.fill(raw_exit, qty, 'sell' if sign==1 else 'buy')
+            exit_fill = fill_order(raw_exit, qty, 'sell' if sign==1 else 'buy')
             fees = entry['fees']+exit_fill['fees']
             pnl = sign*qty*(exit_fill['price']-fill)-fees
             day_pnl += pnl

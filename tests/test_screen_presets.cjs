@@ -13,6 +13,11 @@ const context = vm.createContext({
 });
 const source = fs.readFileSync('dashboard/web/app.js', 'utf8');
 vm.runInContext(source.slice(0, source.indexOf("$('#modal').addEventListener('close'")), context);
+vm.runInContext('state={};', context);
+const universeField = vm.runInContext("field('universe',{properties:{universe:{title:'Universe',type:'string',enum:['nifty50','nifty500','niftytotalmarket']}}},'nifty500')", context);
+assert.match(universeField, /Nifty Total Market \(750\)/);
+assert.equal((universeField.match(/<option /g)||[]).length, 1);
+assert.doesNotMatch(universeField, /value="nifty500"|value="nifty50"/);
 vm.runInContext(`
   state={screens:[{id:'custom_test',pattern:'multiyear',...Object.fromEntries(screenKeys.map(k=>[k,77]))}],jobs:[]};
   const properties=Object.fromEntries(screenKeys.map(k=>[k,{type:'number',default:25}]));
@@ -22,6 +27,7 @@ vm.runInContext(`
   for(const k of ['require_long_trend','require_rising_long_trend']){properties[k]={type:'boolean',default:false};state.screens[0][k]=false;}
   properties.market_breadth_pct={type:'number',default:40};properties.market_min_coverage_pct={type:'number',default:80};properties.minimum_warmup_sessions={type:'integer',default:50};
   state.backtest_schema={properties};
+  properties.sector_filter={type:'string',default:'off',enum:['off','trend','trend_rs'],title:'Sector trend filter'};
   properties.execution_horizon={type:'string',default:'swing',enum:['swing','intraday']};
   properties.square_off_time={type:'string',default:'15:00'};
   properties.start.format='date';properties.end.format='date';
@@ -83,6 +89,13 @@ function changeScreen(value) {
   assert.match(context.windowPath,/warmup=260$/);
 
   // A fresh dialog must apply VCP before rendering, without requiring a change event.
+  await vm.runInContext("newBacktest({sector_filter:'trend_rs',entry_mode:'next_open'})",context);
+  assert.match(context.body,/value="trend_rs" selected/);
+  assert.match(context.body,/Sector trend \+ relative strength/);
+  const sectorHtml=vm.runInContext("sectorReport({sector_reference:{notice:'<source>'},sector_checks:[{symbol:'<TEST>',index:'it',date:'2025-03-01',allowed:false,reason:'sector_trend_weak'}]})",context);
+  assert.match(sectorHtml,/1 blocked/);
+  assert.match(sectorHtml,/&lt;TEST&gt;/);
+  assert.doesNotMatch(sectorHtml,/<source>/);
   await vm.runInContext('newBacktest()', context);
   assert.match(context.body, /name="base_days"[^>]*value="15"/);
   assert.match(context.body, /name="vcp_volume_multiple"[^>]*value="0.9"/);
@@ -93,6 +106,7 @@ function changeScreen(value) {
     assert.throws(()=>vm.runInContext(`validateBacktestDates(${JSON.stringify(dates)},{history_start:'2019-01-01',end:'2025-12-31'})`,context));
   }
   assert.doesNotThrow(()=>vm.runInContext("validateBacktestDates({start:'2019-01-01',end:'2025-12-31'},{history_start:'2019-01-01',end:'2025-12-31'})",context));
+  assert.doesNotThrow(()=>vm.runInContext("validateBacktestDates({start:'2020-01-01',end:'2026-10-08'},{history_start:'2019-01-01',end:'2025-12-31',history_end:'2026-10-09'})",context));
   assert.match(vm.runInContext("field('start',state.backtest_schema,'',backtestDateBounds({}))",context),/disabled/);
   assert.doesNotMatch(context.body, /<select name="pattern"/);
   await vm.runInContext("newBacktest({screen:'custom_test'})", context);
@@ -145,7 +159,9 @@ function changeScreen(value) {
   vm.runInContext('state.jobs=[];updateBacktestAvailability()',context);
   assert.equal(context.submit.disabled,false);
   vm.runInContext("backtestWindow.missing_symbols=['IDEA'];updateBacktestAvailability()",context);
+  assert.equal(context.submit.disabled,false);
+  vm.runInContext("backtestWindow.start=null;updateBacktestAvailability()",context);
   assert.equal(context.submit.disabled,true);
-  assert.match(context.availability.textContent,/IDEA/);
-  console.log('Screen presets, immediate dialog, cancellation, job completion and missing-data explanations passed.');
+  assert.match(context.availability.textContent,/Not enough downloaded history/);
+  console.log('Screen presets, immediate dialog, cancellation, job completion and partial-universe availability passed.');
 })().catch(error => {console.error(error);process.exitCode=1;});

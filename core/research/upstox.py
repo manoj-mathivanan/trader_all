@@ -91,16 +91,14 @@ def refresh_universe(settings, log):
 
 
 def ingest_expansion(settings, log):
-    """Pull only members outside the stored Nifty 500; paper membership stays frozen."""
+    """Pull Total Market members without cached candles; paper stays frozen."""
     if settings.universe != "niftytotalmarket":
         raise ValueError("Universe expansion requires Nifty Total Market.")
-    baseline = store.read("universes/nifty500")
-    if not baseline:
-        raise ValueError("Refresh Nifty 500 before pulling additional constituents.")
-    baseline_isins = {item["isin"] for item in baseline["instruments"]}
+    catalog = store.read('bar_catalog', {})
+    cached_isins = {isin for isin, summary in catalog.items() if summary.get('count', 0) > 0}
     target = refresh_universe(settings, log)
-    additional = [item for item in target["instruments"] if item["isin"] not in baseline_isins]
-    log(f"Pulling {len(additional)} additional constituents; existing Nifty 500 candles and paper portfolio are untouched.")
+    additional = [item for item in target["instruments"] if item["isin"] not in cached_isins]
+    log(f"Pulling {len(additional)} uncached Nifty Total Market constituents; existing candles and paper portfolio are untouched.")
     result = ingest(settings, log, universe={**target, "instruments": additional})
     return {**result, "universe": settings.universe, "total_members": len(target["instruments"])}
 

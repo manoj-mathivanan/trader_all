@@ -5,7 +5,7 @@ const source=fs.readFileSync('dashboard/web/app.js','utf8');
 const context=vm.createContext({document:{addEventListener(){}}});
 vm.runInContext(source.slice(0,source.indexOf("$('#modal').addEventListener('close'")),context);
 vm.runInContext(`
-state={settings:{universe:'nifty500'},jobs:[],runs:[{id:'abc',strategy_id:'intraday_momentum',config:{name:'Baseline',start:'2026-08-26',end:'2026-09-04'},metrics:{trade_count:20,return_pct:-1}}],momentum_sources:[]};
+state={settings:{universe:'niftytotalmarket'},jobs:[],runs:[{id:'abc',strategy_id:'intraday_momentum',config:{name:'Baseline',start:'2026-08-26',end:'2026-09-04'},metrics:{trade_count:20,return_pct:-1}}],momentum_sources:[]};
 globalThis.view=momentumView();
 globalThis.markers=stockTradeMarkers({trade:{direction:'short',entry_date:'2026-09-01',exit_date:'2026-09-01',entry_timestamp:123,exit_timestamp:456,entry:100,exit:98},trade_index:0});
 `,context);

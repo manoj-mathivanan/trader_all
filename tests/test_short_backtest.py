@@ -136,13 +136,13 @@ class ShortBacktestTests(unittest.TestCase):
             store.write('run_data/'+reference_id,{'A':bars})
             # Today's provider cache must not substitute for the comparison snapshot.
             store.write('bars/A',dict(bars=rows([1]*130)))
-            _, inputs, _, excluded = backtest.prepare(Settings(),cfg)
+            _, inputs, _, excluded = backtest.prepare(Settings(universe='nifty50'),cfg)
             self.assertEqual(inputs,{'A':bars})
             self.assertEqual(excluded,['OLD'])
             bars[10]['open'] = 50
             store.write('run_data/'+reference_id,{'A':bars})
             with self.assertRaisesRegex(ValueError,'Price discontinuity'):
-                backtest.run(Settings(),cfg,lambda _:None,'new-reference')
+                backtest.run(Settings(universe='nifty50'),cfg,lambda _:None,'new-reference')
             self.assertIsNone(store.read('runs/new-reference'))
 
 

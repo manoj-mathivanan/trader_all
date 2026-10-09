@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone, time, date
 from types import SimpleNamespace
 from pydantic import Field, model_validator
 from typing import Literal
-from core.research import store, backtest, upstox, data_quality, market_history, provenance, candle_repairs
+from core.research import store, backtest, upstox, data_quality, market_history, provenance, candle_repairs, sector
 from core.research.config import TradingConfig, Settings
 from core.portfolio import manager
 
@@ -28,6 +28,7 @@ class PaperIngestionRange(Settings):
 
 
 class PaperConfig(TradingConfig):
+    sector_observe_only: bool = Field(True, title='Observe sector decisions without blocking entries')
     name: str = Field('Swing paper portfolio', min_length=1, max_length=80, title='Portfolio name')
     capital: float = Field(..., ge=1000, le=1e10, title='Allocated capital (₹)')
     pattern: Literal['vcp', 'blue_sky', 'multiyear', 'ipo'] = Field('vcp', title='Banana screen')
@@ -95,6 +96,12 @@ def cycle(log, job_id, *, ingest=True):
         # Freeze membership per portfolio; research universe refreshes cannot remove positions.
         settings = PaperIngestionRange(universe=portfolio['universe'], start=date.fromisoformat(portfolio['history_start']), end=through)
         upstox.ingest(settings, log, universe=portfolio['universe_snapshot'], extend_history=False)
+        if cfg.sector_filter != 'off':
+            try:
+                sector.fetch(settings, log, job_id, universe=portfolio['universe_snapshot'],
+                             start=date.fromisoformat(portfolio['history_start']), end=through)
+            except ValueError as exc:
+                log(f'Sector refresh unavailable: {exc}; missing/stale evidence blocks entries while exits continue.')
     datasets = {}
     reference = market_history.evidence(snapshot=True)
     reconciliation = store.read('metadata/paper_repair_reconciliations', {}).get(portfolio['id'], {})
@@ -136,6 +143,27 @@ def cycle(log, job_id, *, ingest=True):
                 raise ValueError(f'Insufficient indicator warmup for held {symbol}. Paper cycle halted; ledger unchanged.')
             log(f'{symbol}: entries wait for sufficient listed-history warmup; no candles invented.')
     simulation_cfg = SimpleNamespace(**cfg.model_dump(), start=start, end=end)
+    sector_snapshot = None
+    sector_gate = None
+    if cfg.sector_filter != 'off':
+        sector_snapshot = sector.capture(portfolio['universe_snapshot'])
+        if portfolio.get('sector_mapping') is not None:
+            sector_snapshot['mappings'] = portfolio['sector_mapping']
+            sector_snapshot['mapping_captured_at'] = portfolio['sector_mapping_captured_at']
+            for identifier in {v['index'] for v in sector_snapshot['mappings'].values() if v.get('index')}:
+                sector_snapshot['prices'][identifier] = store.read('sector/prices/'+identifier, {})
+            sector_snapshot['sha256'] = market_history.digest({k:v for k,v in sector_snapshot.items() if k != 'sha256'})
+        # Revisions to processed sector inputs require investigation, like stock revisions.
+        prior_cycle = next((c for c in reversed(portfolio.get('cycles', [])) if c.get('sector_reference')), None)
+        if prior_cycle:
+            prior = store.read('paper_sector/'+prior_cycle['job_id'], {})
+            sector.verify(prior, prior_cycle['sector_reference']['sha256'])
+            for identifier, record in prior['prices'].items():
+                processed = [b for b in record.get('bars', []) if b['date'] <= prior_cycle['end']]
+                current = [b for b in sector_snapshot['prices'].get(identifier, {}).get('bars', []) if b['date'] <= prior_cycle['end']]
+                if processed and processed != current:
+                    raise ValueError('Processed sector index history changed; investigate before resuming paper.')
+        sector_gate = sector.Gate(sector_snapshot, cfg.sector_filter)
     if cfg.pattern == 'ipo':
         verified = sum(bars[0].get('listing_metadata', {}).get('ipo_verified') is True for bars in datasets.values())
         log(f'IPO listing evidence: {verified}/{len(datasets)} symbols; missing evidence blocks new IPO entries.')
@@ -164,6 +192,8 @@ def cycle(log, job_id, *, ingest=True):
     result = backtest.simulate(datasets, simulation_cfg, state=ledger, liquidate=False,
                                allow_entries=portfolio['status'] == 'active', entry_warmup=backtest.required_warmup(cfg),
                                entry_check=entry_check,
+                               sector_gate=sector_gate,
+                               sector_observe_only=cfg.sector_observe_only,
                                fundamental_scores=ranking_score if cfg.candidate_rank == 'fundamental_score' else None)
     new_ledger = result['state']
     new_orders = new_ledger['orders'][len(ledger.get('orders', [])):]
@@ -179,6 +209,14 @@ def cycle(log, job_id, *, ingest=True):
                                 'order_count': len(new_orders), 'status': portfolio['status']})
     portfolio['cycles'][-1].update(history_evidence=histories, provenance=provenance.capture())
     portfolio['cycles'][-1]['fundamental_checks']=fundamental_checks
+    portfolio['cycles'][-1]['sector_checks'] = result['sector_checks']
+    if sector_snapshot is not None:
+        # Do not freeze an empty mapping after a failed first refresh.
+        if sector_snapshot['mappings'] and portfolio.get('sector_mapping') is None:
+            portfolio['sector_mapping'] = sector_snapshot['mappings']
+            portfolio['sector_mapping_captured_at'] = sector_snapshot['mapping_captured_at']
+        store.write('paper_sector/'+job_id, sector_snapshot)
+        portfolio['cycles'][-1]['sector_reference'] = dict(sha256=sector_snapshot['sha256'], notice=sector.NOTICE)
     # Commit cash, positions, orders, trades and checkpoint together; retries are idempotent.
     store.write(KEY, portfolio)
     log(f'Committed {sessions} sessions, {len(new_orders)} simulated fills, {len(new_ledger["positions"])} open positions.')

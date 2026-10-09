@@ -20,9 +20,9 @@ def fetch(url, headers=None):
         return None, type(exc).__name__
 
 
-def probe(data_dir, private_dir):
+def probe(data_dir, private_dir, universe='niftytotalmarket'):
     samples = {}
-    universe = json.loads((data_dir / 'universes/nifty500.json').read_text())
+    universe = json.loads((data_dir / 'universes' / (universe + '.json')).read_text())
     token_path = private_dir / 'upstox.json'
     token = json.loads(token_path.read_text()).get('access_token') if token_path.exists() else None
     for symbol, days in {'NESTLEIND': ['2024-01-04', '2024-01-05', '2025-08-07', '2025-08-08'],
@@ -61,11 +61,12 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--data-dir', type=Path, required=True)
     parser.add_argument('--private-dir', type=Path, required=True)
+    parser.add_argument('--universe', default='niftytotalmarket', choices=['niftytotalmarket', 'nifty500', 'nifty50'], help='Current 750-stock universe; older snapshots can be audited explicitly')
     parser.add_argument('--output', type=Path, required=True)
     args = parser.parse_args()
     if args.output.exists():
         parser.error('Output already exists.')
-    report = probe(args.data_dir, args.private_dir)
+    report = probe(args.data_dir, args.private_dir, args.universe)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, indent=2) + '\n')
     print('Probe complete; public event/candle evidence saved. No credentials included.')

@@ -1,0 +1,12 @@
+[Unit]
+Description=Import completed local and production market refreshes
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/opt/market-data/venv/bin/python /opt/market-data/sync_market_refresh.py --server --source /srv/trader/data --state /srv/market-data/sync
+Nice=10
+MemoryMax=256M
+MemorySwapMax=256M
+

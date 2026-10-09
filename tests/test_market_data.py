@@ -30,12 +30,35 @@ class MarketFetchTests(unittest.TestCase):
         from dashboard.api.main import app
         store.write('settings', {'universe':'nifty500', 'start':'2019-01-01','end':'2026-10-08'})
         with TestClient(app) as client:
-            self.assertEqual(set(client.get('/api/bootstrap').json()['settings_schema']['properties']), {'universe'})
+            bootstrap = client.get('/api/bootstrap').json()
+            self.assertEqual(set(bootstrap['settings_schema']['properties']), {'universe'})
+            self.assertEqual(bootstrap['settings']['universe'], 'niftytotalmarket')
+            self.assertEqual(bootstrap['settings_schema']['properties']['universe']['const'], 'niftytotalmarket')
             response = client.put('/api/settings', json={'universe':'niftytotalmarket'}, headers={'X-Trader-Request':'local-ui'})
             self.assertEqual(response.status_code, 200)
             self.assertEqual(store.read('settings'), {'universe':'niftytotalmarket','start':'2019-01-01','end':'2026-10-08'})
             self.assertEqual(client.put('/api/settings', json={'universe':'nifty50','start':'2020-01-01'},
                                        headers={'X-Trader-Request':'local-ui'}).status_code, 422)
+
+    def test_current_settings_upgrade_preserves_frozen_universes_and_portfolios(self):
+        from core.research.config import Settings, DataPreferences, current_settings
+        legacy = {'universe': 'nifty500', 'start': '2019-01-01', 'end': '2026-10-08'}
+        frozen = {'universe': 'nifty500', 'instruments': [{'symbol': 'OLD', 'isin': 'EXISTING'}]}
+        portfolio = {'universe_snapshot': frozen, 'ledger': {'cash': 123}}
+        store.write('settings', legacy)
+        store.write('universes/nifty500', frozen)
+        store.write('runs/legacy', {'universe': 'nifty500', 'universe_snapshot': frozen})
+        store.write('portfolios/swing_patterns', portfolio)
+        self.assertEqual(Settings().universe, 'niftytotalmarket')
+        self.assertEqual(DataPreferences().universe, 'niftytotalmarket')
+        self.assertEqual(current_settings().universe, 'niftytotalmarket')
+        self.assertEqual(store.read('settings'), {**legacy, 'universe': 'niftytotalmarket'})
+        self.assertEqual(store.read('universes/nifty500'), frozen)
+        self.assertEqual(store.read('runs/legacy')['universe_snapshot'], frozen)
+        self.assertEqual(store.read('portfolios/swing_patterns'), portfolio)
+        self.assertEqual(Settings(universe='nifty500').universe, 'nifty500')
+        self.assertEqual(current_settings('legacy').universe, 'nifty500')
+        self.assertEqual(current_settings().universe, 'niftytotalmarket')
 
     def test_latest_provider_session_excludes_unfinished_today(self):
         with patch.object(market.upstox, 'fetch_range', return_value=[candle('2026-10-06')]) as fetch:

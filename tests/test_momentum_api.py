@@ -42,3 +42,16 @@ class MomentumApiTests(unittest.TestCase):
             response=TestClient(app).post('/api/jobs/momentum',json=cfg,headers={'X-Trader-Request':'local-ui'})
             self.assertEqual(response.status_code,422)
             submit.assert_not_called()
+
+    def test_rerun_uses_frozen_universe_while_workspace_stays_total_market(self):
+        fixture=fixtures.MomentumTests();fixture.setUp()
+        config={**fixture.cfg.model_dump(mode='json'), 'comparison_run_id':'abcdef123456'}
+        with tempfile.TemporaryDirectory() as folder, patch.object(store,'DATA',Path(folder)):
+            store.write('settings', {'universe':'niftytotalmarket'})
+            store.write('runs/abcdef123456', {'universe':'nifty500'})
+            with patch('dashboard.api.main.momentum.prepare') as prepare, \
+                 patch('dashboard.api.main.jobs.submit',return_value={'id':'123456abcdef'}):
+                response=TestClient(app).post('/api/jobs/momentum',json=config,headers={'X-Trader-Request':'local-ui'})
+            self.assertEqual(response.status_code,200,response.text)
+            self.assertEqual(prepare.call_args.args[0].universe,'nifty500')
+            self.assertEqual(store.read('settings')['universe'],'niftytotalmarket')

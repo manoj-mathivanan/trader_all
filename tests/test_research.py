@@ -102,7 +102,7 @@ class DataAndSecurityTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp, patch.object(store, 'DATA', Path(temp)):
             start = date(2026, 1, 1)
             bars = [candle((start + timedelta(days=i)).isoformat(), 100, 101, 99, 100) for i in range(80)]
-            store.write('universes/nifty50', {'instruments': [{'symbol': 'TEST', 'isin': 'TEST00000001'}]})
+            store.write('universes/niftytotalmarket', {'instruments': [{'symbol': 'TEST', 'isin': 'TEST00000001'}]})
             store.write('bars/TEST00000001', {'bars': bars, 'requested_start': '2026-01-01',
                                              'requested_end': bars[-1]['date'], 'source': 'unit_test'})
             window = available_window(Settings())
@@ -113,7 +113,7 @@ class DataAndSecurityTests(unittest.TestCase):
                 response = client.post('/api/jobs/backtest', headers={'X-Trader-Request':'local-ui'},
                                        json=config().model_dump(mode='json'))
                 self.assertEqual(response.status_code, 400)
-                self.assertIn('2026-01-01', response.json()['detail'])
+                self.assertIn('No eligible symbols cover the requested test dates', response.json()['detail'])
                 self.assertEqual(store.read('jobs', []), [])
 
     def test_invalid_and_duplicate_candles_rejected(self):

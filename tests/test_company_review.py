@@ -44,7 +44,7 @@ class CompanyReviewTests(unittest.TestCase):
         self.data = patch.object(store, 'DATA', Path(self.temp.name))
         self.data.start()
         self.cfg = Settings()
-        store.write('universes/nifty50', dict(instruments=[ITEM]))
+        store.write('universes/niftytotalmarket', dict(instruments=[ITEM]))
         self.client = TestClient(app)
         self.headers = {'X-Trader-Request': 'local-ui'}
 
@@ -207,7 +207,7 @@ class CompanyReviewTests(unittest.TestCase):
     def test_scan_completed_session_and_stale_exclusion(self):
         self.import_data(fundamentals=[financial()])
         other = dict(ITEM, isin='INE000A01002', symbol='OTHER')
-        store.write('universes/nifty50', dict(instruments=[ITEM, other]))
+        store.write('universes/niftytotalmarket', dict(instruments=[ITEM, other]))
         today = review.utcnow().astimezone(review.IST).date()
         bars = [dict(date=(today-timedelta(days=130-i)).isoformat(), open=100, high=101, low=99, close=100, volume=1000000) for i in range(131)]
         # Latest completed bar is the breakout; today's unfinished bar must be ignored.

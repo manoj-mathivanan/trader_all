@@ -6,7 +6,7 @@ from threading import Event
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from core.research import jobs, momentum, store
-from core.research.config import Settings
+from core.research.config import current_settings
 
 
 if __name__ == '__main__':
@@ -24,7 +24,7 @@ if __name__ == '__main__':
             finally:
                 finished.set()
         return execute
-    settings = Settings(**store.read('settings', {}))
+    settings = current_settings(args.compare)
     if args.compare:
         reference = store.read('runs/'+args.compare)
         if not reference:
@@ -34,6 +34,7 @@ if __name__ == '__main__':
         job = jobs.submit('Momentum comparison',tracked(lambda log,job_id:momentum.compare(settings,args.compare,log,job_id,args.suite)),{'reference_id':args.compare,'suite':args.suite})
     else:
         cfg = momentum.MomentumConfig.model_validate_json(Path(args.config).read_text(encoding='utf-8'))
+        settings = current_settings(cfg.comparison_run_id)
         momentum.prepare(settings, cfg)
         job = jobs.submit('Momentum backtest', tracked(lambda log, job_id: momentum.run(settings, cfg, log, job_id)), cfg.model_dump(mode='json'))
     print('Job:', job['id'], flush=True)

@@ -3,12 +3,12 @@ const fs=require('node:fs');
 const vm=require('node:vm');
 const app=fs.readFileSync('dashboard/web/app.js','utf8');
 const company=fs.readFileSync('dashboard/web/company-review.js','utf8');
-const context=vm.createContext({document:{addEventListener(){}},setInterval(){}});
+const context=vm.createContext({document:{addEventListener(){}},setInterval(fn){context.timer=fn;}});
 vm.runInContext(app.slice(0,app.indexOf("$('#modal').addEventListener('close'")),context);
 vm.runInContext(company,context);
 vm.runInContext(`
-state={settings:{universe:'nifty50'},instruments:[],screens:[],jobs:[]};
-companyUniverse='nifty50';
+state={settings:{universe:'niftytotalmarket'},instruments:[],screens:[],jobs:[]};
+companyUniverse='niftytotalmarket';
 companyState={rows:[{company:{isin:'INE000A01001',symbol:'<TEST>',name:'Example',sector:'Industry'},score:null,coverage_pct:0,status:'missing',flags:['No financial evidence'],article_count:0}],reviews:[],llm:{enabled:false,reason:'Set server credentials'}};
 globalThis.page=companyReviewView();
 companyFilters.minimum=50;
@@ -35,3 +35,22 @@ assert.match(context.page,/Research stock/);
 assert.doesNotMatch(context.page,/Add article|Import evidence JSON/);
 assert.match(company,/api\('company\/research','POST'/);
 console.log('Automatic research controls, missing data, filters, escaping and sector form checks passed.');
+
+(async()=>{
+  const early=vm.createContext({document:{addEventListener(){}},setInterval(fn){early.timer=fn;}});
+  vm.runInContext(company,early);await early.timer();
+  vm.runInContext(`
+    companyPendingJob='fund';
+    state.jobs=[{id:'fund',type:'Quarterly fundamentals pull',status:'failed'}];
+    globalThis.reloads=0;globalThis.lastToast='';
+    loadCompany=async()=>{globalThis.reloads++;};
+    toast=message=>{globalThis.lastToast=message;};
+  `,context);
+  await context.timer();
+  assert.equal(context.reloads,1);
+  assert.match(context.lastToast,/Fundamentals checked with some failures/);
+  vm.runInContext(`currentView='company';state.market_fetch={completed_at:'2026-10-09T06:00:00+00:00'};globalThis.reloads=0;`,context);
+  await context.timer();assert.equal(context.reloads,1);
+  await context.timer();assert.equal(context.reloads,1);
+  console.log('Partial fundamentals and completed market fetch refresh financial evidence once.');
+})().catch(error=>{console.error(error);process.exitCode=1;});

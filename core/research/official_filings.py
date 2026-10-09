@@ -10,7 +10,7 @@ import httpx
 from core.research import store
 
 IST = timezone(timedelta(hours=5, minutes=30))
-FILING = re.compile(r'^/corporate/ixbrl/INTEGRATED_FILING_INDAS_\d+_(\d{14})_iXBRL_WEB\.html$')
+FILING = re.compile(r'^/corporate/ixbrl/INTEGRATED_FILING_(?:INDAS|BANKING|NBFC_INDAS)_\d+_(\d{14})_iXBRL_WEB\.html$')
 MAX_BYTES = 2_000_000
 UNIT_FACTORS = {'lakhs': Decimal(100000), 'crores': Decimal(10000000), 'millions': Decimal(1000000),
                 'actual': Decimal(1), 'actuals': Decimal(1), 'units': Decimal(1)}
@@ -77,13 +77,14 @@ def parse(html, url, item, at):
     url = filing_url(url)
     if not url:
         raise ValueError('Unsupported official filing URL.')
+    company_type = 'bank' if '_BANKING_' in url else 'nbfc' if '_NBFC_INDAS_' in url else 'non_financial'
     parser = Rows()
     parser.feed(html)
     rows = parser.rows
 
-    def values(label):
+    def values(label, source_rows=None):
         result = []
-        for row in rows:
+        for row in rows if source_rows is None else source_rows:
             for index, cell in enumerate(row):
                 if cell.casefold() == label.casefold():
                     result.append(row[index + 1:])
@@ -118,14 +119,25 @@ def parse(html, url, item, at):
     filed = datetime.strptime(FILING.fullmatch(urlsplit(url).path)[1], '%d%m%Y%H%M%S').replace(tzinfo=IST)
     if not start <= end <= approved <= filed.date() or filed > at:
         raise ValueError('Invalid or future filing dates.')
+    # The segment table repeats revenue labels, sometimes with total income or
+    # template zeroes. Conflicts within the primary P&L remain invalid, but a
+    # different segment disclosure must not override the issuer's main results.
+    period_rows = [i for i, row in enumerate(rows) if 'Date of start of reporting period' in row]
+    pnl_start = period_rows[0]
+    boundaries = period_rows[1:2] + [i for i, row in enumerate(rows) if i > pnl_start
+                                   and any(cell.casefold().startswith('segment revenue') for cell in row)]
+    pnl_rows = rows[pnl_start:min(boundaries) if boundaries else len(rows)]
     # Extract only the first reporting-period column; the next is usually YTD.
     def amount(label):
-        entries = {number(r[0]) for r in values(label) if r}
+        entries = {number(r[0]) for r in values(label, pnl_rows) if r}
         entries.discard(None)
         return entries.pop() if len(entries) == 1 else None
 
-    amounts = dict(revenue=amount('Revenue from operations'), profit=amount('Total profit (loss) for period'),
-                   profit_before_tax=amount('Total profit before tax'), finance_cost=amount('Finance costs'))
+    revenue_label = 'Total income' if company_type == 'bank' else 'Total Revenue From Operations' if company_type == 'nbfc' else 'Revenue from operations'
+    profit_label = 'Net profit (loss) for the period' if company_type == 'bank' else 'Total profit (loss) for period'
+    pbt_label = 'Total profit (loss) from ordinary activities before tax' if company_type == 'bank' else 'Total profit before tax'
+    amounts = dict(revenue=amount(revenue_label), profit=amount(profit_label),
+                   profit_before_tax=amount(pbt_label), finance_cost=amount('Finance costs'))
     if amounts['revenue'] is None or amounts['profit'] is None:
         raise ValueError('Filing lacks unambiguous revenue and profit rows.')
     opinion = values('Declaration of unmodified opinion or statement on impact of audit qualification')
@@ -142,8 +154,8 @@ def parse(html, url, item, at):
             leases = values('Lease liabilities')
             lease_values = [number(r[0]) for r in leases if r]
             lease_total = sum(lease_values) if len(lease_values) == 2 and all(v is not None for v in lease_values) else None
-            facts = dict(profit=first_column('Total profit (loss) for period', 1),
-                         profit_before_tax=first_column('Total profit before tax', 1),
+            facts = dict(profit=first_column(profit_label, 1),
+                         profit_before_tax=first_column(pbt_label, 1),
                          finance_cost=first_column('Finance costs', 1), equity=first_column('Total equity'),
                          assets=first_column('Total assets'), current_liabilities=first_column('Total current liabilities'),
                          borrowings_current=first_column('Borrowings, current'),
@@ -151,7 +163,7 @@ def parse(html, url, item, at):
                          operating_cash_flow=first_column('Net cash flows from (used in) operating activities'))
             annual = dict(start=year_start.isoformat(), end=end.isoformat(),
                           amounts={k: str(v) if v is not None else None for k,v in facts.items()})
-    return dict(url=url, isin=item['isin'], symbol=item['symbol'], basis=basis, unit=unit,
+    return dict(url=url, isin=item['isin'], symbol=item['symbol'], basis=basis, unit=unit, company_type=company_type,
                 start=start.isoformat(), end=end.isoformat(), filed_at=filed.isoformat(),
                 approved_on=approved.isoformat(), amounts={k: str(v) if v is not None else None for k, v in amounts.items()},
                 auditor_concern=False if clean_opinion else None, annual=annual, rows=rows)
@@ -164,11 +176,13 @@ def calculate(filings, item):
     consolidated = [f for f in filings if f['basis'] == 'consolidated']
     selected = consolidated or filings
     latest = max(selected, key=lambda f: (f['end'], f['filed_at']))
+    company_type = latest.get('company_type', 'non_financial')
     end = datetime.fromisoformat(latest['end']).date()
     start = datetime.fromisoformat(latest['start']).date()
     if not 70 <= (end-start).days <= 100:
         return None  # Annual/YTD growth is not substituted for quarterly growth.
-    matches = [f for f in selected if f['unit'] in UNIT_FACTORS and f['end'][:4] == str(end.year-1)
+    matches = [f for f in selected if f.get('company_type','non_financial') == company_type
+               and f['unit'] in UNIT_FACTORS and f['end'][:4] == str(end.year-1)
                and f['end'][4:] == latest['end'][4:] and f['start'][4:] == latest['start'][4:]]
     previous = max(matches, key=lambda f: f['filed_at'], default=None)
     # Ambiguous competing revisions cannot safely establish growth.
@@ -190,7 +204,8 @@ def calculate(filings, item):
     if latest['auditor_concern'] is False:
         metrics['auditor_concern'] = False
         citations.append(dict(key='auditor_concern', url=latest['url'], measurement_period=latest['end']))
-    annuals = [f for f in selected if f.get('annual') and f['end'] <= latest['end']]
+    annuals = [f for f in selected if f.get('company_type','non_financial') == company_type
+               and f.get('annual') and f['end'] <= latest['end']]
     annual = max(annuals, key=lambda f:(f['end'],f['filed_at']), default=None)
     if annual and (end-datetime.fromisoformat(annual['end']).date()).days <= 450:
         last_year = str(int(annual['end'][:4])-1)+annual['end'][4:]
@@ -216,26 +231,28 @@ def calculate(filings, item):
         equity=annual_value(annual,'equity'); previous_equity=annual_value(prior_annual,'equity')
         if equity is not None and previous_equity is not None and equity > 0 and previous_equity > 0:
             ratio('roe_pct',pat,(equity+previous_equity)/2,True,prior_annual)
-        ebit=pbt+finance if pbt is not None and finance is not None else None
-        assets=annual_value(annual,'assets'); liabilities=annual_value(annual,'current_liabilities')
-        previous_assets=annual_value(prior_annual,'assets'); previous_liabilities=annual_value(prior_annual,'current_liabilities')
-        if all(v is not None for v in (assets,liabilities,previous_assets,previous_liabilities)):
-            capital=assets-liabilities; previous_capital=previous_assets-previous_liabilities
-            if capital > 0 and previous_capital > 0:
-                ratio('roce_pct',ebit,(capital+previous_capital)/2,True,prior_annual)
-        debt=[annual_value(annual,k) for k in ('borrowings_current','borrowings_non_current','lease_liabilities')]
-        if all(v is not None and v >= 0 for v in debt):
-            ratio('debt_equity',sum(debt),equity)
-        ratio('interest_coverage',ebit,finance)
-        if pat is not None and pat > 0:
-            ratio('cash_profit_ratio',annual_value(annual,'operating_cash_flow'),pat)
+        if company_type == 'non_financial':
+            ebit=pbt+finance if pbt is not None and finance is not None else None
+            assets=annual_value(annual,'assets'); liabilities=annual_value(annual,'current_liabilities')
+            previous_assets=annual_value(prior_annual,'assets'); previous_liabilities=annual_value(prior_annual,'current_liabilities')
+            if all(v is not None for v in (assets,liabilities,previous_assets,previous_liabilities)):
+                capital=assets-liabilities; previous_capital=previous_assets-previous_liabilities
+                if capital > 0 and previous_capital > 0:
+                    ratio('roce_pct',ebit,(capital+previous_capital)/2,True,prior_annual)
+            debt=[annual_value(annual,k) for k in ('borrowings_current','borrowings_non_current','lease_liabilities')]
+            if all(v is not None and v >= 0 for v in debt):
+                ratio('debt_equity',sum(debt),equity)
+            ratio('interest_coverage',ebit,finance)
+            if pat is not None and pat > 0:
+                ratio('cash_profit_ratio',annual_value(annual,'operating_cash_flow'),pat)
     if not metrics:
         return None
-    return dict(isin=item['isin'], company_type='non_financial', period_end=latest['end'], basis=latest['basis'],
-                source=dict(title='NSE integrated Ind-AS filing · '+item['symbol'], url=latest['url'], published_at=latest['filed_at']),
+    return dict(isin=item['isin'], company_type=company_type, period_end=latest['end'], basis=latest['basis'],
+                source=dict(title='NSE integrated financial filing · '+item['symbol'], url=latest['url'], published_at=latest['filed_at']),
                 **metrics, notes='Quarterly growth calculated from matching periods, units and accounting basis. '
                 'Annual ROE uses total PAT / average total equity; ROCE uses (PBT + finance costs) / average '
-                '(assets - current liabilities). Debt includes borrowings and lease liabilities. Interest coverage '
+                '(assets - current liabilities), debt, interest coverage and cash/profit are calculated only '
+                'for ordinary Ind-AS issuers, not banks or NBFCs. Debt includes borrowings and lease liabilities. Interest coverage '
                 'uses (PBT + finance costs) / finance costs; cash conversion uses annual operating cash flow / PAT. '
                 'Annual calculations use the full-year YTD column, never fourth-quarter profit. '
                 'Filing timestamp is encoded in the NSE filename; board approval date is checked against it. '
@@ -245,7 +262,7 @@ def calculate(filings, item):
                 'Unsupported ratios and missing comparable periods remain unknown.')
 
 
-def discover(item, at, *, transport=None):
+def discover(item, at, *, transport=None, history=False):
     """Use the NSE website's own filing index, independently of LLM link selection."""
     url = 'https://www.nseindia.com/api/integrated-filing-results'
     params = dict(symbol=item['symbol'], index='equities', page=1, size=100,
@@ -266,7 +283,8 @@ def discover(item, at, *, transport=None):
             if annual_end > latest:
                 annual_end = annual_end.replace(year=annual_end.year-1)
             wanted = (latest,prior,annual_end,annual_end.replace(year=annual_end.year-1))
-            valid = [row for row in valid if filing_date(row['qe_Date']) in wanted]
+            if not history:
+                valid = [row for row in valid if filing_date(row['qe_Date']) in wanted]
             # Retain latest revision per period/basis, avoiding duplicate filings crowding out comparables.
             unique = {}
             for row in valid:
@@ -278,7 +296,7 @@ def discover(item, at, *, transport=None):
                     sources=[dict(url=row['ixbrl'], title=item['symbol']+' · NSE financial filing',
                                   period_end=filing_date(row['qe_Date']).isoformat(),
                                   basis='consolidated' if row.get('consolidated') == 'Consolidated' else 'standalone')
-                             for row in valid[:8]])
+                             for row in valid[:64 if history else 8]])
     except (httpx.HTTPError, ValueError, KeyError, TypeError):
         return dict(status='unavailable', url=url, sources=[])
 
@@ -290,10 +308,6 @@ def retrieve(item, sources, at, *, transport=None, log=lambda message: None, dis
                   key=lambda u: datetime.strptime(FILING.fullmatch(urlsplit(u).path)[1], '%d%m%Y%H%M%S'), reverse=True)[:8]
     result = dict(status='no_supported_filings', documents=[], failures=[], snapshot=None, index=index)
     if not urls:
-        return result
-    # Bank/NBFC filing taxonomies need their own adapter; do not apply industrial ratios.
-    if item.get('sector') == 'Financial Services':
-        result['status'] = 'unsupported_sector'
         return result
     log(f'Retrieving {len(urls)} official NSE financial filing(s).')
     filings = []

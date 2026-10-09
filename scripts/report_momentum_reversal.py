@@ -12,7 +12,7 @@ import matplotlib.pyplot as plt
 from core.research import store
 
 
-def report(control_id, reverse_id):
+def report(control_id, reverse_id, *, markdown=None):
     control, reverse = [store.read('runs/' + key) for key in (control_id, reverse_id)]
     if not control or not reverse:
         raise ValueError('Both completed reports are required.')
@@ -80,7 +80,8 @@ def report(control_id, reverse_id):
                   'Special sessions are omitted from normal-clock momentum eligibility, including any candidate whose 14-session opening-volume context contains one. Added 1 November 2024 Muhurat timing from [NSE circular CMTR64628](https://nsearchives.nseindia.com/content/circulars/CMTR64628.pdf); the existing 21 October 2025 special-session policy also applies. These days remain in the equity calendar with zero trading activity where ineligible.', '',
                   'Exploratory results: current constituents and retrospective exclusions introduce bias; corporate-action checks remain incomplete. Costs are assumptions, short eligibility/circuits/participation are unverified, and drawdown is measured at session ends. The entire historical window is exploratory. Defaults and live/paper behavior remain unchanged.', '',
                   'Reproduce the report: `.venv/Scripts/python.exe scripts/report_momentum_reversal.py ' + control_id + ' ' + reverse_id + '`.', ''])
-    (output / 'MOMENTUM_REVERSE_RESEARCH.md').write_text('\n'.join(lines), encoding='utf-8')
+    if markdown is not None:
+        Path(markdown).write_text('\n'.join(lines), encoding='utf-8')
     print(json.dumps(summary, indent=2))
 
 
@@ -88,5 +89,6 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('control_id')
     parser.add_argument('reverse_id')
+    parser.add_argument('--markdown', type=Path, help='Explicitly export a Markdown report to this path')
     args = parser.parse_args()
-    report(args.control_id, args.reverse_id)
+    report(args.control_id, args.reverse_id, markdown=args.markdown)

@@ -80,7 +80,7 @@ class DataQualityTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp, patch.object(store, 'DATA', Path(temp)):
             rows = candles()
             rows[55]['open'] = 50
-            store.write('universes/nifty50', {'instruments': [{'symbol': 'TEST', 'isin': 'TEST'}]})
+            store.write('universes/niftytotalmarket', {'instruments': [{'symbol': 'TEST', 'isin': 'TEST'}]})
             store.write('bars/TEST', {'bars': rows, 'requested_start': '2025-01-01',
                                      'requested_end': '2025-03-01', 'source': 'unit-test'})
             with self.assertRaisesRegex(ValueError, 'Price discontinuity'):
@@ -92,7 +92,7 @@ class DataQualityTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp, patch.object(store, 'DATA', Path(temp)):
             rows = candles(3)
             rows[1]['open'] = 50
-            store.write('universes/nifty50', {'instruments': [{'isin': 'INE000', 'symbol': 'TEST'}]})
+            store.write('universes/niftytotalmarket', {'instruments': [{'isin': 'INE000', 'symbol': 'TEST'}]})
             store.write('bars/INE000', {'bars': rows})
             run = {'id': 'old', 'trades': [{'symbol': 'TEST', 'entry_date': rows[0]['date'], 'exit_date': rows[2]['date']}]}
             store.write('runs/old', run)
@@ -105,7 +105,7 @@ class DataQualityTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp, patch.object(store, 'DATA', Path(temp)):
             rows = candles(3)
             rows[1]['open'] = 50
-            store.write('universes/nifty50', {'instruments': [{'isin': 'INE000', 'symbol': 'TEST'},
+            store.write('universes/niftytotalmarket', {'instruments': [{'isin': 'INE000', 'symbol': 'TEST'},
                                                             {'isin': 'INE001', 'symbol': 'MISSING'}]})
             store.write('bars/INE000', {'bars': rows})
             with TestClient(app) as client:

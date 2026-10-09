@@ -3,14 +3,17 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from core.research.bearish import BearishConfig
 
+CURRENT_UNIVERSE = 'niftytotalmarket'
+
 
 class DataPreferences(BaseModel):
     model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
-    universe: Literal["nifty50", "nifty500", "niftytotalmarket"] = Field("nifty50", title="Universe")
+    universe: Literal["niftytotalmarket"] = Field(CURRENT_UNIVERSE, title="Research universe")
 
 
 class Settings(DataPreferences):
     # Legacy/internal ranges are retained for frozen research and paper snapshots.
+    universe: Literal["nifty50", "nifty500", "niftytotalmarket"] = Field(CURRENT_UNIVERSE, title="Universe")
     start: date = Field(date(2018, 10, 1), title="History from")
     end: date = Field(date(2026, 10, 1), title="History through")
 
@@ -19,6 +22,21 @@ class Settings(DataPreferences):
         if self.start >= self.end or (self.end - self.start).days > 3653:
             raise ValueError("Choose an increasing date range of no more than ten years.")
         return self
+
+
+def current_settings(reference_id=None):
+    """Use all 750 members for current research without rewriting frozen inputs."""
+    from core.research import store
+    with store.LOCK:
+        saved = store.read('settings', {})
+        value = Settings(**{**saved, 'universe': CURRENT_UNIVERSE})
+        if saved and saved.get('universe') != CURRENT_UNIVERSE:
+            store.write('settings', {**saved, 'universe': CURRENT_UNIVERSE})
+        if reference_id:
+            reference = store.read('runs/' + reference_id, {})
+            if reference.get('universe'):
+                return Settings(**{**value.model_dump(), 'universe': reference['universe']})
+        return value
 
 
 class TradingConfig(BaseModel):
@@ -46,6 +64,7 @@ class TradingConfig(BaseModel):
     stop_pct: float = Field(8, gt=0, le=50, title="Initial stop (%)")
     winner_exit: Literal["trail_50d", "trail_30w", "take_8", "take_15", "take_25"] = Field("trail_50d", title="Winner exit")
     skip_weak_markets: bool = Field(False, title="Skip weak markets")
+    sector_filter: Literal['off', 'trend', 'trend_rs'] = Field('off', title='Sector trend filter')
     market_breadth_pct: float = Field(40, ge=0, le=100, title="Minimum market breadth (%)")
     market_min_coverage_pct: float = Field(80, gt=0, le=100, title="Minimum breadth history coverage (%)")
     ipo_max_age_days: int = Field(730, ge=1, le=3653, title="Maximum IPO age (calendar days)")
@@ -80,6 +99,8 @@ class BacktestConfig(TradingConfig):
             raise ValueError('Choose a five-minute square-off boundary between 09:20 and 15:20 IST.')
         if self.execution_horizon == 'intraday' and self.entry_mode != 'next_open':
             raise ValueError('Intraday backtests require next-session open entries.')
+        if self.sector_filter != 'off' and (self.execution_horizon != 'swing' or self.entry_mode != 'next_open'):
+            raise ValueError('Sector filters currently require swing next-session-open entries.')
         return self
 
 
@@ -93,6 +114,8 @@ class BearishBacktestConfig(BacktestConfig, BearishConfig):
 
     @model_validator(mode='after')
     def bearish_rules(self):
+        if self.sector_filter != 'off':
+            raise ValueError('Sector filters currently support long swing strategies only.')
         if self.candidate_rank == 'fundamental_score':
             raise ValueError('Fundamental score priority is available for long buy candidates only.')
         if self.skip_weak_markets or self.require_long_trend or self.require_rising_long_trend or self.min_rs_rating > 0:

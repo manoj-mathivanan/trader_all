@@ -5,7 +5,7 @@ from copy import deepcopy
 from types import SimpleNamespace
 from core.execution.paper import PaperBrokerAdapter
 from core.risk.position_sizer import percent_risk_size
-from core.research import store, data_quality, market_history, provenance, corporate_actions
+from core.research import store, data_quality, market_history, provenance, corporate_actions, sector
 from strategies.swing_patterns.patterns.signals import matches
 from core.research import bearish
 
@@ -31,13 +31,18 @@ def required_warmup(cfg):
     return max(cfg.base_days, cfg.sma_days, 50, extra)
 
 
-def simulate(datasets, cfg, *, state=None, liquidate=True, allow_entries=True, entry_warmup=0, entry_check=None, fundamental_scores=None):
+def simulate(datasets, cfg, *, state=None, liquidate=True, allow_entries=True, entry_warmup=0, entry_check=None, fundamental_scores=None, sector_gate=None, sector_observe_only=False):
     """One daily engine for research and durable paper sessions.
 
     State is copied: a failed cycle never mutates the last committed ledger.
     """
     if getattr(cfg, 'execution_horizon', 'swing') == 'intraday':
         raise ValueError('Intraday backtests require five-minute inputs. Use the backtest job workflow.')
+    if getattr(cfg, 'sector_filter', 'off') != 'off':
+        if cfg.entry_mode != 'next_open' or cfg.pattern in dict(bearish.SCREENS):
+            raise ValueError('Sector filters require long swing next-session-open entries.')
+        if sector_gate is None:
+            raise ValueError('Sector filter requires explicit captured index inputs.')
     if cfg.candidate_rank == 'fundamental_score' and fundamental_scores is None:
         raise ValueError('Fundamental ranking requires dated financial evidence.')
     if cfg.pattern in dict(bearish.SCREENS):
@@ -65,6 +70,7 @@ def simulate(datasets, cfg, *, state=None, liquidate=True, allow_entries=True, e
     total_fees, total_slippage, skipped = (state.get(k, 0) for k in ('total_fees', 'total_slippage', 'skipped'))
 
     market_cache = {}
+    sector_checks = []
     context_cache = {}
     action_log = state.get('corporate_actions', [])
     applied = {x['id'] for x in action_log}
@@ -144,6 +150,8 @@ def simulate(datasets, cfg, *, state=None, liquidate=True, allow_entries=True, e
                        'fees': p['entry_fee'] + fee})
         if 'fundamentals' in p:
             trades[-1]['fundamentals'] = p['fundamentals']
+        if 'sector' in p:
+            trades[-1]['sector'] = p['sector']
 
     for day in sorted(events):
         context_cache.clear()
@@ -191,6 +199,14 @@ def simulate(datasets, cfg, *, state=None, liquidate=True, allow_entries=True, e
             if symbol in positions or symbol in exited or (cfg.pattern == 'breakout' and i < 1) or signal_idx < entry_warmup or signal_idx < 0 or not signal(context(symbol, datasets[symbol][signal_idx]['date']), signal_idx, cfg):
                 continue
             signal_day = datasets[symbol][signal_idx]['date']
+            sector_decision = None
+            if sector_gate is not None:
+                sector_decision = sector_gate.decision(symbol, signal_day)
+                sector_decision['enforced'] = not sector_observe_only
+                sector_checks.append(dict(sector_decision, entry_date=day))
+                if not sector_decision['allowed'] and not sector_observe_only:
+                    skipped += 1
+                    continue
             if entry_check is not None and not entry_check(symbol,day):
                 skipped += 1
                 continue
@@ -226,12 +242,16 @@ def simulate(datasets, cfg, *, state=None, liquidate=True, allow_entries=True, e
             total_slippage += execution['slippage']
             orders.append({'id': f"{symbol}:{day}:buy", 'symbol': symbol, 'date': day, 'side': 'buy',
                            'quantity': qty, 'price': fill, 'fees': fee, 'status': 'FILLED', 'reason': 'Completed-bar signal'})
+            if sector_decision is not None:
+                orders[-1]['sector'] = sector_decision
             if fundamental_scores is not None:
                 orders[-1]['fundamentals'] = fundamental_scores(symbol, day)
             positions[symbol] = {'entry': fill, 'entry_date': day, 'entry_cost': qty * fill + fee,
                                  'entry_fee': fee, 'quantity': qty, 'stop': stop, 'best_close': fill,
                                  'initial_risk': qty * (fill - stop), 'age': 0,
                                  'exit_config': {k: getattr(cfg, k) for k in ('pattern', 'stop_pct', 'breakeven_r', 'winner_exit', 'trail_pct', 'max_hold_days')}}
+            if sector_decision is not None:
+                positions[symbol]['sector'] = sector_decision
             if fundamental_scores is not None:
                 positions[symbol]['fundamentals'] = fundamental_scores(symbol, day)
             marks[symbol] = b['open']
@@ -283,7 +303,7 @@ def simulate(datasets, cfg, *, state=None, liquidate=True, allow_entries=True, e
         max_dd = max(max_dd, (peak - equity) / peak * 100)
         curve.append({'date': day, 'equity': round(equity, 2), 'drawdown_pct': round((peak - equity) / peak * 100, 4)})
     wins, losses = [t for t in trades if t['pnl'] > 0], [t for t in trades if t['pnl'] < 0]
-    return {'trades': trades, 'curve': curve, 'corporate_actions': action_log,
+    return {'trades': trades, 'curve': curve, 'corporate_actions': action_log, 'sector_checks': sector_checks,
         'state': {'cash': cash, 'positions': positions, 'marks': marks, 'trades': trades, 'curve': curve,
                   'corporate_actions': action_log,
                   'orders': orders, 'last_session': curve[-1]['date'], 'peak': peak, 'max_dd': max_dd,
@@ -337,9 +357,9 @@ def available_window(settings, warmup=50):
     if loaded:
         result.update(history_start=min(r['dates'][0] for r in loaded),
                       history_end=max(r['dates'][-1] for r in loaded))
-    if ready and not missing:
+    if ready:
         start = max(max(r['dates'][warmup + 1], r['requested_start'] or r['dates'][0]) for r in ready)
-        end = min(min(r['dates'][-1], r['requested_end'] or r['dates'][-1]) for r in loaded)
+        end = min(min(r['dates'][-1], r['requested_end'] or r['dates'][-1]) for r in ready)
         if start < end:
             result.update(start=start, end=end)
     return result
@@ -351,6 +371,11 @@ def prepare(settings, cfg):
         datasets = store.read('run_data/' + cfg.comparison_run_id, {})
         if not reference_run or not datasets:
             raise ValueError('The comparison run or its frozen input snapshot is unavailable.')
+        hashes = {row['symbol']:row.get('sha256') for row in reference_run['manifest']}
+        if getattr(cfg, 'sector_filter', 'off') != 'off' and any(not hashes.get(s) for s in datasets):
+            raise ValueError('Sector comparisons require hashed frozen stock inputs.')
+        if any(hashes.get(symbol) and market_history.digest(bars) != hashes[symbol] for symbol,bars in datasets.items()):
+            raise ValueError('Frozen stock inputs are missing or changed.')
         if settings.universe != reference_run['universe']:
             raise ValueError('Select the comparison run\'s universe before using its frozen inputs.')
         if str(cfg.start) < reference_run['config']['start'] or str(cfg.end) > reference_run['config']['end']:
@@ -372,11 +397,11 @@ def prepare(settings, cfg):
     for item in universe['instruments']:
         record = store.read('bars/' + item['isin'])
         if not record:
-            raise ValueError(f"Missing data for {item['symbol']}. Complete ingestion before running.")
+            excluded.append(item['symbol'])
+            continue
         if record['requested_end'] < str(cfg.end) or record['requested_start'] > str(cfg.start):
-            raise ValueError(f"Your test requests {cfg.start} to {cfg.end}, but {item['symbol']} was downloaded for "
-                             f"{record['requested_start']} to {record['requested_end']}. "
-                             "Use the available dates shown above, or extend the requested history in Settings and fetch missing data in Market data.")
+            excluded.append(item['symbol'])
+            continue
         bars, history = market_history.prepare(item, record, reference=reference)
         if not bars:
             excluded.append(item['symbol'])
@@ -397,18 +422,28 @@ def prepare(settings, cfg):
         window = available_window(settings, warmup)
         suggestion = f" Try {window['start']} to {window['end']}." if window['start'] else ' Fetch more history first.'
         reason = ' IPO screening also requires verified listing dates in metadata/listings.json.' if cfg.pattern in ('ipo', 'ipo_breakdown') else ''
-        raise ValueError(f'No eligible symbols have the required {warmup} sessions before the test start.' + reason + suggestion)
+        raise ValueError(f'No eligible symbols cover the requested test dates with the required {warmup} sessions before the test start.' + reason + suggestion)
     if not any(str(cfg.start) <= b['date'] <= str(cfg.end) for bars in datasets.values() for b in bars):
         raise ValueError('No actual candles fall within this test interval. Choose dates within downloaded history.')
     return universe, datasets, manifest, excluded
 
 
-def run(settings, cfg, log, job_id, *, fundamental_evidence=None):
+def run(settings, cfg, log, job_id, *, fundamental_evidence=None, sector_evidence=None):
     universe, datasets, manifest, excluded = prepare(settings, cfg)
     quality = data_quality.audit(datasets, end=cfg.end)
     data_quality.require_no_anomalies(quality)
-    log(f'Testing {len(datasets)} symbols with one cash balance; {len(excluded)} excluded for warmup or IPO listing evidence.')
+    log(f'Testing {len(datasets)} symbols with one cash balance; {len(excluded)} excluded for missing history, date coverage, warmup or IPO listing evidence.')
     intraday = getattr(cfg, 'execution_horizon', 'swing') == 'intraday'
+    if sector_evidence is None and cfg.comparison_run_id:
+        saved_reference = store.read('runs/'+cfg.comparison_run_id, {}).get('sector_reference')
+        if saved_reference:
+            sector_evidence = store.read('run_sector/'+cfg.comparison_run_id, {})
+            sector.verify(sector_evidence, saved_reference['sha256'])
+        elif cfg.sector_filter != 'off':
+            raise ValueError('Reference run has no frozen sector inputs. Use Compare sector filters to capture one shared snapshot.')
+    if sector_evidence is None and cfg.sector_filter != 'off':
+        sector_evidence = sector.capture(universe)
+    sector_gate = sector.Gate(sector_evidence, cfg.sector_filter) if cfg.sector_filter != 'off' else None
     fundamental_scores = None
     if fundamental_evidence is not None or cfg.candidate_rank == 'fundamental_score':
         from core.research import fundamental_history
@@ -429,7 +464,7 @@ def run(settings, cfg, log, job_id, *, fundamental_evidence=None):
         minute_inputs = intraday_data.load_sessions(plan, universe, log)
         result = engine.simulate(datasets, cfg, minute_inputs, plan=plan)
     else:
-        result = simulate(datasets, cfg, fundamental_scores=fundamental_scores)
+        result = simulate(datasets, cfg, fundamental_scores=fundamental_scores, sector_gate=sector_gate)
     result.pop('state')  # Persistent execution state belongs to paper portfolios only.
     result.update(id=job_id, created_at=store.now(), config=cfg.model_dump(mode='json'),
                   universe=settings.universe, universe_snapshot=universe, manifest=manifest, excluded=excluded,
@@ -453,6 +488,11 @@ def run(settings, cfg, log, job_id, *, fundamental_evidence=None):
         store.write('run_fundamentals/'+job_id, fundamental_evidence)
         result['fundamental_reference'] = {k: fundamental_evidence[k] for k in ('sha256','captured_at','method','notice')}
         result['warnings'].append(fundamental_evidence['notice'])
+    if sector_evidence is not None:
+        sector.verify(sector_evidence)
+        store.write('run_sector/'+job_id, sector_evidence)
+        result['sector_reference'] = {k:sector_evidence[k] for k in ('sha256','captured_at','mapping_captured_at','notice')}
+        result['warnings'].append(sector_evidence['notice'])
     if getattr(cfg, 'comparison_run_id', None):
         reference_run = store.read('runs/' + cfg.comparison_run_id)
         result['history_reference'] = reference_run.get('history_reference', {})
@@ -479,3 +519,38 @@ def run(settings, cfg, log, job_id, *, fundamental_evidence=None):
         store.write('runs_index', runs)
     log(f"Recorded {len(result['trades'])} trades and the input/configuration snapshot.")
     return {'run_id': job_id}
+
+
+def compare_sectors(settings, reference_id, log, job_id):
+    from core.research.config import BacktestConfig
+    reference = store.read('runs/'+reference_id, {})
+    values = reference.get('config', {})
+    if reference.get('strategy_id') or values.get('execution_horizon', 'swing') != 'swing' or values.get('entry_mode') != 'next_open' or values.get('pattern') in dict(bearish.SCREENS):
+        raise ValueError('Choose a long swing next-open backtest for sector comparison.')
+    if not values:
+        raise ValueError('Reference backtest is unavailable.')
+    if not all(row.get('sha256') for row in reference.get('manifest', [])):
+        raise ValueError('Sector comparisons require hashed frozen stock inputs.')
+    snapshot = store.read('run_sector/'+reference_id) if reference.get('sector_reference') else sector.capture(reference['universe_snapshot'])
+    sector.verify(snapshot or {}, reference.get('sector_reference', {}).get('sha256'))
+    if not snapshot['mappings'] or not any(v.get('bars') for k,v in snapshot['prices'].items() if k != 'benchmark'):
+        raise ValueError('Fetch sector data before running the comparison.')
+    financial = store.read('run_fundamentals/'+reference_id) if reference.get('fundamental_reference') else None
+    if reference.get('fundamental_reference') and (not financial or financial.get('sha256') != reference['fundamental_reference']['sha256']):
+        raise ValueError('Frozen financial evidence is missing or changed.')
+    trials = []
+    for mode, label in [('off','Filter off'), ('trend','Sector trend'), ('trend_rs','Sector trend + relative strength')]:
+        cfg = BacktestConfig(**{**values, 'name':label, 'sector_filter':mode, 'comparison_run_id':reference_id})
+        identifier = job_id+'_'+mode
+        run(settings, cfg, log, identifier, fundamental_evidence=financial, sector_evidence=snapshot)
+        result = store.read('runs/'+identifier)
+        checks = result.get('sector_checks', [])
+        trials.append(dict(label=label, run_id=identifier, metrics=result['metrics'],
+                           blocked_signals=sum(not x['allowed'] for x in checks)))
+    comparison = dict(id=job_id, reference_id=reference_id, trials=trials, sector_sha256=snapshot['sha256'],
+        notice='Same frozen stock data, mapping, index history, costs and ranking. Unmapped stocks are blocked in filtered trials, so coverage can confound filter effects. Current mappings are historically biased; reserve untouched validation dates.')
+    store.write('sector/comparison/'+job_id, comparison)
+    with store.LOCK:
+        index = store.read('sector/comparisons', [])
+        store.write('sector/comparisons', [comparison, *index])
+    return dict(comparison_id=job_id)
