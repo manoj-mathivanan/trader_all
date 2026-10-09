@@ -1,7 +1,7 @@
 'use strict';
 let companyState=null, companyLoading=false, companyUniverse=null, companyScan=null, companySelectedReview=null;
 let companyFilters={query:'', minimum:0, complete:false, candidates:false};
-let companyPendingJob=null;
+let companyPendingJob=null, companyLastCompletedMarketFetch=null;
 const companyMetricLabels={revenue_growth_pct:'Latest quarter revenue growth YoY (%)',profit_growth_pct:'Latest quarter PAT growth YoY (%)',roe_pct:'Trailing annual ROE (%)',roce_pct:'Trailing annual ROCE (%)',debt_equity:'Latest debt / equity',interest_coverage:'Trailing annual interest coverage',cash_profit_ratio:'Annual operating cash flow / PAT',promoter_pledge_pct:'Promoter shares pledged (%)',net_npa_pct:'Net NPA (%)',capital_adequacy_pct:'Capital adequacy (%)'};
 
 async function loadCompany(){
@@ -25,7 +25,7 @@ function companyReviewView(){
 }
 function companyHistoryCoverage(){
   const h=companyState.history_coverage;if(!h)return '';
-  return `<section class="panel"><div class="panel-head"><h2>Historical financial coverage</h2></div><div class="panel-body"><p>${h.validated_symbols}/${h.total_symbols} stocks with validated snapshots · ${h.retained_snapshot_versions} retained versions · ${h.companies_with_multiple_snapshot_periods} stocks with multiple snapshot quarters.</p><p>Snapshot periods: ${esc(Object.entries(h.snapshot_periods).map(([day,n])=>day+' ('+n+' stocks)').join(' · ')||'None')}.</p><p>${h.source_filings} comparative source filings. Source periods: ${esc(Object.entries(h.source_periods).map(([day,n])=>day+' ('+n+' filings)').join(' · ')||'None')}.</p><p>${esc(h.notice)}</p></div></section>`;
+  return `<section class="panel"><div class="panel-head"><h2>Historical financial coverage</h2></div><div class="panel-body"><p>Coverage measured: ${when(h.measured_at)}.</p><p>${h.validated_symbols}/${h.total_symbols} stocks with validated snapshots · ${h.retained_snapshot_versions} retained versions · ${h.companies_with_multiple_snapshot_periods} stocks with multiple snapshot quarters.</p><p>Snapshot periods: ${esc(Object.entries(h.snapshot_periods).map(([day,n])=>day+' ('+n+' stocks)').join(' · ')||'None')}.</p><p>${h.source_filings} comparative source filings. Source periods: ${esc(Object.entries(h.source_periods).map(([day,n])=>day+' ('+n+' filings)').join(' · ')||'None')}.</p><p>${esc(h.notice)}</p></div></section>`;
 }
 function companyScanSummary(){return `<p>Signal session: <strong>${esc(companyScan.as_of||'No completed history')}</strong> · ${companyScan.matches.length} technical matches · First ${companyScan.config.max_positions||5} by fundamental score: ${esc((companyScan.recommended||companyScan.matches.slice(0,5)).map(x=>x.symbol+' ('+x.fundamental_score+')').join(', ')||'None')} · ${companyScan.excluded.length} exclusions · market gate ${companyScan.market_gate_passed?'passed':'failed'}.</p><p>${esc(companyScan.notice)}</p><details><summary>Excluded history</summary><ul>${companyScan.excluded.map(x=>`<li>${esc(x.symbol)}: ${esc(x.reason)}</li>`).join('')||'<li>None</li>'}</ul></details>`;}
 function companyTable(){
@@ -143,16 +143,24 @@ document.addEventListener('submit',async event=>{
   finally{button.disabled=false;}
 });
 setInterval(async()=>{
-  if(!companyPendingJob||!state)return;
+  if(typeof state==='undefined'||!state)return;
+  const completed=state.market_fetch?.completed_at;
+  if(completed&&completed!==companyLastCompletedMarketFetch){
+    companyLastCompletedMarketFetch=completed;companyState=null;
+    if(currentView==='company')await loadCompany();
+  }
+  if(!companyPendingJob)return;
   const job=state.jobs.find(j=>j.id===companyPendingJob);
   if(!job||!['success','failed'].includes(job.status))return;
   companyPendingJob=null;
-  if(job.status==='success'){
+  const fundamentalsJob=job.type==='Quarterly fundamentals pull';
+  if(job.status==='success'||fundamentalsJob){
     await loadCompany();
     if(currentView==='company'&&!$('#modal').open&&job.result?.review_id){
       try{companyShowReview(await api('company/reviews/'+encodeURIComponent(job.result.review_id)));}catch(e){toast(e.message);}
     }
-  }else toast('Company web research failed. See Jobs & logs for the reason.');
+  }
+  if(job.status!=='success')toast(fundamentalsJob?'Fundamentals checked with some failures. Saved evidence is refreshed; inspect Jobs & logs.':'Company web research failed. See Jobs & logs for the reason.');
 },3000);
 document.addEventListener('input',event=>{
   if(!['company-search','company-minimum','company-complete','company-candidates'].includes(event.target.id))return;

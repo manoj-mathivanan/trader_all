@@ -885,6 +885,44 @@ POST /api/company/fundamentals-pull queues a standalone fundamental refresh. Exi
 quality-check APIs and source review routes use the shared origin/auth guards. Deploy source
 through GitHub after tests/backup, then trigger the combined job separately locally/production.
 
+Execution and history coverage verified on 9 October 2026: published source commit `a658e1a`
+passed GitHub CI and was deployed after a successful backup (Result=success, ExecMainStatus=0).
+Local combined job `b8b503e6e1b7` and production job `381c05672afa` each attempted all 750
+stocks. Both saved daily and five-minute data for 750/750 stocks with zero candle failures.
+Windows were daily 2025-10-08–2026-10-08 and five-minute 2026-09-29–2026-10-08;
+production downloaded 183,180 daily and 393,750 five-minute candles. Older files were retained.
+
+Both environments have 567 validated financial snapshots and 183 stocks without validated
+fundamentals: 118 unsupported (including the financial-sector adapter limitation) and 65 failures.
+Of the 65 failures, 59 could not validate the latest indexed quarter and six had no supported
+NSE Ind-AS filings. These are genuine missing/unsupported evidence, not successful scores.
+The combined jobs are therefore marked failed/partial despite complete candles; failed stocks
+were processed without aborting the remaining universe. Local results were 566 awaiting the
+next published quarter, one already-current snapshot, 118 unsupported and 65 failures. Production
+started its own independent cache and saved 567 new snapshots. No local financial data was copied.
+
+Each environment retains one scored snapshot per covered stock: one period ended 2026-03-31,
+565 ended 2026-06-30 and one ended 2026-09-30. There are 567 distinct company-periods and zero
+companies with multiple scored snapshot quarters. The 2,103 unique supporting source filings
+have period counts: 2024-09-30:1; 2025-03-31:476; 2025-06-30:504; 2025-09-30:1;
+2026-03-31:555; 2026-06-30:565; 2026-09-30:1. These include annual financial evidence and
+selected year-ago quarterly comparisons. One old source period must not be described as two
+years of complete financial history for all companies. Source publication dates range from
+2025-04-08 through 2026-10-08; collection happened later. A complete consecutive-quarter
+historical fundamentals panel does not yet exist.
+
+All 567 local snapshots passed the full offline source/hash/identity/metric audit (183 missing,
+zero validation failures). Production validated identity, source hashes and recomputed metrics
+for all 567 snapshots while pulling; a separate integrity check re-hashed all 2,103 referenced
+source files with zero mismatches. Its safe report is company/fundamentals_integrity.json.
+The isolated release passed 189 Python tests locally and in the production image, plus frontend
+checks. Live UI/API checks confirmed all 750 production company rows and the historical report.
+Local API was reloaded after its job finished to expose the new history route, retaining its
+existing research credentials. The Funds page now refreshes saved evidence after a partial
+standalone pull or completion of the combined fetch, shows the coverage measurement timestamp,
+and guards its timer while the main application loads. It does not repeatedly reload an
+unchanged completed fetch; frontend regressions cover all three cases.
+
 ### API, security and persistence contract
 
 All routes use the same origin and optional Basic Auth (unset in the public MVP). Bind 127.0.0.1:8765 with one process, never reload/multiple workers. Local launch disables proxy headers. Production trusts proxy headers only from 127.0.0.1; Caddy removes X-Forwarded-For so the peer remains loopback. Accept loopback peers and localhost/loopback hosts (testclient/testserver in tests), plus the hostname of explicitly configured TRADER_PUBLIC_ORIGIN. Mutations require `X-Trader-Request: local-ui`; when Origin is present, require exact TRADER_PUBLIC_ORIGIN for the public host, otherwise exact base-origin match. These guards are not a login or authorization system. Security response headers: nosniff, DENY frames,
