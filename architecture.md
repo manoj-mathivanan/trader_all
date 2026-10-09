@@ -899,7 +899,7 @@ index for up to the preceding 800 calendar days, choosing up to eight latest rev
 latest quarter, its prior-year quarter, the latest completed annual March period and its prior-year
 annual comparator. The 800-day search is **not** a promise of 800 days of stored quarterly history.
 Only those selected source periods are downloaded. Missing balance sheet/annual inputs stay unknown.
-Financial Services bank/NBFC adapters and other unsupported forms remain missing/unsupported.
+BANKING and NBFC_INDAS taxonomies are supported by the remaining-data refresh contract below; other unsupported forms remain incomplete.
 P/E, full promoter-pledge and governance research are not inferred from missing fields.
 
 Skip a stored snapshot covering the latest completed calendar quarter until the next quarter ends.
@@ -3509,3 +3509,50 @@ local data into production.
 For container test execution, bind /opt/trader/tests to /app/tests, /opt/trader/scripts to
 /app/scripts and /opt/trader/deploy to /app/deploy (all read-only); run the unittest suite
 with TRADER_ENV=local, TRADER_DATA_DIR=/tmp/trader-test-data and TRADER_PRIVATE_DIR unset.
+
+
+### Remaining-data refresh and one-year fundamental history contract (9 October 2026)
+
+The owner requested the remaining data in both installations and selected one year of
+quarterly fundamentals. Backfill the four most recent published financial quarters per
+issuer; source comparables and annual filings may be older. Do not label incomplete
+publication periods or unsupported filings as complete history. Previously recorded
+567-snapshot/183-missing and 500-stock sector coverage counts describe the earlier audit,
+not the final state after this refresh.
+The parser supports exact official NSE INDAS, BANKING and NBFC_INDAS filing filenames,
+with issuer ISIN/symbol, units, basis, dates and SHA256 validation. Company type follows
+the filing taxonomy, not a blanket Financial Services exclusion. Primary P&L amounts
+are scoped to the first reporting-period table, ending before the next reporting-period
+header or segment revenue section. Conflicting values within that primary table still
+fail; segment disclosures never replace quarterly results. BANKING revenue is Total
+income and group PAT is Net profit (loss) for the period. NBFC revenue is Total Revenue
+From Operations and PAT is Total profit (loss) for period. Quarter growth compares the
+same quarter, basis and taxonomy after monetary unit normalization. ROE can use supported
+annual PAT/average-equity evidence, but banks/NBFCs never receive industrial ROCE,
+debt/equity, interest coverage or cash/PAT ratios. NPA, capital adequacy, pledge and
+risk fields remain unknown unless independently supported; template zeros are not inferred
+as sound risk metrics. Unsupported taxonomies (including unimplemented insurance forms)
+remain incomplete instead of being coerced into these formats.
+Run `python scripts/pull_fundamentals_history.py --quarters 4` with the installation's
+TRADER_DATA_DIR. Optional --symbols limits an operational retry; --workers accepts 1–3
+(default 3). Discovery retains intermediate quarters from the official 800-day index,
+up to 64 latest-revision period/basis sources; normal current-quarter discovery retains
+its existing eight-source behavior. Each period prefers consolidated when published,
+selects its year-ago quarter and available preceding March/December annual comparables,
+and retrieves at most eight files. Reuse original cached HTML only after its SHA256
+matches; otherwise request the official URL again. Validate archived bytes and recompute
+metrics before retaining a scored snapshot. Per-stock and per-period failures continue.
+New versions go to company/fundamentals/<isin>/history/<id>.json. Only a snapshot at
+or after the current financial period can update the latest record; historical collections
+cannot replace newer current evidence. Equivalent snapshots are retained without duplicate
+versions. Preserve actual source published_at and today's recorded_at: never backdate
+collection or make these newly collected snapshots eligible for earlier paper/backtest
+choices. Report each target period's added/retained/unavailable status in
+company/fundamentals_history_pull.json and refresh 750-stock cached coverage on completion.
+The remaining-data operation separately imports sourced listing dates against all 750
+ISINs, refreshes sector mappings for the Total Market universe and all 11 sector indices
+plus Nifty 500, retries EMBDL's April/May internal daily gaps, and downloads one-minute
+candles for the same rolling ten calendar days used by five-minute history. Never delete
+older sessions. Validate timezone, OHLCV, duplicates and minute boundaries before writes;
+report absent minutes and preserve gaps when providers cannot supply them. An unmapped
+sector because of ambiguous/no index classification is not fixed by inventing an index.

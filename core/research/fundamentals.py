@@ -82,6 +82,8 @@ def validate(snapshot, documents, item, at):
     rebuilt = official_filings.calculate(parsed, item)
     if not rebuilt:
         raise ValueError('No validated financial metrics.')
+    if snapshot['company_type'] != rebuilt['company_type']:
+        raise ValueError('Filing taxonomy classification mismatch.')
     for field in FundamentalInput.model_fields:
         if field.endswith('_pct') or field in ('debt_equity','interest_coverage','cash_profit_ratio','auditor_concern','governance_concern'):
             if snapshot.get(field) != rebuilt.get(field):
@@ -104,13 +106,9 @@ def pull_stock(item, *, at=None, retry_failed=False, log=lambda _:None):
     period = record.get('last_period_end')
     if period and period >= completed_quarter(today).isoformat():
         return dict(symbol=item['symbol'], isin=item['isin'], status='skipped_current', period_end=period)
-    if record.get('last_checked_at', '')[:10] == at.isoformat()[:10] and not (retry_failed and record.get('pull_status')=='failed'):
+    if record.get('last_checked_at', '')[:10] == at.isoformat()[:10] and not (retry_failed and record.get('pull_status') in ('failed','unsupported')):
         return dict(symbol=item['symbol'], isin=item['isin'], status='skipped_checked_today', period_end=period)
     record.update(company=item, last_attempted_at=at.isoformat(), last_checked_at=at.isoformat())
-    if item.get('sector') == 'Financial Services':
-        record.update(pull_status='unsupported', reason='Bank/NBFC filing adapter is not implemented.')
-        store.write(path, record)
-        return dict(symbol=item['symbol'], isin=item['isin'], status='unsupported')
     try:
         index = official_filings.discover(item, at)
         if index['status'] != 'available':

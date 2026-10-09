@@ -28,6 +28,50 @@ def document(year=2026, revenue='1,10,000.00', profit='(1,200.00)', unit='Lakhs'
 
 
 class OfficialFilingTests(unittest.TestCase):
+    def test_bank_and_nbfc_growth_uses_taxonomy_and_no_industrial_ratios(self):
+        for taxonomy,kind,revenue,profit in (
+            ('BANKING','bank','Total income','Net profit (loss) for the period'),
+            ('NBFC_INDAS','nbfc','Total Revenue From Operations','Total profit (loss) for period')):
+            with self.subTest(kind=kind):
+                current=document(profit='1200').replace('Revenue from operations',revenue).replace('Total profit (loss) for period',profit)
+                previous=document(year=2025,revenue='100000',profit='1000').replace('Revenue from operations',revenue).replace('Total profit (loss) for period',profit)
+                parsed=filing.parse(current,URL.replace('FILING_INDAS_','FILING_'+taxonomy+'_'),ITEM,AT)
+                prior=filing.parse(previous,PRIOR.replace('FILING_INDAS_','FILING_'+taxonomy+'_'),ITEM,AT)
+                snapshot=filing.calculate([parsed,prior],ITEM)
+                self.assertEqual(snapshot['company_type'],kind)
+                self.assertAlmostEqual(snapshot['revenue_growth_pct'],10)
+                self.assertAlmostEqual(snapshot['profit_growth_pct'],20)
+                for field in ('roce_pct','debt_equity','interest_coverage','cash_profit_ratio','net_npa_pct','capital_adequacy_pct'):
+                    self.assertNotIn(field,snapshot)
+
+    def test_history_discovery_keeps_intermediate_quarters(self):
+        payload = {'data': [dict(symbol='TCS',qe_Date=period,consolidated='Consolidated',ixbrl=URL)
+                            for period in ('30-Jun-2026','31-Mar-2026','31-Dec-2025','30-Sep-2025')]}
+        transport = httpx.MockTransport(lambda request:httpx.Response(200,json=payload))
+        current = filing.discover(ITEM,AT,transport=transport)
+        history = filing.discover(ITEM,AT,transport=transport,history=True)
+        self.assertNotIn('2025-12-31',{s['period_end'] for s in current['sources']})
+        self.assertEqual({s['period_end'] for s in history['sources']},
+                         {'2026-06-30','2026-03-31','2025-12-31','2025-09-30'})
+
+    def test_segment_revenue_does_not_replace_primary_results(self):
+        segment = ('<table><tr><td>Date of start of reporting period</td><td>01-04-2026</td></tr>'
+                   '<tr><td>Segment Revenue (Income)</td></tr>'
+                   '<tr><td>Revenue from operations</td><td>0</td></tr>'
+                   '<tr><td>Total profit (loss) for period</td><td>999999</td></tr></table>')
+        parsed = filing.parse(document(profit='1200') + segment, URL, ITEM, AT)
+        self.assertEqual(parsed['amounts']['revenue'], '110000.00')
+        self.assertEqual(parsed['amounts']['profit'], '1200')
+        snapshot = filing.calculate([parsed, self.parse(year=2025, revenue='100000', profit='1000')], ITEM)
+        self.assertAlmostEqual(snapshot['revenue_growth_pct'], 10)
+        self.assertAlmostEqual(snapshot['profit_growth_pct'], 20)
+
+    def test_conflicting_primary_revenue_is_still_rejected(self):
+        conflict = '<tr><td>Revenue from operations</td><td>123</td></tr>'
+        html = document().replace('</table>', conflict + '</table>')
+        with self.assertRaisesRegex(ValueError, 'unambiguous'):
+            filing.parse(html, URL, ITEM, AT)
+
     def test_full_year_ratios_use_ytd_and_average_balance_sheet(self):
         def annual_doc(year, equity, assets, liabilities):
             html=document(year=year, profit='100')
@@ -124,7 +168,10 @@ class OfficialFilingTests(unittest.TestCase):
             self.assertIsNone(filing.filing_url(url))
         result = filing.retrieve(ITEM, [{'url': 'https://example.com/results'}], AT)
         self.assertEqual(result['status'], 'no_supported_filings')
-        self.assertEqual(filing.retrieve({**ITEM,'sector':'Financial Services'}, [{'url':URL}], AT)['status'], 'unsupported_sector')
+        with tempfile.TemporaryDirectory() as directory, patch.object(store,'DATA',Path(directory)):
+            response=httpx.MockTransport(lambda request:httpx.Response(200,headers={'content-type':'text/html'},text=document()))
+            financial=filing.retrieve({**ITEM,'sector':'Financial Services'}, [{'url':URL}], AT,transport=response)
+            self.assertEqual(financial['status'],'available')
 
     def test_exchange_index_discovers_current_and_prior_without_llm_sources(self):
         def respond(request):
