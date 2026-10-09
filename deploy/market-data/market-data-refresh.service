@@ -9,4 +9,3 @@ ExecStart=/opt/market-data/venv/bin/python /opt/market-data/sync_market_refresh.
 Nice=10
 MemoryMax=256M
 MemorySwapMax=256M
-

@@ -788,7 +788,120 @@ suite. All 136 release tests also passed in the deployed production image using 
 isolated state and mounted test/scripts fixtures. Live production bootstrap and JavaScript
 rendering confirmed Universe-only settings, both resolved windows and progress/count display.
 
+### Fundamentals included in Market data fetch — 9 October 2026
+
+Market data → Fetch prices & fundamentals now runs three stages for the same current 750-stock
+Nifty Total Market universe: rolling-year daily candles, last-ten-calendar-day five-minute
+candles, then quarterly fundamentals. Candle windows and retention remain as specified above.
+The fundamentals stage uses the official NSE integrated-financials index and direct NSE Ind-AS
+HTML filings; no provider token, LLM or paid data key is needed for that stage. One failed
+stock must not abort the remaining fundamental checks. Unexpected per-stock exceptions expose
+only their class. A fundamentals-stage failure cannot undo saved candles. The market_fetch
+result has a nested fundamentals summary; any failed stage/stock marks the job partial/failed.
+Unsupported financial taxonomies are counted honestly, not turned into fabricated snapshots.
+
+Fundamentals implementation files: core/research/fundamentals.py (pull/lock/validation/coverage),
+core/research/official_filings.py (official index/parser/calculation), and core/research/company_review.py
+(validated input schema, deterministic scorer, source/date eligibility and company overview).
+The company API router and company-review.js make the existing Fundamentals page available in
+production. This publication adds the data fetch, evidence view and quality checks; it does not
+change existing production paper-entry predicates or historical backtest priority. Local paper
+and research experiments in other unfinished work retain their own separate scope.
+
+For each stock keep company, snapshot, score/checks, source documents, validation, latest indexed
+period, last_period_end, next_quarter_end, last_checked_at, last_attempted_at and last_pulled_at.
+Latest records live in company/fundamentals/{ISIN}.json; each successful version is also retained
+under company/fundamentals/{ISIN}/history/{snapshot_id}.json. Raw HTML and parsed financial facts
+are content-addressed in company/filings/{sha256}.html and .json. Validate exact identity, financial
+period/publication time, accounting basis, INR units, hashes and recomputed metrics before saving.
+Failed updates retain older validated snapshots. Never delete older versions or source files.
+
+Prefer consolidated filings for the newest indexed period, otherwise standalone. Query the NSE
+index for up to the preceding 800 calendar days, choosing up to eight latest revisions for the
+latest quarter, its prior-year quarter, the latest completed annual March period and its prior-year
+annual comparator. The 800-day search is **not** a promise of 800 days of stored quarterly history.
+Only those selected source periods are downloaded. Missing balance sheet/annual inputs stay unknown.
+BANKING and NBFC_INDAS taxonomies are supported by the remaining-data refresh contract below; other unsupported forms remain incomplete.
+P/E, full promoter-pledge and governance research are not inferred from missing fields.
+
+Skip a stored snapshot covering the latest completed calendar quarter until the next quarter ends.
+Otherwise check the index at most once per UTC day; when the next quarter remains unpublished,
+retain the existing snapshot without redownloading its source filings. The explicit combined
+Market data fetch retries previously failed stocks even if checked today (`retry_failed=True`).
+Same-quarter revisions are not reingested by this policy. Standalone pull API/CLI retains its
+ordinary daily-skip behavior, with CLI --retry-failed for an explicit same-day retry.
+Use a cross-process filesystem lock so a standalone pull cannot overlap the combined pull.
+
+Scored nonfinancial fields: quarterly revenue growth YoY (15 points if >=10%), PAT growth YoY
+(20 if >=10%), ROE (15 if >=12%), ROCE (10 if >=15%), debt/equity (10 if <=1), interest coverage
+(5 if >=3), annual operating cash flow/PAT (5 if >=0.8), pledging (10 if <=5%), no auditor concern
+(5) and no governance concern (5). Missing metrics receive zero points and reduce evidence coverage.
+Financial-sector inputs have separate NPA/capital-adequacy rules, but the filing downloader does
+not yet populate them. Scores are experimental and must not be described as validated predictors.
+Financial periods older than 180 days are flagged stale; source publication and recorded time
+are both respected when choosing a snapshot for a given decision time.
+
+Progress/checkpoints: company/fundamentals_pull.json holds job_id, started_at, total_symbols,
+counts by status, stock results, completed_at, partial and coverage. The nested market_fetch
+fundamentals object returns this summary. company/fundamentals_coverage.json is measured at
+completion and distinguishes validated stocks, missing stocks, pull statuses, scored snapshot
+period counts, retained versions, distinct company-periods, stocks with multiple snapshot periods,
+unique comparative source filings, source period counts and first/last source publication.
+GET /api/company/fundamentals-history returns the cached measurement, computing it when absent.
+GET /api/company includes history_coverage. The Fundamentals page displays it separately from
+scores; Market data shows validated coverage, updated/failed/unsupported counts and the page link.
+The archive contains comparative quarterly and annual evidence, not a complete consecutive-quarter
+scored history; older filings may have been collected retrospectively. Current scores must never
+be substituted into historical decisions. company/fundamentals_validation.json separately records
+an offline audit of checksums, identity, periods and metric reconstruction.
+
+Operational commands: `python scripts/pull_fundamentals.py` (Total Market default),
+`--retry-failed`, `--symbols TCS STLTECH` for focused retries, and `--validate-only` for an offline
+source audit. Production runs the same command within its container/state mounts; tokens and
+all source/price/fundamental data remain installation-specific and excluded from Git/images.
+POST /api/company/fundamentals-pull queues a standalone fundamental refresh. Existing company
+quality-check APIs and source review routes use the shared origin/auth guards. Deploy source
+through GitHub after tests/backup, then trigger the combined job separately locally/production.
+
 ## API, security, storage and recovery
+
+Execution and history coverage verified on 9 October 2026: published source commit `a658e1a`
+passed GitHub CI and was deployed after a successful backup (Result=success, ExecMainStatus=0).
+Local combined job `b8b503e6e1b7` and production job `381c05672afa` each attempted all 750
+stocks. Both saved daily and five-minute data for 750/750 stocks with zero candle failures.
+Windows were daily 2025-10-08–2026-10-08 and five-minute 2026-09-29–2026-10-08;
+production downloaded 183,180 daily and 393,750 five-minute candles. Older files were retained.
+
+Both environments have 567 validated financial snapshots and 183 stocks without validated
+fundamentals: 118 unsupported (including the financial-sector adapter limitation) and 65 failures.
+Of the 65 failures, 59 could not validate the latest indexed quarter and six had no supported
+NSE Ind-AS filings. These are genuine missing/unsupported evidence, not successful scores.
+The combined jobs are therefore marked failed/partial despite complete candles; failed stocks
+were processed without aborting the remaining universe. Local results were 566 awaiting the
+next published quarter, one already-current snapshot, 118 unsupported and 65 failures. Production
+started its own independent cache and saved 567 new snapshots. No local financial data was copied.
+
+Each environment retains one scored snapshot per covered stock: one period ended 2026-03-31,
+565 ended 2026-06-30 and one ended 2026-09-30. There are 567 distinct company-periods and zero
+companies with multiple scored snapshot quarters. The 2,103 unique supporting source filings
+have period counts: 2024-09-30:1; 2025-03-31:476; 2025-06-30:504; 2025-09-30:1;
+2026-03-31:555; 2026-06-30:565; 2026-09-30:1. These include annual financial evidence and
+selected year-ago quarterly comparisons. One old source period must not be described as two
+years of complete financial history for all companies. Source publication dates range from
+2025-04-08 through 2026-10-08; collection happened later. A complete consecutive-quarter
+historical fundamentals panel does not yet exist.
+
+All 567 local snapshots passed the full offline source/hash/identity/metric audit (183 missing,
+zero validation failures). Production validated identity, source hashes and recomputed metrics
+for all 567 snapshots while pulling; a separate integrity check re-hashed all 2,103 referenced
+source files with zero mismatches. Its safe report is company/fundamentals_integrity.json.
+The isolated release passed 189 Python tests locally and in the production image, plus frontend
+checks. Live UI/API checks confirmed all 750 production company rows and the historical report.
+Local API was reloaded after its job finished to expose the new history route, retaining its
+existing research credentials. The Funds page now refreshes saved evidence after a partial
+standalone pull or completion of the combined fetch, shows the coverage measurement timestamp,
+and guards its timer while the main application loads. It does not repeatedly reload an
+unchanged completed fetch; frontend regressions cover all three cases.
 
 ### API, security and persistence contract
 
@@ -4871,6 +4984,9 @@ action; all 750 records declare adjustment status unverified. Daily gap calendar
 saved benchmark sessions locally and majority-observed stock sessions in production, not
 independently verified exchange holiday calendars. Never synthesize missing candles or infer
 adjustment factors or listing dates from first prices to resolve these findings.
+
+
+### Remaining-data refresh and one-year fundamental history contract (9 October 2026)
 
 
 ### Remaining-data refresh and one-year fundamental history contract (9 October 2026)
