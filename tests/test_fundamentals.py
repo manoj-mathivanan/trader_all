@@ -1,7 +1,7 @@
 import hashlib
 import tempfile
 import unittest
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 from core.research import fundamentals as f, official_filings as nse, store, company_review as cr
@@ -84,6 +84,37 @@ class FundamentalsTests(unittest.TestCase):
         with patch.object(nse,'discover') as discover:
             self.assertEqual(f.pull_stock(ITEM,at=datetime(2026,8,10,tzinfo=timezone.utc))['status'],'skipped_current')
             discover.assert_not_called()
+
+    def test_successful_check_reused_across_midnight_but_rechecked_after_24_hours(self):
+        checked = datetime(2026,10,8,23,30,tzinfo=timezone.utc)
+        self.pull(checked)
+        with patch.object(nse,'discover',return_value=self.index) as discover, patch.object(nse,'retrieve') as retrieve:
+            self.assertEqual(f.pull_stock(ITEM,at=checked+timedelta(hours=1))['status'],'skipped_recent_check')
+            discover.assert_not_called()
+            self.assertEqual(f.pull_stock(ITEM,at=checked+timedelta(hours=24))['status'],'awaiting_next_quarter')
+            discover.assert_called_once()
+            retrieve.assert_not_called()
+
+    def test_bulk_cached_refresh_has_no_network_or_per_company_delay(self):
+        self.pull()
+        with patch.object(nse,'discover') as discover, patch.object(nse,'retrieve') as retrieve, \
+             patch.object(f.time,'sleep') as sleep, patch.object(store,'write', wraps=store.write) as write:
+            result=f.pull([ITEM]*75, at=AT+timedelta(hours=1))
+        self.assertEqual(result['counts'],{'skipped_checked_today':75})
+        discover.assert_not_called()
+        retrieve.assert_not_called()
+        sleep.assert_not_called()
+        progress_writes=[call for call in write.call_args_list if call.args[0]=='company/fundamentals_pull']
+        self.assertEqual(len(progress_writes),5)  # Start, three checkpoints, completion.
+
+    def test_pull_passes_retained_documents_for_new_quarter_comparables(self):
+        self.pull()
+        saved=store.read(f.key(ITEM['isin']))
+        self.index['sources'][0]['period_end']='2026-09-30'
+        with patch.object(nse,'discover',return_value=self.index), \
+             patch.object(nse,'retrieve',return_value=dict(snapshot=None)) as retrieve:
+            f.pull_stock(ITEM,at=AT+timedelta(days=1))
+        self.assertEqual(retrieve.call_args.kwargs['cached_documents'],saved['documents'])
 
     def test_unpublished_next_quarter_checks_index_without_redownload(self):
         self.pull()

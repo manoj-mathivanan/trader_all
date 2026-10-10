@@ -558,6 +558,39 @@ the existing portfolio's frozen membership and accounting; any broader-universe 
 requires explicitly designed separate portfolio support or a versioned migration, never a
 silent universe refresh or reset.
 
+Production diagnosis on 9 October 2026: scheduled job `900e34361eb5` started at 16:15 IST and
+completed at 16:24 IST, processing session 2026-10-08 with zero fills and three retained positions.
+Its saved fundamental_checks explicitly blocked CUPID and PTCIL with missing validated evidence
+and 0% coverage. Read-only reconstruction found both technical predicates true on signal date
+2026-10-07; the fundamental gate ran before sizing. Weak-market filtering remained disabled;
+cash was INR 67,176.24 and 3/5 position slots were occupied. PTCIL also would size to zero under
+the 1% risk budget (roughly INR 998 versus INR 2,200 modeled risk for one share). CUPID would
+size to 32 shares if the fundamental gate allowed it. These are diagnostics, not executed orders.
+
+After the owner pulled fundamentals, current production checks showed CUPID score 65/coverage
+70% and PTCIL score 45/coverage 75%, both for financial period 2026-06-30. The saved buy screen
+requires score >=60, coverage >=80% and period age <=180 days; neither candidate passes.
+Snapshots were recorded on October 9 after the October 8 entry time, so point-in-time checks
+for that entry still correctly report unavailable evidence. Earlier manual retry `0eebfd406b8f`
+completed at 23:02 IST with sessions=0 and checkpoint 2026-10-08. Owner-authorized fresh retry
+`319d7bedc40a` was then submitted to refresh/check forward availability. Do not reopen or reset
+the processed checkpoint, backdate financial knowledge, lower thresholds or insert retroactive
+orders merely to make a retry produce fills. Current data availability and completed checkpoints
+must determine whether the next cycle has any new session to commit.
+Owner change later on 9 October 2026: set the production Swing fundamental buy screen's
+`min_coverage_pct` from 80 to 60 via `PUT /api/company/buy-screen/swing_patterns`.
+Preserve `min_score=60` and `max_age_days=180`; these are stored screen values, not changed
+schema defaults. The update was applied during retry `319d7bedc40a`'s candle refresh, before
+the cycle reads the fundamental screen for new entry checks. Current-time API verification
+then allowed CUPID (score 65, coverage 70%, no block reasons) and still blocked PTCIL solely
+on score 45 below 60 (coverage 75% now passes). This does not change evidence availability
+timestamps, reopen an already processed session or guarantee a future technical signal.
+Retry `319d7bedc40a` completed successfully on October 9 at 23:35 IST with sessions=0:
+the common available candle boundary remained 2026-10-08, already processed. No new orders
+were produced and the portfolio checkpoint/accounting remained unchanged. The lowered
+coverage requirement is persisted for subsequent entry decisions; CUPID's current-time
+fundamental eligibility must not be treated as a retroactive fill instruction.
+
 Require requested coverage for every symbol; hash prior processed OHLCV through last_session
 and halt if any processed data changed. Use minimum observed final date across symbols as end,
 max(start_session,last_session+one calendar day) as start; require per-symbol warmup. No new
@@ -4907,7 +4940,7 @@ Raw run ledgers, equity curves and summary are retained in `artifacts/intraday_c
 Source added in the shared checkout during this consolidation: core/research/sector.py, Swing engine/paper integration and UI/API controls. This is a source snapshot, not confirmation of deployment or profitable comparison results.
 
 - Modes: off (default), trend, trend_rs. Only long Swing next_open research supports enforcement; bearish and intraday Swing reject it.
-- Fetch explicitly downloads 11 official sector constituent CSVs: Bank, Financial Services, IT, Auto, Pharma, Healthcare, FMCG, Metal, Realty, Oil & Gas, Consumer Durables. Exact ISIN membership is preferred. Bank takes precedence over Financial Services and Pharma over Healthcare only for verified membership overlaps. Otherwise use a uniquely matching official industry label; ambiguity remains unmapped. Incomplete mapping downloads retain prior mapping and fail rather than infer partial uniqueness.
+- Fetch explicitly downloads 21 official sector constituent CSVs: Bank, Financial Services, IT, Auto, Pharma, Healthcare, FMCG, Metal, Realty, Oil & Gas, Consumer Durables, Capital Goods, Cement, Chemicals, Commercial & Transport Services, Construction, Consumer Services, Media, Power, REITs & Realty, Telecommunications. `core/research/sector.py::INDICES` defines the exact official constituent filenames; each downloaded source retains URL, SHA256, rows and capture time. Exact ISIN membership is preferred. Bank takes precedence over Financial Services, Pharma over Healthcare and Realty over REITs & Realty only for verified membership overlaps. Otherwise an explicit broad benchmark can resolve Financial Services -> financial, Healthcare -> healthcare, Capital Goods -> capital_goods, Chemicals -> chemicals, Construction -> construction, Consumer Services -> consumer_services, Services -> commercial_transport, Power -> power, Telecommunication -> telecom, Media Entertainment & Publication -> media. The issuer's official label must also occur in that benchmark's downloaded constituents; do not infer a bank or pharmaceutical company from a broad label. Remaining uniquely matching labels can use a benchmark proxy, except Cement and REITs & Realty require exact membership because their broader labels include other businesses. Ambiguity remains unmapped. Download/CSV failure retains the entire previous mapping; no partial classification is saved.
 - Daily sector indices and Nifty 500 benchmark use exact Upstox NSE_INDEX identity; annual fetch chunks isolate defective years. Previous valid data remains on failures, but is not represented as fresh.
 - Signals use the completed stock signal date. trend requires close strictly above its 50-session mean and that mean strictly above the mean 20 observed sessions earlier; minimum 70 observations. trend_rs additionally requires positive sector-minus-benchmark 63-session return, with exact matching session dates. Missing mapping/session/warmup/benchmark blocks enforced entries.
 - Current constituent/industry classifications introduce historical mapping bias; pre-launch index backfills are unverified. No historical classification is invented.
@@ -4915,6 +4948,18 @@ Source added in the shared checkout during this consolidation: core/research/sec
 - Compare sector filters runs off/trend/trend_rs against a long Swing next-open reference with identical frozen stock, financial and sector evidence. Failures are retained; defaults are not automatically changed.
 - Swing paper has sector_observe_only=true by default. If configured, decisions are journaled without blocking until enforcement is explicitly selected. Mapping freezes after the first successful context; processed sector-price revisions halt. paper_sector/<job-id>.json and each cycle retain evidence/checks. Existing accounting is preserved.
 - APIs: GET /api/sectors audits current mappings/index histories; POST /api/jobs/sectors fetches; POST /api/jobs/sector-comparison takes reference_id. Bootstrap includes sector_fetch and latest 20 sector_comparisons. Tracked actions share the single-job worker.
+
+### Local sector mapping expansion, 9 October 2026
+
+Mapping contract version is `sector-trend-v2`. Mapping rows retain `isin`, `industry`, `index`, `method`, `official_member`, `candidates`, and `status`. `official_member=true` means exact ISIN membership in the selected index's official CSV. `method=broad_sector_benchmark` or `unique_industry_label` can select a proxy without asserting index membership. Mapping status describes classification coverage, independently of available index candles or signal eligibility. Existing frozen research/paper snapshots remain unchanged and retain their captured mappings.
+
+`scripts/refresh_sector_mapping.py` refreshes the local `niftytotalmarket` mapping using public official CSVs without a broker token or fetching prices. It saves a recoverable prior mapping at `sector/mapping_before_expansion.json`, then records newly mapped symbols, unresolved symbols/industries, and missing index-price counts at `sector/mapping_expansion.json`. All 21 sources must validate before the live mapping is atomically replaced. Normal sector fetch uses this same mapping function and separately fetches prices through exact Upstox index identities; failures preserve prior prices and mark the fetch partial.
+
+Local result: 439 of the previously unmapped 457 stocks were resolved, increasing coverage from 293 to 732 of 750. No previously mapped stock became unmapped. The remaining 18 have labels but lack an appropriate supported benchmark: Textiles (ARVIND, GOKEX, ICIL, KPRMILL, KITEX, PDSL, PAGEIND, PGIL, RAYMONDLSL, TRIDENT, VTL, WELSPUNLIV); Utilities (EIEL, IONEXCHANG, REFEX, WABAG); Diversified (GODREJIND); Forest Materials (JKPAPER). Do not substitute an unrelated broad-market/thematic index just to reach 100% coverage.
+
+Prices were requested for 8 October 2025 through 8 October 2026, retaining older valid caches. New usable Upstox histories: Cement and REITs & Realty from 11 May 2026 (105 bars each), Chemicals from 10 November 2025 (227 bars), Media from 8 October 2025 (248 bars), all ending 8 October 2026. These are observed provider history boundaries, not verified launch dates. Capital Goods, Commercial & Transport Services, Construction, Consumer Services, Power and Telecommunications were absent from the retrieved Upstox NSE_INDEX catalog. Consequently 246 mapped stocks still lack their selected benchmark's candles; enforced sector gates block these entries. A mapping alone does not establish full-year historical sector data or sufficient warmup on earlier dates. These counts supersede the earlier 457-unmapped snapshot for the local workspace; they do not assert a production update.
+
+Validation includes broad-financial/healthcare proxy assignment without narrow business inference, exact constituent overlap resolution, rejection of Cement proxies for nonmember Construction Materials companies, retaining mappings on incomplete downloads, missing-index-price gate rejection, and existing frozen replay/paper tests.
 
 
 ### Nonlinear intraday fee research contract

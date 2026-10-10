@@ -102,9 +102,56 @@ class SectorTests(unittest.TestCase):
         result = sector.build_mapping(instruments,records)
         self.assertEqual(result['BANK']['index'],'bank')
         self.assertEqual(result['INSURANCE']['index'],'financial')
-        self.assertIsNone(result['OTHER_FIN']['index'])
+        self.assertEqual(result['OTHER_FIN']['index'],'financial')
+        self.assertEqual(result['OTHER_FIN']['method'],'broad_sector_benchmark')
+        self.assertFalse(result['OTHER_FIN']['official_member'])
         self.assertEqual(result['OTHER_IT']['index'],'it')
         self.assertEqual(result['OTHER_IT']['method'],'unique_industry_label')
+
+    def test_broad_benchmarks_do_not_infer_narrow_business_or_membership(self):
+        def rows(*values):
+            return {'rows':[{'ISIN Code':isin,'Industry':industry} for isin,industry in values]}
+        records = {
+            'bank':rows(('BANK','Financial Services')),
+            'financial':rows(('BANK','Financial Services')),
+            'pharma':rows(('DRUG','Healthcare')),
+            'healthcare':rows(('DRUG','Healthcare')),
+            'auto':rows(('PARTS','Capital Goods')),
+            'capital_goods':rows(('PARTS','Capital Goods')),
+            'cement':rows(('CEMENT','Construction Materials')),
+        }
+        instruments = [dict(symbol=s,isin=s,sector=industry) for s,industry in [
+            ('NBFC','Financial Services'),('HOSPITAL','Healthcare'),('MACHINE','Capital Goods'),
+            ('PARTS','Capital Goods'),('GLASS','Construction Materials'),('CEMENT','Construction Materials'),
+            ('UNKNOWN','Unknown'),('TEXTILE','Textiles')]]
+        result = sector.build_mapping(instruments,records)
+        for symbol,expected in [('NBFC','financial'),('HOSPITAL','healthcare'),('MACHINE','capital_goods')]:
+            self.assertEqual(result[symbol]['index'],expected)
+            self.assertFalse(result[symbol]['official_member'])
+        self.assertEqual(result['PARTS']['index'],'capital_goods')
+        self.assertTrue(result['PARTS']['official_member'])
+        self.assertEqual(result['CEMENT']['index'],'cement')
+        for symbol in ('GLASS','UNKNOWN','TEXTILE'):
+            self.assertIsNone(result[symbol]['index'])
+
+    def test_mapping_refresh_failure_preserves_previous_snapshot(self):
+        prior = {'captured_at':'old','mappings':{'OLD':{'index':'it'}}}
+        store.write('sector/mapping',prior)
+        valid = Mock(content=b'Symbol,ISIN Code,Industry\nTEST,TESTISIN,Healthcare\n')
+        invalid = Mock(content=b'<html>Provider error</html>')
+        with patch.object(sector.upstox,'get',side_effect=[valid,invalid]):
+            with self.assertRaisesRegex(ValueError,'previous mappings retained'):
+                sector.refresh_mapping(Mock(),Settings(),[dict(symbol='TEST',isin='TESTISIN')],lambda m:None)
+        self.assertEqual(store.read('sector/mapping'),prior)
+
+    def test_mapping_without_provider_index_prices_blocks_gate(self):
+        value = snapshot()
+        value['mappings']['TEST']['index'] = 'capital_goods'
+        value['prices']['capital_goods'] = {}
+        value['sha256'] = market_history.digest({k:v for k,v in value.items() if k!='sha256'})
+        decision = sector.Gate(value,'trend').decision('TEST','2025-03-16')
+        self.assertFalse(decision['allowed'])
+        self.assertEqual(decision['reason'],'missing_or_stale_sector_session')
 
     def test_schema_rejects_unsupported_execution(self):
         self.assertEqual(cfg().sector_filter,'off')

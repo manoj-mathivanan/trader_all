@@ -63,8 +63,38 @@ def save_fundamental(conn, path, sha, import_id, raw):
     conn.execute('INSERT INTO market.fundamentals VALUES (%s,%s,%s,%s,%s,%s) '
                  'ON CONFLICT (isin) DO UPDATE SET record=EXCLUDED.record,last_checked_at=EXCLUDED.last_checked_at,'
                  'last_pulled_at=EXCLUDED.last_pulled_at,sha256=EXCLUDED.sha256,import_id=EXCLUDED.import_id '
-                 'WHERE EXCLUDED.last_checked_at > market.fundamentals.last_checked_at',
+                 'WHERE EXCLUDED.last_checked_at > market.fundamentals.last_checked_at '
+                 'AND EXCLUDED.sha256 <> market.fundamentals.sha256',
                  (Path(path).stem, Jsonb(record), checked, record.get('last_pulled_at'), sha, import_id))
+
+
+def merge_candles(conn):
+    """Insert missing candles; update only newer changed values, preserving revisions."""
+    conflicts = conn.execute('SELECT count(*) FROM stage s JOIN market.candles c '
+                             'USING (isin,interval_minutes,timestamp_ms) WHERE s.sha256 <> c.sha256').fetchone()[0]
+    print(f'Coverage verified; retaining {conflicts} overlapping candle differences', flush=True)
+    conn.execute('INSERT INTO market.candle_revisions SELECT c.* FROM market.candles c JOIN stage s '
+                 'USING (isin,interval_minutes,timestamp_ms) WHERE s.sha256 <> c.sha256 ON CONFLICT DO NOTHING')
+    conn.execute('INSERT INTO market.candle_revisions SELECT s.* FROM stage s JOIN market.candles c '
+                 'USING (isin,interval_minutes,timestamp_ms) WHERE s.sha256 <> c.sha256 ON CONFLICT DO NOTHING')
+    missing = conn.execute('SELECT count(*) FROM stage s WHERE NOT EXISTS '
+                           '(SELECT 1 FROM market.candles c WHERE c.isin=s.isin AND '
+                           'c.interval_minutes=s.interval_minutes AND c.timestamp_ms=s.timestamp_ms)').fetchone()[0]
+    changed = conn.execute('SELECT count(*) FROM stage s JOIN market.candles c '
+                           'USING (isin,interval_minutes,timestamp_ms) WHERE s.sha256 <> c.sha256 '
+                           'AND s.fetched_at > c.fetched_at').fetchone()[0]
+    # Do not lock/rewrite identical rows merely because a whole source file
+    # acquired a newer fetched_at when a single new candle was appended.
+    conn.execute('INSERT INTO market.candles SELECT s.* FROM stage s WHERE NOT EXISTS '
+                 '(SELECT 1 FROM market.candles c WHERE c.isin=s.isin AND '
+                 'c.interval_minutes=s.interval_minutes AND c.timestamp_ms=s.timestamp_ms AND c.sha256=s.sha256) '
+                 'ON CONFLICT (isin,interval_minutes,timestamp_ms) DO UPDATE SET '
+                 'session_date=EXCLUDED.session_date,open=EXCLUDED.open,high=EXCLUDED.high,low=EXCLUDED.low,'
+                 'close=EXCLUDED.close,volume=EXCLUDED.volume,sha256=EXCLUDED.sha256,'
+                 'fetched_at=EXCLUDED.fetched_at,import_id=EXCLUDED.import_id '
+                 'WHERE EXCLUDED.fetched_at > market.candles.fetched_at '
+                 'AND EXCLUDED.sha256 <> market.candles.sha256')
+    return dict(conflicting_candles_preserved=conflicts, inserted_candles=missing, updated_candles=changed)
 
 
 def run(bundle, password_file, schema, report, database='market_data'):
@@ -140,7 +170,9 @@ def run(bundle, password_file, schema, report, database='market_data'):
             cur.executemany('INSERT INTO market.instruments(isin,symbol,provider_key,metadata,fetched_at) '
                             'VALUES (%s,%s,%s,%s,%s) ON CONFLICT (isin) DO UPDATE SET symbol=EXCLUDED.symbol, '
                             'provider_key=EXCLUDED.provider_key, metadata=EXCLUDED.metadata, fetched_at=EXCLUDED.fetched_at '
-                            'WHERE EXCLUDED.fetched_at > market.instruments.fetched_at',
+                            'WHERE EXCLUDED.fetched_at > market.instruments.fetched_at '
+                            'AND (EXCLUDED.symbol,EXCLUDED.provider_key,EXCLUDED.metadata) '
+                            'IS DISTINCT FROM (market.instruments.symbol,market.instruments.provider_key,market.instruments.metadata)',
                             [(isin, r['instrument']['symbol'], r['instrument']['key'], Jsonb(r['instrument']), r['fetched_at'])
                              for isin, r in instruments.items()])
         # Candle updates and final completion commit together. A interrupted COPY
@@ -163,19 +195,7 @@ def run(bundle, password_file, schema, report, database='market_data'):
                         'SELECT isin,interval_minutes,count(*),min(session_date),max(session_date) FROM stage GROUP BY isin,interval_minutes')}
         if coverage != manifest['coverage']:
             raise ValueError('Instrument/session coverage does not match the source manifest')
-        conflicts = conn.execute('SELECT count(*) FROM stage s JOIN market.candles c '
-                                 'USING (isin,interval_minutes,timestamp_ms) WHERE s.sha256 <> c.sha256').fetchone()[0]
-        print(f'Coverage verified; retaining {conflicts} overlapping candle differences', flush=True)
-        conn.execute('INSERT INTO market.candle_revisions SELECT c.* FROM market.candles c JOIN stage s '
-                     'USING (isin,interval_minutes,timestamp_ms) WHERE s.sha256 <> c.sha256 ON CONFLICT DO NOTHING')
-        conn.execute('INSERT INTO market.candle_revisions SELECT s.* FROM stage s JOIN market.candles c '
-                     'USING (isin,interval_minutes,timestamp_ms) WHERE s.sha256 <> c.sha256 ON CONFLICT DO NOTHING')
-        conn.execute('INSERT INTO market.candles SELECT * FROM stage '
-                     'ON CONFLICT (isin,interval_minutes,timestamp_ms) DO UPDATE SET '
-                     'session_date=EXCLUDED.session_date,open=EXCLUDED.open,high=EXCLUDED.high,low=EXCLUDED.low,'
-                     'close=EXCLUDED.close,volume=EXCLUDED.volume,sha256=EXCLUDED.sha256,'
-                     'fetched_at=EXCLUDED.fetched_at,import_id=EXCLUDED.import_id '
-                     'WHERE EXCLUDED.fetched_at > market.candles.fetched_at')
+        changes = merge_candles(conn)
         matching = ('s.session_date = t.session_date AND s.open = t.open AND s.high = t.high AND '
                     's.low = t.low AND s.close = t.close AND s.volume = t.volume AND s.sha256 = t.sha256')
         unmatched = conn.execute(
@@ -201,7 +221,8 @@ def run(bundle, password_file, schema, report, database='market_data'):
                           refresh['completed_at'], bool(refresh.get('partial')), Jsonb(refresh)))
         result = {'import_id': import_id, 'environment': manifest['environment'], 'status': 'complete',
                   'source_files': file_count, 'unique_blobs': len(blob_sizes), 'source_candles': manifest['counts'],
-                  'instruments': len(instruments), 'conflicting_candles_preserved': conflicts,
+                  'instruments': len(instruments), **changes,
+                  'unchanged_candles_skipped': sum(manifest['counts'].values()) - changes['inserted_candles'] - changes['conflicting_candles_preserved'],
                   'unmatched_candles': unmatched, 'source_checksums_verified': True,
                   'instrument_coverage_verified': True, 'completed_at': datetime.now(timezone.utc).isoformat()}
         if refresh:

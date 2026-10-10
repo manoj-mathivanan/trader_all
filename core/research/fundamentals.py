@@ -5,6 +5,9 @@ import time
 import uuid
 import os
 from contextlib import contextmanager
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from threading import Lock
+import httpx
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from core.research import store, official_filings
@@ -97,20 +100,27 @@ def validate(snapshot, documents, item, at):
                 identity_verified=True, metrics_recomputed=True)
 
 
-def pull_stock(item, *, at=None, retry_failed=False, log=lambda _:None):
+def pull_stock(item, *, at=None, retry_failed=False, log=lambda _:None, client=None):
     from core.research import company_review as cr
     at = at or datetime.now(timezone.utc)
     today = at.astimezone(official_filings.IST).date()
     path = key(item['isin'])
     record = store.read(path, {})
     period = record.get('last_period_end')
-    if period and period >= completed_quarter(today).isoformat():
+    if period and period >= completed_quarter(today).isoformat() and record.get('latest_index_period', period) <= period:
         return dict(symbol=item['symbol'], isin=item['isin'], status='skipped_current', period_end=period)
-    if record.get('last_checked_at', '')[:10] == at.isoformat()[:10] and not (retry_failed and record.get('pull_status') in ('failed','unsupported')):
-        return dict(symbol=item['symbol'], isin=item['isin'], status='skipped_checked_today', period_end=period)
+    checked = record.get('last_checked_at')
+    try:
+        recent = checked and timedelta(0) <= at - datetime.fromisoformat(checked) < timedelta(hours=24)
+    except (ValueError, TypeError):
+        recent = False
+    if recent and not (retry_failed and record.get('pull_status') in ('failed','unsupported')):
+        status = 'skipped_checked_today' if checked[:10] == at.isoformat()[:10] else 'skipped_recent_check'
+        return dict(symbol=item['symbol'], isin=item['isin'], status=status, period_end=period,
+                    next_check_at=(datetime.fromisoformat(checked)+timedelta(hours=24)).isoformat())
     record.update(company=item, last_attempted_at=at.isoformat(), last_checked_at=at.isoformat())
     try:
-        index = official_filings.discover(item, at)
+        index = official_filings.discover(item, at, client=client)
         if index['status'] != 'available':
             raise ValueError('NSE filing index unavailable; existing data retained.')
         sources = index['sources']
@@ -124,7 +134,8 @@ def pull_stock(item, *, at=None, retry_failed=False, log=lambda _:None):
             return dict(symbol=item['symbol'], isin=item['isin'], status='awaiting_next_quarter', period_end=period)
         # Prefer consolidated evidence, use standalone only when consolidated is absent.
         basis = 'consolidated' if any(s['basis']=='consolidated' and s['period_end']==newest for s in sources) else 'standalone'
-        result = official_filings.retrieve(item, [s for s in sources if s['basis']==basis], at, log=log)
+        result = official_filings.retrieve(item, [s for s in sources if s['basis']==basis], at, log=log,
+                                          cached_documents=record.get('documents', []), client=client)
         snapshot = result['snapshot']
         if not snapshot or snapshot['period_end'] != newest:
             raise ValueError('Latest indexed quarter could not be validated; existing data retained.')
@@ -178,23 +189,56 @@ def pull(items, log=lambda _:None, job_id=None, *, retry_failed=False, at=None):
         return _pull(items,log,job_id,retry_failed=retry_failed,at=at)
 
 
+class FilingClient(httpx.Client):
+    """Share connections while spacing all worker requests by at least 200 ms."""
+    def __init__(self):
+        super().__init__(timeout=httpx.Timeout(20, connect=5), follow_redirects=False,
+                         headers={'User-Agent':'TraderCompanyResearch/1.0', 'Accept':'application/json,text/html'})
+        self.request_lock = Lock()
+        self.last_request = 0.0
+
+    def send(self, *args, **kwargs):
+        with self.request_lock:
+            delay = .2 - (time.monotonic() - self.last_request)
+            if delay > 0:
+                time.sleep(delay)
+            self.last_request = time.monotonic()
+        return super().send(*args, **kwargs)
+
+
 def _pull(items, log=lambda _:None, job_id=None, *, retry_failed=False, at=None):
+    at = at or datetime.now(timezone.utc)
     result = dict(job_id=job_id, started_at=store.now(), total_symbols=len(items), counts={}, stocks=[])
     store.write('company/fundamentals_pull',result)
-    for n,item in enumerate(items,1):
+    def worker(item, client):
+        messages = []
         try:
-            row = pull_stock(item,at=at,retry_failed=retry_failed,log=log)
+            row = pull_stock(item,at=at,retry_failed=retry_failed,log=messages.append,client=client)
         except ValueError as exc:
             row = dict(symbol=item['symbol'],isin=item['isin'],status='unsupported',reason=str(exc))
         except Exception as exc:
             row = dict(symbol=item['symbol'],isin=item['isin'],status='failed',
                        reason='Download/cache failed: '+type(exc).__name__)
-        result['stocks'].append(row)
-        status=row['status']; result['counts'][status]=result['counts'].get(status,0)+1
-        store.write('company/fundamentals_pull',result)
-        log(f"Fundamentals {n}/{len(items)} · {item['symbol']}: {status}.")
-        if status not in ('skipped_current','skipped_checked_today'):
-            time.sleep(.2)
+        return row, messages
+
+    log('Fundamentals: reusing cached quarters and publication checks from the last 24 hours; three workers check due companies.')
+    ordered = {}
+    with FilingClient() as client, ThreadPoolExecutor(max_workers=3, thread_name_prefix='fundamentals') as pool:
+        pending = {pool.submit(worker, item, client): i for i, item in enumerate(items)}
+        for n, future in enumerate(as_completed(pending), 1):
+            row, messages = future.result()
+            ordered[pending[future]] = row
+            result['stocks'].append(row)
+            status = row['status']
+            result['counts'][status] = result['counts'].get(status, 0) + 1
+            for message in messages:
+                log(message)
+            if status in ('failed', 'unsupported', 'updated'):
+                log(f"Fundamentals {n}/{len(items)} · {row['symbol']}: {status}.")
+            if n % 25 == 0 or n == len(items):
+                store.write('company/fundamentals_pull',result)
+                log(f"Fundamentals checked {n}/{len(items)}: {result['counts']}.")
+    result['stocks'] = [ordered[i] for i in range(len(items))]
     result.update(completed_at=store.now(),partial=bool(result['counts'].get('failed')))
     result['coverage'] = coverage(items)
     store.write('company/fundamentals_pull',result)

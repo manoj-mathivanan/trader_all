@@ -3,11 +3,12 @@ import csv
 import gzip
 import io
 import json
+import hashlib
 from datetime import date, timedelta
 import httpx
 from core.research import store, upstox, market_history
 
-VERSION = 'sector-trend-v1'
+VERSION = 'sector-trend-v2'
 NOTICE = ('Sector mappings use current official constituents and industry labels, not historical '
           'classifications. Historical mapping bias and pre-launch index backfills are unverified.')
 # Narrow benchmarks take precedence only for these explicitly declared overlaps.
@@ -23,11 +24,33 @@ INDICES = {
     'realty': ('Nifty Realty', 'ind_niftyrealtylist.csv'),
     'oil_gas': ('Nifty Oil & Gas', 'ind_niftyoilgaslist.csv'),
     'consumer_durables': ('Nifty Consumer Durables', 'ind_niftyconsumerdurableslist.csv'),
+    'capital_goods': ('Nifty Capital Goods', 'ind_niftyCapitalGoods_list.csv'),
+    'cement': ('Nifty Cement', 'ind_NiftyCement_list.csv'),
+    'chemicals': ('Nifty Chemicals', 'ind_niftyChemicals_list.csv'),
+    'commercial_transport': ('Nifty Commercial & Transport Services', 'ind_niftyCommercialTransportServices_list.csv'),
+    'construction': ('Nifty Construction', 'ind_niftyConstruction_list.csv'),
+    'consumer_services': ('Nifty Consumer Services', 'ind_niftyConsumerServices_list.csv'),
+    'media': ('Nifty Media', 'ind_niftymedialist.csv'),
+    'power': ('Nifty Power', 'ind_niftyPower_list.csv'),
+    'reits_realty': ('Nifty REITs & Realty', 'ind_niftyREITsRealty_list.csv'),
+    'telecom': ('Nifty Telecommunications', 'ind_niftyTelecommunications_list.csv'),
 }
+# Broad sector benchmarks are proxies for non-constituents, not claims of membership.
+# A matching label must also be present in that downloaded index's official CSV.
+BROAD_BENCHMARKS = {
+    'Financial Services': 'financial', 'Healthcare': 'healthcare',
+    'Capital Goods': 'capital_goods', 'Chemicals': 'chemicals',
+    'Construction': 'construction', 'Consumer Services': 'consumer_services',
+    'Services': 'commercial_transport', 'Power': 'power',
+    'Telecommunication': 'telecom', 'Media Entertainment & Publication': 'media',
+}
+# Cement is a subset of Construction Materials; REITs is a subset of Financial Services.
+MEMBERSHIP_ONLY = {'cement', 'reits_realty'}
 BENCHMARK = 'Nifty 500'
 PROVIDER_NAMES = {
     'financial': 'Nifty Fin Service', 'healthcare': 'NIFTY HEALTHCARE',
     'oil_gas': 'NIFTY OIL AND GAS', 'consumer_durables': 'NIFTY CONSR DURBL',
+    'reits_realty': 'Nifty REITs Realty',
 }
 
 
@@ -37,6 +60,8 @@ def resolve(options):
         options.discard('financial')
     if 'pharma' in options:
         options.discard('healthcare')
+    if 'realty' in options:
+        options.discard('reits_realty')
     return next(iter(options)) if len(options) == 1 else None
 
 
@@ -52,13 +77,40 @@ def build_mapping(instruments, constituents):
     for item in instruments:
         exact = members.get(item['isin'], set())
         options = exact or industries.get(item.get('sector', '').strip(), set())
-        # An industry label shared by Bank and Financial Services is ambiguous
-        # outside verified index membership: do not infer that every issuer is a bank.
-        identifier = resolve(options) if exact else next(iter(options)) if len(options) == 1 else None
+        industry = item.get('sector', '').strip()
+        broad = BROAD_BENCHMARKS.get(industry)
+        method = 'official_isin_membership' if exact else 'unique_industry_label'
+        identifier = resolve(options) if exact else None
+        if not identifier and broad in options:
+            # Broad benchmarks resolve classification ambiguity without inferring a
+            # narrow business (bank/pharma/auto) from a broad financial/healthcare label.
+            identifier = broad
+            method = 'official_isin_membership' if exact else 'broad_sector_benchmark'
+        if not exact and not identifier:
+            safe = options - MEMBERSHIP_ONLY
+            identifier = next(iter(safe)) if len(safe) == 1 else None
         result[item['symbol']] = dict(isin=item['isin'], industry=item.get('sector', ''),
-            index=identifier, method='official_isin_membership' if exact else 'unique_industry_label',
+            index=identifier, method=method, official_member=bool(identifier and identifier in exact),
             candidates=sorted(options), status='mapped' if identifier else 'unmapped')
     return result
+
+
+def refresh_mapping(client, settings, instruments, log):
+    """Refresh public classification independently of provider credentials/prices."""
+    constituents = {}
+    for identifier, (name, filename) in INDICES.items():
+        source = 'https://www.niftyindices.com/IndexConstituent/'+filename
+        response = upstox.get(client, source)
+        rows = list(csv.DictReader(io.StringIO(response.content.decode('utf-8-sig'))))
+        if not rows or any(not row.get('ISIN Code') or not row.get('Symbol') for row in rows):
+            raise ValueError('Incomplete official sector mapping downloads; previous mappings retained. Invalid CSV: '+name)
+        constituents[identifier] = dict(name=name, source=source, rows=rows,
+            sha256=hashlib.sha256(response.content).hexdigest(), captured_at=store.now())
+        log(f'{name}: {len(rows)} official constituents.')
+    mapping = build_mapping(instruments, constituents)
+    store.write('sector/mapping', dict(version=VERSION, captured_at=store.now(),
+        universe=settings.universe, mappings=mapping, constituents=constituents, notice=NOTICE))
+    return mapping
 
 
 def annual_ranges(start, end):
@@ -87,24 +139,8 @@ def fetch(settings, log, job_id=None, *, universe=None, start=None, end=None):
             raise ValueError('Sector history start must not follow the completed-session cutoff.')
         raw = upstox.get(client, upstox.INSTRUMENTS).content
         master = json.loads(gzip.decompress(raw) if raw[:2] == b'\x1f\x8b' else raw)
-        constituents, failures = {}, []
-        for identifier, (name, filename) in INDICES.items():
-            source = 'https://www.niftyindices.com/IndexConstituent/'+filename
-            try:
-                response = upstox.get(client, source)
-                rows = list(csv.DictReader(io.StringIO(response.content.decode('utf-8-sig'))))
-                if not rows or any(not row.get('ISIN Code') or not row.get('Symbol') for row in rows):
-                    raise ValueError('Invalid official sector constituent CSV.')
-                constituents[identifier] = dict(name=name, source=source, rows=rows)
-            except ValueError as exc:
-                failures.append(dict(index=identifier, stage='mapping', message=str(exc)))
-                log(f'{name}: {exc}')
-        # Partial classification cannot establish that an industry maps uniquely.
-        if len(constituents) != len(INDICES):
-            raise ValueError('Incomplete official sector mapping downloads; previous mappings retained. Inspect job logs.')
-        mapping = build_mapping(instruments, constituents)
-        store.write('sector/mapping', dict(version=VERSION, captured_at=store.now(),
-            universe=settings.universe, mappings=mapping, constituents=constituents, notice=NOTICE))
+        mapping = refresh_mapping(client, settings, instruments, log)
+        failures = []
         for identifier, name in [(k, v[0]) for k,v in INDICES.items()]+[('benchmark', BENCHMARK)]:
             try:
                 provider_name = PROVIDER_NAMES.get(identifier, name)

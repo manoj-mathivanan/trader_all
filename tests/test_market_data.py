@@ -71,16 +71,91 @@ class MarketFetchTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'last completed trading day'):
                 market.last_traded_day(Mock(), 'synthetic')
 
-    def test_daily_refresh_fills_holes_replaces_dates_and_keeps_older_history(self):
+    def test_daily_refresh_fills_holes_without_redownloading_cached_dates(self):
         store.write('bars/TESTISIN', {'bars': [candle('2020-01-01'), candle('2026-10-07', 99)],
                                     'requested_start': '2019-01-01', 'requested_end': '2026-10-07'})
-        with patch.object(market.upstox, 'fetch_range', return_value=[candle('2026-10-06'), candle('2026-10-07', 101)]):
-            market.save_daily(Mock(), self.item, 'synthetic', date(2025, 10, 7), date(2026, 10, 7))
+        with patch.object(market.upstox, 'fetch_range', return_value=[candle('2026-10-06')]) as fetch:
+            market.save_daily(Mock(), self.item, 'synthetic', date(2025, 10, 7), date(2026, 10, 7),
+                              sessions=['2026-10-06', '2026-10-07'])
+        self.assertEqual(fetch.call_args.args[-2:], (date(2026,10,6), date(2026,10,6)))
         saved = store.read('bars/TESTISIN')
         self.assertEqual(len(saved['bars']), 3)
         self.assertEqual(saved['bars'][0]['date'], '2020-01-01')
-        self.assertEqual(saved['bars'][-1]['close'], 101)
+        self.assertEqual(saved['bars'][-1]['close'], 99)
         self.assertEqual(saved['requested_start'], '2019-01-01')
+
+    def test_daily_repeat_refresh_makes_no_request_or_candle_write(self):
+        original = {'bars': [candle('2026-10-06'), candle('2026-10-07')],
+                    'requested_start': '2025-10-07', 'requested_end': '2026-10-07'}
+        store.write('bars/TESTISIN', original)
+        with patch.object(market.upstox, 'fetch_range') as fetch, patch.object(store, 'write') as write:
+            count = market.save_daily(Mock(), self.item, 'synthetic', date(2025,10,7), date(2026,10,7),
+                                      sessions=['2026-10-06', '2026-10-07'])
+        self.assertEqual(count, 0)
+        fetch.assert_not_called()
+        write.assert_not_called()
+
+    def test_daily_new_session_fetches_only_new_day(self):
+        store.write('bars/TESTISIN', {'bars': [candle('2026-10-07')],
+                                    'requested_start': '2025-10-07', 'requested_end': '2026-10-07'})
+        with patch.object(market.upstox, 'fetch_range', return_value=[candle('2026-10-08')]) as fetch:
+            market.save_daily(Mock(), self.item, 'synthetic', date(2025,10,8), date(2026,10,8),
+                              sessions=['2026-10-07', '2026-10-08'])
+        self.assertEqual(fetch.call_args.args[-2:], (date(2026,10,8), date(2026,10,8)))
+
+    def test_minutes_reuses_complete_sessions_and_fetches_incomplete_day(self):
+        day = '2026-10-07'
+        raw = [[f'{day}T{t//60:02d}:{t%60:02d}:00+05:30',100,102,98,100,10]
+               for t in range(9*60+15,15*60+30,5)]
+        store.write(intraday_data.cache_key('TESTISIN', day), {'bars': intraday_data.normalize(raw, day)})
+        with patch.object(market, 'download_minutes', return_value={
+                'bars': 75, 'sessions': 1, 'first':'2026-10-08', 'last':'2026-10-08'}) as download:
+            result = market.save_minutes(Mock(), self.item, 'synthetic', date(2026,10,7),date(2026,10,8),
+                                         sessions=[day, '2026-10-08'])
+        self.assertEqual(result['reused_sessions'], 1)
+        self.assertEqual(download.call_args.args[-2:], (date(2026,10,8),date(2026,10,8)))
+        with patch.object(market, 'download_minutes') as download:
+            result = market.save_minutes(Mock(), self.item, 'synthetic',date(2026,10,7),date(2026,10,7),sessions=[day])
+        self.assertEqual(result['bars'], 0)
+        download.assert_not_called()
+        store.write(intraday_data.cache_key('TESTISIN',day), {'bars': intraday_data.normalize(raw[:-1],day)})
+        self.assertFalse(market.complete_minutes(store.read(intraday_data.cache_key('TESTISIN',day)),day))
+
+    def test_missing_ranges_does_not_cross_cached_session(self):
+        self.assertEqual(market.missing_ranges(['2026-10-05','2026-10-06','2026-10-07','2026-10-08'],
+                                              {'2026-10-05','2026-10-07','2026-10-08'}),
+                         [(date(2026,10,5),date(2026,10,5)),(date(2026,10,7),date(2026,10,8))])
+
+    def test_second_full_refresh_downloads_no_stock_candles(self):
+        day = '2026-10-07'
+        response = Mock()
+        response.json.return_value = {'status':'success', 'data':{'candles':[
+            [f'{day}T{t//60:02d}:{t%60:02d}:00+05:30',100,102,98,100,10]
+            for t in range(9*60+15,15*60+30,5)]}}
+        with patch.object(market, 'last_traded_day', return_value=date(2026,10,7)), \
+             patch.object(market.upstox, 'refresh_universe', return_value={'instruments':[self.item]}), \
+             patch.object(market.upstox, 'fetch_range', return_value=[candle(day)]) as daily, \
+             patch.object(market.upstox, 'get', return_value=response) as minute, \
+             patch.object(market.fundamentals, 'pull', return_value={'counts':{}}), \
+             patch.object(market.time, 'sleep'):
+            first = market.fetch(lambda _:None, 'first')
+            self.assertEqual(first['daily_bars'], 1)
+            self.assertEqual(first['minute_bars'], 75)
+            daily.reset_mock()
+            minute.reset_mock()
+            second = market.fetch(lambda _:None, 'second')
+        self.assertEqual(second['daily_bars'], 0)
+        self.assertEqual(second['minute_bars'], 0)
+        self.assertEqual(second['stocks'][0]['minute']['reused_sessions'], 1)
+        daily.assert_called_once()  # Shared benchmark session calendar only.
+        self.assertEqual(daily.call_args.args[1], market.BENCHMARK)
+        minute.assert_not_called()
+
+    def test_special_session_is_complete_with_its_shorter_hours(self):
+        day = '2025-10-21'
+        raw = [[f'{day}T{t//60:02d}:{t%60:02d}:00+05:30',100,102,98,100,10]
+               for t in range(13*60+45,14*60+45,5)]
+        self.assertTrue(market.complete_minutes({'bars':intraday_data.normalize(raw,day)},day))
 
     def test_five_minute_refresh_merges_session_and_keeps_older_days(self):
         old_day = intraday_data.cache_key('TESTISIN', '2020-01-01')
@@ -113,6 +188,7 @@ class MarketFetchTests(unittest.TestCase):
         daily = Mock(side_effect=[ValueError('Upstox rejected token (401/403).'), RuntimeError('secret-header')]+[1]*748)
         minute = Mock(return_value={'bars': 75, 'sessions': 1, 'first':'2026-10-07','last':'2026-10-07'})
         with patch.object(market, 'last_traded_day', return_value=date(2026,10,7)), \
+             patch.object(market.upstox, 'fetch_range', return_value=[candle('2026-10-07')]), \
              patch.object(market.upstox, 'refresh_universe', return_value=universe) as refresh, \
              patch.object(market, 'save_daily', daily), patch.object(market, 'save_minutes', minute), \
              patch.object(market.time, 'sleep'), patch.object(market.fundamentals, 'pull', return_value={'counts':{}}) as fundamental_pull, patch.object(store, 'write'):

@@ -28,6 +28,65 @@ def document(year=2026, revenue='1,10,000.00', profit='(1,200.00)', unit='Lakhs'
 
 
 class OfficialFilingTests(unittest.TestCase):
+    def test_repeat_retrieval_reuses_verified_bytes_without_http_requests(self):
+        requests=[]
+        def respond(request):
+            requests.append(str(request.url))
+            return httpx.Response(200,headers={'content-type':'text/html'},text=document())
+        with tempfile.TemporaryDirectory() as directory, patch.object(store,'DATA',Path(directory)):
+            transport=httpx.MockTransport(respond)
+            first=filing.retrieve(ITEM,[{'url':URL}],AT,transport=transport)
+            second=filing.retrieve(ITEM,[{'url':URL}],AT,transport=transport)
+            self.assertEqual(requests,[URL])
+            self.assertEqual(first['snapshot'],second['snapshot'])
+            self.assertEqual(first['documents'],second['documents'])
+
+    def test_new_filing_downloads_only_missing_document(self):
+        requests=[]
+        def respond(request):
+            requests.append(str(request.url))
+            return httpx.Response(200,headers={'content-type':'text/html'},text=document(
+                year=2025,revenue='100000',profit='1000') if str(request.url)==PRIOR else document(profit='1200'))
+        with tempfile.TemporaryDirectory() as directory, patch.object(store,'DATA',Path(directory)):
+            transport=httpx.MockTransport(respond)
+            filing.retrieve(ITEM,[{'url':PRIOR}],AT,transport=transport)
+            requests.clear()
+            result=filing.retrieve(ITEM,[{'url':URL},{'url':PRIOR}],AT,transport=transport)
+        self.assertEqual(requests,[URL])
+        self.assertAlmostEqual(result['snapshot']['revenue_growth_pct'],10)
+
+    def test_tampered_filing_cache_is_redownloaded_and_repaired(self):
+        requests=[]
+        def respond(request):
+            requests.append(str(request.url))
+            return httpx.Response(200,headers={'content-type':'text/html'},text=document())
+        with tempfile.TemporaryDirectory() as directory, patch.object(store,'DATA',Path(directory)):
+            transport=httpx.MockTransport(respond)
+            first=filing.retrieve(ITEM,[{'url':URL}],AT,transport=transport)
+            path=store.DATA/first['documents'][0]['artifact']
+            path.write_bytes(b'tampered')
+            second=filing.retrieve(ITEM,[{'url':URL}],AT,transport=transport)
+            third=filing.retrieve(ITEM,[{'url':URL}],AT,transport=transport)
+        self.assertEqual(requests,[URL,URL])
+        self.assertEqual(first['snapshot'],second['snapshot'])
+        self.assertEqual(second['snapshot'],third['snapshot'])
+
+    def test_existing_document_metadata_seeds_cache_without_redownload(self):
+        import hashlib
+        with tempfile.TemporaryDirectory() as directory, patch.object(store,'DATA',Path(directory)):
+            raw=document().encode()
+            digest=hashlib.sha256(raw).hexdigest()
+            artifact='company/filings/'+digest+'.html'
+            path=store.DATA/artifact
+            path.parent.mkdir(parents=True)
+            path.write_bytes(raw)
+            requests=[]
+            transport=httpx.MockTransport(lambda request: requests.append(request) or httpx.Response(500))
+            result=filing.retrieve(ITEM,[{'url':URL}],AT,transport=transport,
+                                   cached_documents=[dict(url=URL,sha256=digest,artifact=artifact)])
+        self.assertEqual(requests,[])
+        self.assertEqual(result['status'],'available')
+
     def test_bank_and_nbfc_growth_uses_taxonomy_and_no_industrial_ratios(self):
         for taxonomy,kind,revenue,profit in (
             ('BANKING','bank','Total income','Net profit (loss) for the period'),

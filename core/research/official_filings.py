@@ -1,6 +1,7 @@
 """Direct NSE Ind-AS filing retrieval and deterministic, conservative calculations."""
 import hashlib
 import re
+from contextlib import nullcontext
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from html.parser import HTMLParser
@@ -262,16 +263,17 @@ def calculate(filings, item):
                 'Unsupported ratios and missing comparable periods remain unknown.')
 
 
-def discover(item, at, *, transport=None, history=False):
+def discover(item, at, *, transport=None, history=False, client=None):
     """Use the NSE website's own filing index, independently of LLM link selection."""
     url = 'https://www.nseindia.com/api/integrated-filing-results'
     params = dict(symbol=item['symbol'], index='equities', page=1, size=100,
                   type='Integrated Filing- Financials', from_date=(at-timedelta(days=800)).strftime('%d-%m-%Y'),
                   to_date=at.astimezone(IST).strftime('%d-%m-%Y'))
     try:
-        with httpx.Client(headers={'User-Agent':'TraderCompanyResearch/1.0'}, timeout=httpx.Timeout(20, connect=5),
-                          follow_redirects=False, transport=transport) as client:
-            response = client.get(url, params=params)
+        with (nullcontext(client) if client is not None else httpx.Client(
+                headers={'User-Agent':'TraderCompanyResearch/1.0'}, timeout=httpx.Timeout(20, connect=5),
+                follow_redirects=False, transport=transport)) as reader:
+            response = reader.get(url, params=params)
             response.raise_for_status()
             rows = response.json()['data']
         valid = [row for row in rows if row.get('symbol') == item['symbol'] and filing_url(row.get('ixbrl',''))]
@@ -301,8 +303,32 @@ def discover(item, at, *, transport=None, history=False):
         return dict(status='unavailable', url=url, sources=[])
 
 
-def retrieve(item, sources, at, *, transport=None, log=lambda message: None, discover_index=False):
-    index = discover(item, at, transport=transport) if discover_index else dict(status='not_requested', sources=[])
+def cached_filing(url, item, at, documents):
+    """Reuse bytes only after verifying their checksum and re-parsing their identity/dates."""
+    name = 'company/filing_cache/' + hashlib.sha256(url.encode()).hexdigest()
+    candidates = [d for d in documents if d.get('url') == url]
+    saved = store.read(name)
+    if saved:
+        candidates.append(saved)
+    for doc in candidates:
+        digest = doc.get('sha256', '')
+        if not re.fullmatch(r'[a-f0-9]{64}', digest) or doc.get('artifact') != 'company/filings/'+digest+'.html':
+            continue
+        try:
+            data = (store.DATA/doc['artifact']).read_bytes()
+            if len(data) > MAX_BYTES or hashlib.sha256(data).hexdigest() != digest:
+                continue
+            parsed = parse(data.decode('utf-8'), url, item, at)
+            parsed.update(sha256=digest, artifact=doc['artifact'])
+            return parsed
+        except (OSError, ValueError, UnicodeError):
+            continue
+    return None
+
+
+def retrieve(item, sources, at, *, transport=None, log=lambda message: None, discover_index=False,
+             cached_documents=(), client=None):
+    index = discover(item, at, transport=transport, client=client) if discover_index else dict(status='not_requested', sources=[])
     sources = index['sources'] or sources
     urls = sorted({u for source in sources for u in [filing_url(source['url'])] if u},
                   key=lambda u: datetime.strptime(FILING.fullmatch(urlsplit(u).path)[1], '%d%m%Y%H%M%S'), reverse=True)[:8]
@@ -313,29 +339,36 @@ def retrieve(item, sources, at, *, transport=None, log=lambda message: None, dis
     filings = []
     # NSE's edge stalls the default python-httpx user agent. Identify this reader
     # explicitly; increasing the timeout alone does not fix those stalled requests.
-    with httpx.Client(timeout=httpx.Timeout(20, connect=5), follow_redirects=False, transport=transport,
-                      headers={'User-Agent': 'TraderCompanyResearch/1.0', 'Accept': 'text/html'}) as client:
+    with (nullcontext(client) if client is not None else httpx.Client(
+            timeout=httpx.Timeout(20, connect=5), follow_redirects=False, transport=transport,
+            headers={'User-Agent': 'TraderCompanyResearch/1.0', 'Accept': 'text/html'})) as reader:
         for url in urls:
-            log('Downloading official NSE filing: '+urlsplit(url).path.rsplit('/', 1)[-1])
             try:
-                with client.stream('GET', url) as response:
-                    response.raise_for_status()
-                    if 'html' not in response.headers.get('content-type', '').lower():
-                        raise ValueError('Unsupported document type.')
-                    data = bytearray()
-                    for chunk in response.iter_bytes():
-                        data.extend(chunk)
-                        if len(data) > MAX_BYTES:
-                            raise ValueError('Filing exceeded size limit.')
-                parsed = parse(data.decode('utf-8'), url, item, at)
-                digest = hashlib.sha256(data).hexdigest()
-                artifact = 'company/filings/'+digest
-                path = store.DATA / (artifact+'.html')
-                path.parent.mkdir(parents=True, exist_ok=True)
-                if not path.exists():
-                    path.write_bytes(data)
-                parsed.update(sha256=digest, artifact=artifact+'.html')
-                store.write(artifact, parsed)
+                parsed = cached_filing(url, item, at, cached_documents)
+                if parsed:
+                    log('Reusing verified NSE filing: '+urlsplit(url).path.rsplit('/', 1)[-1])
+                else:
+                    log('Downloading official NSE filing: '+urlsplit(url).path.rsplit('/', 1)[-1])
+                    with reader.stream('GET', url) as response:
+                        response.raise_for_status()
+                        if 'html' not in response.headers.get('content-type', '').lower():
+                            raise ValueError('Unsupported document type.')
+                        data = bytearray()
+                        for chunk in response.iter_bytes():
+                            data.extend(chunk)
+                            if len(data) > MAX_BYTES:
+                                raise ValueError('Filing exceeded size limit.')
+                    parsed = parse(data.decode('utf-8'), url, item, at)
+                    digest = hashlib.sha256(data).hexdigest()
+                    artifact = 'company/filings/'+digest
+                    path = store.DATA / (artifact+'.html')
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    if not path.exists() or hashlib.sha256(path.read_bytes()).hexdigest() != digest:
+                        path.write_bytes(data)
+                    parsed.update(sha256=digest, artifact=artifact+'.html')
+                    store.write(artifact, parsed)
+                    store.write('company/filing_cache/'+hashlib.sha256(url.encode()).hexdigest(),
+                                {k: parsed[k] for k in ('url', 'sha256', 'artifact')})
                 filings.append(parsed)
                 result['documents'].append({k: parsed[k] for k in ('url','sha256','artifact','start','end','basis','unit','filed_at','approved_on')})
             except httpx.HTTPStatusError as exc:

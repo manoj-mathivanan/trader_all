@@ -28,12 +28,55 @@ def last_traded_day(client, token, now=None):
     return date.fromisoformat(candles[-1]['date'])
 
 
-def save_daily(client, item, token, start, end):
-    additions = upstox.fetch_range(client, item, token, start, end)
-    if not additions:
-        raise ValueError('No daily candles returned for the rolling year.')
+def missing_ranges(sessions, missing):
+    """Batch adjacent missing trading sessions without crossing a cached session."""
+    ranges = []
+    active = False
+    for day in sorted(sessions):
+        if day not in missing:
+            active = False
+            continue
+        if ranges and active:
+            ranges[-1] = (ranges[-1][0], day)
+        else:
+            ranges.append((day, day))
+        active = True
+    return [(date.fromisoformat(a), date.fromisoformat(b)) for a, b in ranges]
+
+
+def save_daily(client, item, token, start, end, *, sessions=None):
     record = store.read('bars/' + item['isin'], {})
-    merged = upstox.merge_candles(record.get('bars', []), additions)
+    existing = record.get('bars', [])
+    ranges = []
+    if not existing:
+        ranges = [(start, end)]
+    else:
+        first, last = (date.fromisoformat(existing[i]['date']) for i in (0, -1))
+        # A previously checked pre-listing range is not a hole in trading history.
+        if start < first and record.get('requested_start', str(first)) > str(start):
+            ranges.append((start, min(end, first - timedelta(days=1))))
+        if sessions is None:
+            if end > last:
+                ranges.append((max(start, last + timedelta(days=1)), end))
+        else:
+            eligible = [d for d in sessions if max(str(start), str(first)) <= d <= str(end)]
+            missing = set(eligible) - {b['date'] for b in existing}
+            ranges.extend(missing_ranges(eligible, missing))
+    additions = []
+    for range_start, range_end in ranges:
+        if range_start > range_end:
+            continue
+        downloaded = upstox.fetch_range(client, item, token, range_start, range_end)
+        if not downloaded:
+            raise ValueError('No daily candles returned for the missing range.')
+        additions.extend(downloaded)
+        time.sleep(.15)
+    if not additions and existing:
+        # Paper coverage metadata can advance without rewriting all stored candles.
+        if record.get('requested_end', '') < str(end):
+            store.write('bars/' + item['isin'], {**record, 'requested_end': str(end)})
+        return 0
+    merged = upstox.merge_candles(existing, additions)
     # Validate both downloaded and retained candles before the atomic replacement.
     merged = upstox.validate_candles(
         [[b['date']+'T00:00:00+05:30', b['open'], b['high'], b['low'], b['close'], b['volume']] for b in merged],
@@ -51,7 +94,40 @@ def save_daily(client, item, token, start, end):
     return len(additions)
 
 
-def save_minutes(client, item, token, start, end):
+def complete_minutes(record, day):
+    if not record or not record.get('bars'):
+        return False
+    try:
+        bars = intraday_data.cached_bars(record, day)
+        hours = intraday_data.SPECIAL_SESSIONS.get(day, {'open': '09:15', 'close': '15:30'})
+        opening, closing = (sum(int(x) * factor for x, factor in zip(hours[k].split(':'), (60, 1)))
+                            for k in ('open', 'close'))
+        expected = {f'{t//60:02d}:{t%60:02d}' for t in range(opening, closing, 5)}
+        return expected <= {b['time'] for b in bars}
+    except (ValueError, KeyError, TypeError):
+        return False
+
+
+def save_minutes(client, item, token, start, end, *, sessions=None):
+    if sessions is None:
+        # The stock's daily candles identify observed sessions, including special sessions.
+        sessions = [b['date'] for b in store.read('bars/' + item['isin'], {}).get('bars', [])]
+        if not sessions:
+            return download_minutes(client, item, token, start, end)
+    sessions = sorted({d for d in sessions if str(start) <= d <= str(end)})
+    missing = {d for d in sessions if not complete_minutes(store.read(intraday_data.cache_key(item['isin'], d)), d)}
+    detail = {'bars': 0, 'sessions': 0, 'reused_sessions': len(sessions) - len(missing)}
+    for range_start, range_end in missing_ranges(sessions, missing):
+        downloaded = download_minutes(client, item, token, range_start, range_end)
+        detail['bars'] += downloaded['bars']
+        detail['sessions'] += downloaded['sessions']
+        detail.setdefault('first', downloaded['first'])
+        detail['last'] = downloaded['last']
+        time.sleep(.15)
+    return detail
+
+
+def download_minutes(client, item, token, start, end):
     url = f"https://api.upstox.com/v3/historical-candle/{quote(item['key'],safe='')}/minutes/5/{end}/{start}"
     payload = upstox.get(client, url, headers={'Authorization': 'Bearer '+token, 'Accept': 'application/json'}).json()
     if payload.get('status') != 'success':
@@ -94,7 +170,11 @@ def fetch(log, job_id=None):
     with httpx.Client(timeout=40) as client:
         window = windows(last_traded_day(client, token))
         start, minute_start, end = (date.fromisoformat(window[k]) for k in ('daily_start', 'minute_start', 'end'))
-        log(f"Rolling fetch: daily {start} → {end}; five-minute {minute_start} → {end} (10 calendar days).")
+        benchmark = upstox.fetch_range(client, BENCHMARK, token, start, end)
+        if not benchmark or benchmark[-1]['date'] != str(end):
+            raise ValueError('Completed trading-session calendar is unavailable. Retry later.')
+        sessions = [b['date'] for b in benchmark]
+        log(f"Incremental fetch: daily {start} → {end}; five-minute {minute_start} → {end}. Complete cached sessions are reused.")
         # Independent of research/paper selection: always the complete current 750-stock universe.
         universe = upstox.refresh_universe(Settings(universe='niftytotalmarket', start=start, end=end), log)
         result = {'job_id': job_id, 'universe': 'niftytotalmarket', **window, 'started_at': store.now(),
@@ -106,9 +186,11 @@ def fetch(log, job_id=None):
             for interval in ('daily', 'minute'):
                 try:
                     if interval == 'daily':
-                        detail = {'bars': save_daily(client, item, token, start, end)}
+                        detail = {'bars': save_daily(client, item, token, start, end, sessions=sessions)}
                     else:
-                        detail = save_minutes(client, item, token, minute_start, end)
+                        observed = [b['date'] for b in store.read('bars/' + item['isin'], {}).get('bars', [])]
+                        detail = save_minutes(client, item, token, minute_start, end,
+                                              sessions=observed or sessions)
                     stock[interval] = {'status': 'success', **detail}
                     result[interval+'_symbols'] += 1
                     result[interval+'_bars'] += detail['bars']
@@ -117,11 +199,12 @@ def fetch(log, job_id=None):
                     stock[interval] = {'status': 'failed', 'message': message}
                     result['failures'].append({'symbol': item['symbol'], 'interval': interval, 'message': message})
                     log(f"{item['symbol']} {interval}: {message} Continuing with remaining downloads.")
-                time.sleep(.15)  # Sequential requests stay below provider per-second/minute limits.
             result['stocks'].append(stock)
             result['partial'] = bool(result['failures'])
             store.write('market_fetch', result)
-            log(f"{index}/{result['total_symbols']} · {item['symbol']}: daily {stock['daily']['status']}, five-minute {stock['minute']['status']}.")
+            log(f"{index}/{result['total_symbols']} · {item['symbol']}: daily {stock['daily']['status']}, five-minute {stock['minute']['status']}; "
+                f"downloaded {stock['daily'].get('bars', 0)} daily / {stock['minute'].get('bars', 0)} five-minute bars, "
+                f"reused {stock['minute'].get('reused_sessions', 0)} complete minute sessions.")
         log('Market candles saved. Checking quarterly fundamentals for the same stock universe.')
         try:
             result['fundamentals'] = fundamentals.pull(universe['instruments'], log, job_id, retry_failed=True)
