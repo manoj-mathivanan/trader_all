@@ -32,7 +32,8 @@ def breakout(bars, i, cfg):
             and bars[i]['volume'] >= average_volume * cfg.volume_multiple)
 
 
-def vcp(bars, i, cfg):
+def vcp_setup(bars, i, cfg):
+    """Tightening base on a completed session, before breakout confirmation."""
     windows = cfg.vcp_window_days
     warmup = max(windows * 3, cfg.sma_days, 50)
     if i < warmup or not _trend_and_liquidity(bars, i, cfg):
@@ -43,11 +44,17 @@ def vcp(bars, i, cfg):
         window = bars[i - windows * offset:i - windows * (offset - 1)]
         ranges.append((max(x['high'] for x in window) - min(x['low'] for x in window)) / max(x['high'] for x in window))
         volumes.append(sum(x['volume'] for x in window) / windows)
-    prior_high = max(x['high'] for x in bars[i - windows:i])
     average_volume = sum(x['volume'] for x in bars[i - 50:i]) / 50
     return (ranges[0] > ranges[1] > ranges[2] and volumes[0] > volumes[1] > volumes[2]
-            and volumes[2] <= average_volume * cfg.vcp_volume_multiple
-            and bars[i]['close'] > prior_high and bars[i]['volume'] >= average_volume * cfg.volume_multiple)
+            and volumes[2] <= average_volume * cfg.vcp_volume_multiple)
+
+
+def vcp(bars, i, cfg):
+    if not vcp_setup(bars, i, cfg):
+        return False
+    prior_high = max(x['high'] for x in bars[i - cfg.vcp_window_days:i])
+    average_volume = sum(x['volume'] for x in bars[i - 50:i]) / 50
+    return bars[i]['close'] > prior_high and bars[i]['volume'] >= average_volume * cfg.volume_multiple
 
 
 def blue_sky(bars, i, cfg):

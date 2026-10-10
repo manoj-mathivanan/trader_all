@@ -227,6 +227,7 @@ class CompanyReviewTests(unittest.TestCase):
         store.write('bars/'+ISIN, dict(bars=bars))
         with patch.object(review.market_history, 'prepare', side_effect=lambda item, record, **kw: (record['bars'], {})):
             for cfg in [TradingConfig(pattern='blue_sky', min_turnover=0, min_rs_rating=80),
+                        TradingConfig(pattern='blue_sky', min_turnover=0, min_short_rs_rating=70, min_rs_improvement=10),
                         TradingConfig(pattern='blue_sky', min_turnover=0, skip_weak_markets=True)]:
                 self.assertEqual(review.technical_scan(self.cfg, cfg)['matches'], [])
 

@@ -18,6 +18,10 @@ class ScreenInput(BaseModel):
     require_long_trend: bool = False
     require_rising_long_trend: bool = False
     min_rs_rating: float = Field(0, ge=0, le=100)
+    rs_short_lookback: int = Field(63, ge=5, le=252)
+    min_short_rs_rating: float = Field(0, ge=0, le=100)
+    rs_improvement_sessions: int = Field(20, ge=1, le=126)
+    min_rs_improvement: float = Field(0, ge=0, le=100)
     min_turnover: float = Field(50000000, ge=0, le=1e12)
     vcp_window_days: int = Field(10, ge=3, le=60)
     vcp_volume_multiple: float = Field(0.8, gt=0, le=1)
@@ -57,4 +61,6 @@ def available():
         value=ScreenInput.model_validate(json.loads(path.read_text(encoding='utf-8')))
         bundled.append(dict(**value.model_dump(mode='json'),id=identity(value.name),bundled=True))
     saved=store.read('screens',[])
-    return saved+[p for p in bundled if p['id'] not in {s['id'] for s in saved}]
+    archived_ids={s['id'] for s in store.read('archived_screens',[])}
+    return [p for p in saved+[p for p in bundled if p['id'] not in {s['id'] for s in saved}]
+            if p['id'] not in archived_ids]

@@ -52,6 +52,10 @@ class TradingConfig(BaseModel):
     require_long_trend: bool = Field(False, title="Require price above 200-day SMA")
     require_rising_long_trend: bool = Field(False, title="Require rising 200-day SMA (20 sessions)")
     min_rs_rating: float = Field(0, ge=0, le=100, title="Minimum 126-session RS percentile (0 disables)")
+    rs_short_lookback: int = Field(63, ge=5, le=252, title="Emerging RS return lookback (sessions)")
+    min_short_rs_rating: float = Field(0, ge=0, le=100, title="Minimum emerging RS percentile (0 disables)")
+    rs_improvement_sessions: int = Field(20, ge=1, le=126, title="RS improvement lookback (sessions)")
+    min_rs_improvement: float = Field(0, ge=0, le=100, title="Minimum RS gain (percentile points, 0 disables)")
     candidate_rank: Literal['alphabetical', 'rs_126', 'fundamental_score'] = Field('alphabetical', title="Simultaneous signal priority")
     min_turnover: float = Field(50000000, ge=0, le=1e12, title="Minimum average turnover (₹)")
     vcp_window_days: int = Field(10, ge=3, le=60, title="VCP contraction window (sessions)")
@@ -64,6 +68,7 @@ class TradingConfig(BaseModel):
     stop_pct: float = Field(8, gt=0, le=50, title="Initial stop (%)")
     winner_exit: Literal["trail_50d", "trail_30w", "trail_pct", "take_8", "take_15", "take_25"] = Field("trail_50d", title="Winner exit")
     skip_weak_markets: bool = Field(False, title="Skip weak markets")
+    market_breadth_scope: Literal['market', 'sector'] = Field('market', title='Breadth universe')
     sector_filter: Literal['off', 'trend', 'trend_rs'] = Field('off', title='Sector trend filter')
     market_breadth_pct: float = Field(40, ge=0, le=100, title="Minimum market breadth (%)")
     market_min_coverage_pct: float = Field(80, gt=0, le=100, title="Minimum breadth history coverage (%)")
@@ -89,6 +94,16 @@ class TradingConfig(BaseModel):
     sell_cost_bps: float = Field(10, ge=0, le=500, title="All-in sell charges (bps)")
 
 
+    @model_validator(mode='after')
+    def sector_breadth_rules(self):
+        if self.skip_weak_markets and self.market_breadth_scope == 'sector':
+            if self.entry_mode != 'next_open':
+                raise ValueError('Sector breadth requires next-session-open entries.')
+            if self.market_risk_scale != 1 or self.market_breadth_trend_sessions:
+                raise ValueError('Sector breadth does not support market risk scaling or breadth-trend refinements.')
+        return self
+
+
 class BacktestConfig(TradingConfig):
     execution_horizon: Literal['swing', 'intraday'] = Field('swing', title='Holding period')
     square_off_time: str = Field('15:00', pattern=r'^\d{2}:\d{2}$', title='Intraday exit cutoff (IST)')
@@ -109,6 +124,10 @@ class BacktestConfig(TradingConfig):
             raise ValueError('Choose a five-minute square-off boundary between 09:20 and 15:20 IST.')
         if self.execution_horizon == 'intraday' and self.entry_mode != 'next_open':
             raise ValueError('Intraday backtests require next-session open entries.')
+        if self.skip_weak_markets and self.market_breadth_scope == 'sector' and self.execution_horizon != 'swing':
+            raise ValueError('Sector breadth currently requires long swing backtests.')
+        if self.execution_horizon != 'swing' and (self.min_short_rs_rating or self.min_rs_improvement):
+            raise ValueError('Emerging RS filters currently require swing backtests.')
         if self.sector_filter != 'off' and (self.execution_horizon != 'swing' or self.entry_mode != 'next_open'):
             raise ValueError('Sector filters currently require swing next-session-open entries.')
         refinements = (self.max_open_gap_pct or self.require_open_above_pivot or self.max_extension_pct

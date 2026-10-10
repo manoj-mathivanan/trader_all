@@ -8,6 +8,7 @@ from core.risk.position_sizer import percent_risk_size
 from core.research import store, data_quality, market_history, provenance, corporate_actions, sector
 from strategies.swing_patterns.patterns.signals import matches
 from core.research import bearish
+from core.research import relative_strength as emerging_rs
 
 
 def signal(bars, i, cfg):
@@ -18,6 +19,8 @@ def required_warmup(cfg):
     if cfg.pattern in dict(bearish.SCREENS):
         return bearish.required_history(cfg) - 1
     extra = 220 if getattr(cfg, 'require_rising_long_trend', False) else 200 if getattr(cfg, 'require_long_trend', False) else 0
+    if emerging_rs.enabled(cfg):
+        extra = max(extra, cfg.rs_short_lookback + (cfg.rs_improvement_sessions if cfg.min_rs_improvement else 0))
     if getattr(cfg, 'min_rs_rating', 0) > 0 or getattr(cfg, 'candidate_rank', 'alphabetical') == 'rs_126':
         extra = max(extra, 126)
     if cfg.pattern == 'vcp':
@@ -31,7 +34,7 @@ def required_warmup(cfg):
     return max(cfg.base_days, cfg.sma_days, 50, extra)
 
 
-def simulate(datasets, cfg, *, state=None, liquidate=True, allow_entries=True, entry_warmup=0, entry_check=None, fundamental_scores=None, sector_gate=None, sector_observe_only=False):
+def simulate(datasets, cfg, *, state=None, liquidate=True, allow_entries=True, entry_warmup=0, entry_check=None, fundamental_scores=None, sector_gate=None, sector_observe_only=False, sector_instruments=None):
     """One daily engine for research and durable paper sessions.
 
     State is copied: a failed cycle never mutates the last committed ledger.
@@ -45,6 +48,12 @@ def simulate(datasets, cfg, *, state=None, liquidate=True, allow_entries=True, e
             raise ValueError('Sector filter requires explicit captured index inputs.')
     if cfg.candidate_rank == 'fundamental_score' and fundamental_scores is None:
         raise ValueError('Fundamental ranking requires dated financial evidence.')
+    breadth_gate = None
+    if cfg.skip_weak_markets and getattr(cfg, 'market_breadth_scope', 'market') == 'sector':
+        if sector_instruments is None:
+            raise ValueError('Sector breadth requires captured stock sector classifications.')
+        from core.research.sector_breadth import SectorBreadth
+        breadth_gate = SectorBreadth(datasets, sector_instruments, cfg.market_breadth_pct, cfg.market_min_coverage_pct)
     if cfg.pattern in dict(bearish.SCREENS):
         if state is not None or not liquidate or not allow_entries:
             raise ValueError('Bearish backtests support isolated research runs only, not paper portfolios.')
@@ -95,6 +104,7 @@ def simulate(datasets, cfg, *, state=None, liquidate=True, allow_entries=True, e
     rs_enabled = getattr(cfg, 'min_rs_rating', 0) > 0 or getattr(cfg, 'candidate_rank', 'alphabetical') == 'rs_126'
     date_indices = {s: {b['date']: i for i, b in enumerate(bars)} for s, bars in datasets.items()} if cfg.skip_weak_markets or rs_enabled or cfg.market_risk_scale != 1 else {}
     rs_cache = {}
+    strength = emerging_rs.StrengthHistory(datasets, context) if emerging_rs.enabled(cfg) else None
 
     def relative_strength(day):
         if day not in rs_cache:
@@ -267,13 +277,24 @@ def simulate(datasets, cfg, *, state=None, liquidate=True, allow_entries=True, e
                 if not sector_decision['allowed'] and not sector_observe_only:
                     skipped += 1
                     continue
+            if breadth_gate is not None:
+                breadth_decision = breadth_gate.decision(symbol, signal_day)
+                sector_checks.append(dict(breadth_decision, entry_date=day, enforced=True))
+                if not breadth_decision['allowed']:
+                    skipped += 1
+                    continue
             if entry_check is not None and not entry_check(symbol,day):
                 skipped += 1
                 continue
             if getattr(cfg, 'min_rs_rating', 0) > 0 and relative_strength(signal_day).get(symbol, (-1, 0))[0] < cfg.min_rs_rating:
                 skipped += 1
                 continue
-            if cfg.skip_weak_markets and not market_is_strong(signal_day):
+            if strength is not None and not strength.passes(symbol, signal_day, cfg):
+                skipped += 1
+                reason = 'Emerging RS level / improvement'
+                skip_reasons[reason] = skip_reasons.get(reason, 0) + 1
+                continue
+            if cfg.skip_weak_markets and breadth_gate is None and not market_is_strong(signal_day):
                 skipped += 1
                 continue
             if len(positions) >= cfg.max_positions:
@@ -555,7 +576,8 @@ def run(settings, cfg, log, job_id, *, fundamental_evidence=None, sector_evidenc
         minute_inputs = intraday_data.load_sessions(plan, universe, log)
         result = engine.simulate(datasets, cfg, minute_inputs, plan=plan)
     else:
-        result = simulate(datasets, cfg, fundamental_scores=fundamental_scores, sector_gate=sector_gate)
+        result = simulate(datasets, cfg, fundamental_scores=fundamental_scores, sector_gate=sector_gate,
+                          sector_instruments=universe['instruments'])
     result.pop('state')  # Persistent execution state belongs to paper portfolios only.
     result.update(id=job_id, created_at=store.now(), config=cfg.model_dump(mode='json'),
                   universe=settings.universe, universe_snapshot=universe, manifest=manifest, excluded=excluded,
@@ -569,6 +591,8 @@ def run(settings, cfg, log, job_id, *, fundamental_evidence=None, sector_evidenc
                             'No volume participation cap, circuit-limit or non-fill simulation; stops may fill worse in real markets.',
                             'This run is exploratory/in-sample. Reserve a later untouched period before judging the strategy.'])
     result['warnings'].extend(quality['warnings'])
+    if cfg.skip_weak_markets and cfg.market_breadth_scope == 'sector':
+        result['warnings'].append('Sector breadth uses current sector labels within the prepared eligible universe; historical classification bias and small-sector instability remain.')
     if cfg.pattern in dict(bearish.SCREENS):
         result['warnings'].extend([
             'Hypothetical short research: stock-borrow availability, recalls, dividends owed, margin calls and circuit-limit fills are not modeled.',

@@ -234,7 +234,18 @@ def backtest_history_job(value: BacktestConfig | BearishBacktestConfig):
 
 
 @app.get('/api/backtest/window')
-def backtest_window(warmup: int = Query(50, ge=50, le=2500)):
+def backtest_window(warmup: int = Query(50, ge=50, le=2500),
+                    reference_id: str | None = Query(None, pattern=r'^[0-9a-f]{12}(?:_[a-z0-9]+)?$')):
+    if reference_id:
+        reference = store.read('runs/'+reference_id)
+        if not reference:
+            raise ValueError('Frozen comparison run is unavailable.')
+        values = reference['config']
+        return dict(start=values['start'], end=values['end'],
+            history_start=values['start'], history_end=values['end'],
+            ready_symbols=len(reference['manifest']),
+            total_symbols=len(reference['universe_snapshot']['instruments']),
+            missing_symbols=reference.get('excluded', []), source='frozen_backtest_snapshot')
     return backtest.available_window(settings(), warmup)
 
 

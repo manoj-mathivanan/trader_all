@@ -206,6 +206,7 @@ def cycle(log, job_id, *, ingest=True):
                                allow_entries=portfolio['status'] == 'active', entry_warmup=backtest.required_warmup(cfg),
                                entry_check=entry_check,
                                sector_gate=sector_gate,
+                               sector_instruments=portfolio['universe_snapshot']['instruments'],
                                sector_observe_only=cfg.sector_observe_only,
                                fundamental_scores=ranking_score if cfg.candidate_rank == 'fundamental_score' else None)
     new_ledger = result['state']

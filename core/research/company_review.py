@@ -648,12 +648,16 @@ def technical_scan(settings, cfg: TradingConfig):
     gate = not cfg.skip_weak_markets or (breadth is not None and coverage >= cfg.market_min_coverage_pct and breadth >= cfg.market_breadth_pct)
     from core.research import fundamentals
     buy_screen=fundamentals.buy_screen('swing_patterns')
+    from core.research import relative_strength
+    strength = relative_strength.StrengthHistory({s: histories[s][1] for s in ready}) if relative_strength.enabled(cfg) else None
     matches = []
     for isin, (item, bars) in ready.items():
         if len(bars) <= backtest.required_warmup(cfg):
             excluded.append(dict(symbol=item['symbol'], reason='Insufficient pattern warmup'))
             continue
         if cfg.min_rs_rating > 0 and (isin not in ranks or ranks[isin] < cfg.min_rs_rating):
+            continue
+        if strength is not None and not strength.passes(isin, as_of, cfg):
             continue
         if gate and backtest.signal(bars, len(bars)-1, cfg):
             check = fundamentals.buy_check(isin,'swing_patterns',screen=buy_screen)

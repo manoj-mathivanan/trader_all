@@ -45,6 +45,7 @@ vm.runInContext(`
   properties.market_breadth_pct={type:'number',default:40};properties.market_min_coverage_pct={type:'number',default:80};properties.minimum_warmup_sessions={type:'integer',default:50};
   state.backtest_schema={properties};
   properties.sector_filter={type:'string',default:'off',enum:['off','trend','trend_rs'],title:'Sector trend filter'};
+  properties.market_breadth_scope={type:'string',default:'market',enum:['market','sector'],title:'Breadth universe'};
   properties.execution_horizon={type:'string',default:'swing',enum:['swing','intraday']};
   properties.square_off_time={type:'string',default:'15:00'};
   properties.start.format='date';properties.end.format='date';
@@ -130,13 +131,13 @@ function changeScreen(value) {
   assert.match(context.body, /value="custom_test" selected/);
   assert.match(context.body, /name="base_days"[^>]*value="77"/);
   assert.match(context.body, /type="hidden" name="pattern" value="multiyear"/);
-  assert.match(context.windowPath, /warmup=126$/);
+  assert.match(context.windowPath, /warmup=154$/); // 77-session RS plus 77-session improvement history.
   // Adjust & rerun preserves explicit historical values until the user changes screen.
   await vm.runInContext("newBacktest({pattern:'vcp',base_days:25,volume_multiple:1.5,vcp_volume_multiple:.8})", context);
   assert.match(context.body, /name="base_days"[^>]*value="25"/);
   assert.match(context.body, /name="vcp_volume_multiple"[^>]*value="0.8"/);
   // Full saved strategies retain allocation, ranking, risk, exits and costs.
-  vm.runInContext(`state.screens.push({id:'full_strategy',name:'Blue Sky Fundamental Ranking',pattern:'blue_sky',...builtinScreenFilters,minimum_warmup_sessions:260,trading_defaults:{name:'Blue Sky Fundamental Ranking',pattern:'blue_sky',capital:1000000,candidate_rank:'fundamental_score',max_positions:5,risk_pct:1.5,stop_pct:8,winner_exit:'take_25',entry_mode:'next_open',buy_cost_bps:35,sell_cost_bps:50,slippage_bps:10,skip_weak_markets:true}});`,context);
+  vm.runInContext(`state.screens.push({id:'full_strategy',name:'Blue Sky Fundamental Ranking',pattern:'blue_sky',...builtinScreenFilters,minimum_warmup_sessions:260,trading_defaults:{name:'Blue Sky Fundamental Ranking',pattern:'blue_sky',capital:1000000,candidate_rank:'fundamental_score',max_positions:5,risk_pct:1.5,stop_pct:8,winner_exit:'take_25',entry_mode:'next_open',buy_cost_bps:35,sell_cost_bps:50,slippage_bps:10,skip_weak_markets:true,market_breadth_scope:'sector',market_breadth_pct:60,market_min_coverage_pct:80}});`,context);
   changeScreen('full_strategy');
   assert.equal(form.elements.candidate_rank.value,'fundamental_score');
   assert.equal(form.elements.max_positions.value,5);
@@ -144,6 +145,9 @@ function changeScreen(value) {
   assert.equal(form.elements.winner_exit.value,'take_25');
   assert.equal(form.elements.buy_cost_bps.value,35);
   assert.equal(form.elements.skip_weak_markets.checked,true);
+  assert.equal(form.elements.market_breadth_scope.value,'sector');
+  assert.equal(form.elements.market_breadth_pct.value,60);
+  assert.equal(form.elements.market_min_coverage_pct.value,80);
   form.id='paper-form';form.elements.capital.readOnly=true;form.elements.capital.value=250000;
   changeScreen('full_strategy');
   assert.equal(form.elements.capital.value,250000); // Existing allocation remains fixed.
@@ -155,6 +159,11 @@ function changeScreen(value) {
   assert.match(context.body,/name="max_positions"[^>]*value="5"/);
   assert.match(context.body,/name="buy_cost_bps"[^>]*value="35"/);
   assert.match(context.windowPath,/warmup=260$/);
+  assert.match(context.body,/value="sector" selected/);
+  await vm.runInContext("newBacktest({screen:'full_strategy',comparison_run_id:'123456789abc'})",context);
+  assert.match(context.windowPath,/reference_id=123456789abc/);
+  assert.match(context.body,/type="hidden" name="comparison_run_id" value="123456789abc"/);
+  assert.match(context.body,/Frozen test window/);
   // The dialog appears before the slow date request resolves, and closing it cancels rendering.
   vm.runInContext(`api=()=>new Promise(resolve=>{globalThis.resolveDates=resolve;});globalThis.modalOpen=true;document.querySelector=selector=>selector==='#modal'?{open:modalOpen}:null;`,context);
   const opening=vm.runInContext('newBacktest()',context);

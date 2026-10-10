@@ -26,6 +26,14 @@ class StrategyPresetTests(unittest.TestCase):
     def preset(self):
         return next(p for p in strategy_presets.available() if p['name']=='Blue Sky Fundamental Ranking')
 
+    def test_archive_hides_local_and_bundled_copies_and_is_reversible(self):
+        preset=self.preset()
+        store.write('screens',[preset])
+        store.write('archived_screens',[preset])
+        self.assertNotIn(preset['id'],[p['id'] for p in strategy_presets.available()])
+        store.write('archived_screens',[])
+        self.assertEqual(1,len([p for p in strategy_presets.available() if p['id']==preset['id']]))
+
     def test_bundled_strategy_available_without_local_state_and_valid_for_both_engines(self):
         preset=self.preset()
         cfg=preset['trading_defaults']
@@ -79,6 +87,15 @@ class StrategyPresetTests(unittest.TestCase):
         payload['pattern']='vcp'
         with self.assertRaisesRegex(ValidationError,'same pattern'):
             strategy_presets.ScreenInput(**payload)
+
+    def test_emerging_rs_preset_preserves_filters_without_activating_portfolio(self):
+        preset = next(p for p in strategy_presets.available() if p['name'] == 'VCP Improving RS - Experimental')
+        cfg = preset['trading_defaults']
+        self.assertEqual((cfg['rs_short_lookback'], cfg['min_short_rs_rating'], cfg['rs_improvement_sessions'], cfg['min_rs_improvement']), (63, 70, 20, 10))
+        self.assertEqual(preset['min_rs_improvement'], 10)
+        self.assertIn('Underperformed', preset['description'])
+        PaperConfig(**cfg, acknowledge_limitations=True)
+        self.assertIsNone(store.read('portfolios/swing_patterns'))
 
 
 if __name__=='__main__':

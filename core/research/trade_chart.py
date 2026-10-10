@@ -99,6 +99,14 @@ def explain_trade(result, datasets, trade, bars, first, last):
             depth = (ceiling - floor) / ceiling * 100
             limit = cfg.multiyear_max_depth_pct if cfg.pattern == 'multiyear' else cfg.max_depth_pct
             check('Base depth (%)', depth, f'≤ {limit:g}%', depth <= limit)
+        from core.research import relative_strength
+        if relative_strength.enabled(cfg):
+            strength = relative_strength.StrengthHistory(datasets).measure(trade['symbol'], signal['date'], cfg)
+            check(f'{cfg.rs_short_lookback}-session RS percentile', strength['short_rs_rating'],
+                  f'≥ {cfg.min_short_rs_rating:g}', strength['short_rs_rating'] is not None and strength['short_rs_rating'] >= cfg.min_short_rs_rating)
+            if cfg.min_rs_improvement:
+                check(f'RS gain over {cfg.rs_improvement_sessions} sessions (percentile points)', strength['rs_improvement'],
+                      f'≥ {cfg.min_rs_improvement:g}', strength['rs_improvement'] is not None and strength['rs_improvement'] >= cfg.min_rs_improvement)
         if cfg.min_rs_rating > 0 or cfg.candidate_rank == 'rs_126' or cfg.skip_weak_markets:
             returns, above, eligible = {}, 0, 0
             for symbol, rows in datasets.items():
