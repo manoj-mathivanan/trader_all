@@ -1,12 +1,65 @@
 import unittest
+import hashlib
+import tempfile
+from pathlib import Path
 from unittest.mock import patch
 
-from core.research import backtest, fundamental_history as history, official_filings, intraday_long
+from core.research import backtest, fundamental_history as history, official_filings, intraday_long, store
 from core.research.config import BacktestConfig, BearishBacktestConfig
 from tests.test_official_filings import ITEM, URL, PRIOR, AT, document
 
 
 class FundamentalRankingTests(unittest.TestCase):
+    def test_capture_reads_history_and_deduplicates_documents(self):
+        with tempfile.TemporaryDirectory() as directory, patch.object(store, 'DATA', Path(directory)):
+            documents = []
+            for url, html in ((URL, document(profit='1200')),
+                              (PRIOR, document(year=2025, revenue='100000', profit='1000'))):
+                raw = html.encode()
+                digest = hashlib.sha256(raw).hexdigest()
+                artifact = 'company/filings/'+digest+'.html'
+                path = store.DATA/artifact
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(raw)
+                documents.append(dict(url=url, sha256=digest, artifact=artifact))
+            key = 'company/fundamentals/'+ITEM['isin']
+            store.write(key, dict(validation={'status':'passed'}, documents=documents[:1]))
+            store.write(key+'/history/older', dict(validation={'status':'passed'}, documents=documents))
+            # Unvalidated historical records cannot add evidence.
+            store.write(key+'/history/failed', dict(validation={'status':'failed'}, documents=[{'url':'invalid'}]))
+            payload = history.capture({'instruments':[ITEM]})
+            self.assertEqual(payload['excluded'], [])
+            versions = payload['series']['TCS']
+            self.assertEqual(len(versions), 2)
+            self.assertEqual(len(versions[-1]['documents']), 2)
+            self.assertEqual(versions[-1]['snapshot']['profit_growth_pct'], 20)
+            self.assertLess(versions[0]['available_at'], versions[-1]['available_at'])
+            # Valid historical evidence survives a failed current pull.
+            store.write(key, dict(validation={'status':'failed'}, documents=[]))
+            self.assertEqual(history.capture({'instruments':[ITEM]})['series'], payload['series'])
+            # Presentation changes at one URL do not remove identical financial facts.
+            variant = document(profit='1200').encode()+b'\n'
+            digest = hashlib.sha256(variant).hexdigest()
+            artifact = 'company/filings/'+digest+'.html'
+            (store.DATA/artifact).write_bytes(variant)
+            store.write(key+'/history/variant', dict(validation={'status':'passed'},
+                        documents=[dict(url=URL, sha256=digest, artifact=artifact)]))
+            self.assertEqual(history.capture({'instruments':[ITEM]})['series'], payload['series'])
+            changed = document(profit='1400').encode()
+            digest = hashlib.sha256(changed).hexdigest()
+            artifact = 'company/filings/'+digest+'.html'
+            (store.DATA/artifact).write_bytes(changed)
+            store.write(key+'/history/variant', dict(validation={'status':'passed'},
+                        documents=[dict(url=URL, sha256=digest, artifact=artifact)]))
+            self.assertIn('Conflicting archived filing facts',
+                          history.capture({'instruments':[ITEM]})['excluded'][0]['reason'])
+            store.write(key+'/history/variant', dict(validation={'status':'failed'}))
+            # Historical bytes receive the same checksum checks as current bytes.
+            (store.DATA/documents[1]['artifact']).write_bytes(b'corrupt')
+            rejected = history.capture({'instruments':[ITEM]})
+            self.assertEqual(rejected['series'], {})
+            self.assertIn('checksum mismatch', rejected['excluded'][0]['reason'])
+
     def config(self, **kw):
         return BacktestConfig(start='2026-07-09', end='2026-07-12', pattern='vcp', entry_mode='next_open',
                               candidate_rank='fundamental_score', max_positions=5, risk_pct=.5,
@@ -42,6 +95,15 @@ class FundamentalRankingTests(unittest.TestCase):
         payload['series']['TCS'][0]['snapshot']['profit_growth_pct'] = 999
         with self.assertRaisesRegex(ValueError,'checksum'):
             history.Scores(payload)
+
+    def test_new_standalone_period_is_not_hidden_by_old_consolidated_period(self):
+        old = official_filings.parse(document(year=2025), PRIOR, ITEM, AT)
+        new = official_filings.parse(document(basis='Standalone'), URL, ITEM, AT)
+        old['sha256'] = new['sha256'] = 'a'*64
+        versions = history.reconstruct([old, new], ITEM)
+        self.assertEqual(versions[-1]['snapshot']['period_end'], '2026-06-30')
+        self.assertEqual(versions[-1]['snapshot']['basis'], 'standalone')
+        self.assertNotIn('revenue_growth_pct', versions[-1]['snapshot'])
 
     def test_missing_stale_and_ties_are_deterministic(self):
         values = {'A':None, 'B':dict(score=90,coverage_pct=90,flags=['stale']),

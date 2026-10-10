@@ -74,6 +74,18 @@ def simulate(datasets, cfg, *, state=None, liquidate=True, allow_entries=True, e
     context_cache = {}
     action_log = state.get('corporate_actions', [])
     applied = {x['id'] for x in action_log}
+    refinement_keys = ('max_open_gap_pct', 'require_open_above_pivot', 'max_extension_pct',
+                       'reentry_cooldown_sessions', 'stalled_exit_sessions', 'stalled_min_r',
+                       'failed_breakout_sessions')
+    exit_keys = ('pattern', 'stop_pct', 'breakeven_r', 'winner_exit', 'trail_pct', 'max_hold_days',
+                 'stalled_exit_sessions', 'stalled_min_r', 'failed_breakout_sessions')
+    refined = cfg.fee_model != 'custom_bps' or cfg.winner_exit == 'trail_pct' or any(
+        getattr(cfg, k) for k in refinement_keys if k != 'stalled_min_r')
+    skip_reasons = dict(state.get('entry_filter_rejections', {}))
+    last_exit_dates = {t['symbol']: t['exit_date'] for t in trades}
+    market_stats = {}
+    all_days = sorted({b['date'] for bs in datasets.values() for b in bs}) if cfg.market_breadth_trend_sessions else []
+    day_indices = {d: i for i, d in enumerate(all_days)}
 
     def context(symbol, day):
         key = (symbol, day)
@@ -81,7 +93,7 @@ def simulate(datasets, cfg, *, state=None, liquidate=True, allow_entries=True, e
             context_cache[key] = corporate_actions.adjusted_bars(datasets[symbol], day)
         return context_cache[key]
     rs_enabled = getattr(cfg, 'min_rs_rating', 0) > 0 or getattr(cfg, 'candidate_rank', 'alphabetical') == 'rs_126'
-    date_indices = {s: {b['date']: i for i, b in enumerate(bars)} for s, bars in datasets.items()} if cfg.skip_weak_markets or rs_enabled else {}
+    date_indices = {s: {b['date']: i for i, b in enumerate(bars)} for s, bars in datasets.items()} if cfg.skip_weak_markets or rs_enabled or cfg.market_risk_scale != 1 else {}
     rs_cache = {}
 
     def relative_strength(day):
@@ -112,8 +124,17 @@ def simulate(datasets, cfg, *, state=None, liquidate=True, allow_entries=True, e
             average = sum(row['close'] for row in bars[session - 199:session + 1]) / 200
             above += bars[session]['close'] > average
         coverage = eligible / len(datasets) * 100 if datasets else 0
+        market_stats[day] = above / eligible * 100 if eligible else 0
         market_cache[day] = (eligible > 0 and coverage >= getattr(cfg, 'market_min_coverage_pct', 80)
                              and above / eligible >= getattr(cfg, 'market_breadth_pct', 40) / 100)
+        if market_cache[day] and cfg.market_breadth_trend_sessions:
+            earlier = day_indices.get(day, -1) - cfg.market_breadth_trend_sessions
+            if earlier < 0:
+                market_cache[day] = False
+            else:
+                prior_day = all_days[earlier]
+                market_is_strong(prior_day)
+                market_cache[day] = market_stats[day] >= market_stats[prior_day]
         return market_cache[day]
 
     def moving_average(bars, idx, length):
@@ -135,7 +156,19 @@ def simulate(datasets, cfg, *, state=None, liquidate=True, allow_entries=True, e
     def close(symbol, price, day, reason):
         nonlocal cash, total_fees, total_slippage
         p = positions.pop(symbol)
-        execution = broker.fill(price, p['quantity'], 'sell')
+        intraday = day == p['entry_date']
+        if intraday and cfg.fee_model == 'zerodha_equity':
+            from core.execution.zerodha import equity_charges
+            actual_buy = equity_charges(p['entry'], p['quantity'], 'buy', day, intraday=True)
+            correction = actual_buy['total'] - p['entry_fee']
+            cash -= correction
+            total_fees += correction
+            p['entry_cost'] += correction
+            p['entry_fee'] = actual_buy['total']
+            p['entry_charges'] = actual_buy
+            order = next(o for o in reversed(orders) if o['symbol'] == symbol and o['side'] == 'buy' and o['date'] == day)
+            order.update(fees=actual_buy['total'], charges=actual_buy)
+        execution = broker.fill(price, p['quantity'], 'sell', day=day, intraday=intraday)
         fill, fee = execution['price'], execution['fees']
         cash += fill * p['quantity'] - fee
         total_fees += fee
@@ -148,6 +181,14 @@ def simulate(datasets, cfg, *, state=None, liquidate=True, allow_entries=True, e
                        'quantity': p.get('entry_quantity', p['quantity']), 'exit_quantity': p['quantity'],
                        'pnl': pnl, 'r': pnl / p['initial_risk'], 'reason': reason,
                        'fees': p['entry_fee'] + fee})
+        last_exit_dates[symbol] = day
+        if 'charges' in execution:
+            orders[-1]['charges'] = execution['charges']
+            trades[-1]['charges'] = {k: p.get('entry_charges', {}).get(k, 0) + execution['charges'].get(k, 0)
+                                    for k in execution['charges']}
+            trades[-1]['gross_pnl'] = fill * p['quantity'] - (p['entry_cost'] - p['entry_fee'])
+        if 'stop_trace' in p:
+            trades[-1]['stop_trace'] = p['stop_trace']
         if 'fundamentals' in p:
             trades[-1]['fundamentals'] = p['fundamentals']
         if 'sector' in p:
@@ -159,6 +200,8 @@ def simulate(datasets, cfg, *, state=None, liquidate=True, allow_entries=True, e
         # Rebase eligible holdings before checking their stop against the ex-date
         # open. Original fills and cash remain untouched. Replay is idempotent.
         for symbol in list(positions):
+            if symbol not in datasets:
+                continue  # Suspended paper holdings retain their last recorded mark.
             for action in corporate_actions.actions(datasets[symbol]):
                 action_id = symbol + ':' + action['id']
                 if (action_id in applied or action['price_basis'] != 'raw'
@@ -176,8 +219,8 @@ def simulate(datasets, cfg, *, state=None, liquidate=True, allow_entries=True, e
                 continue
             _, b = session[symbol]
             p = positions[symbol]
-            if b['open'] <= p['stop'] or p['age'] >= p.get('exit_config', {}).get('max_hold_days', cfg.max_hold_days):
-                close(symbol, b['open'], day, 'Gap through stop' if b['open'] <= p['stop'] else 'Time exit')
+            if b['open'] <= p['stop'] or p.get('pending_exit') or p['age'] >= p.get('exit_config', {}).get('max_hold_days', cfg.max_hold_days):
+                close(symbol, b['open'], day, 'Gap through stop' if b['open'] <= p['stop'] else p.get('pending_exit', 'Time exit'))
                 exited.add(symbol)
         equity_at_open = cash + sum(p['quantity'] * (session[s][1]['open'] if s in session else marks[s]) for s, p in positions.items())
         # Ranking uses only the completed signal session, never the entry-day close.
@@ -199,6 +242,23 @@ def simulate(datasets, cfg, *, state=None, liquidate=True, allow_entries=True, e
             if symbol in positions or symbol in exited or (cfg.pattern == 'breakout' and i < 1) or signal_idx < entry_warmup or signal_idx < 0 or not signal(context(symbol, datasets[symbol][signal_idx]['date']), signal_idx, cfg):
                 continue
             signal_day = datasets[symbol][signal_idx]['date']
+            denial = None
+            signal_bars = context(symbol, signal_day)
+            if cfg.max_open_gap_pct and (b['open'] / signal_bars[signal_idx]['close'] - 1) * 100 > cfg.max_open_gap_pct:
+                denial = 'Opening gap too large'
+            elif cfg.max_extension_pct and (signal_bars[signal_idx]['close'] /
+                    moving_average(signal_bars, signal_idx, 50) - 1) * 100 > cfg.max_extension_pct:
+                denial = 'Signal too extended'
+            elif cfg.require_open_above_pivot and b['open'] < (pivot_for(context(symbol, day), signal_idx, cfg) or b['open']):
+                denial = 'Open below breakout'
+            elif cfg.reentry_cooldown_sessions and symbol in last_exit_dates:
+                elapsed = sum(last_exit_dates[symbol] < row['date'] <= day for row in datasets[symbol])
+                if elapsed <= cfg.reentry_cooldown_sessions:
+                    denial = 'Reentry cooldown'
+            if denial:
+                skipped += 1
+                skip_reasons[denial] = skip_reasons.get(denial, 0) + 1
+                continue
             sector_decision = None
             if sector_gate is not None:
                 sector_decision = sector_gate.decision(symbol, signal_day)
@@ -231,11 +291,14 @@ def simulate(datasets, cfg, *, state=None, liquidate=True, allow_entries=True, e
                 raw_fill = b['open']
             fill = raw_fill * (1 + slip)
             stop = fill * (1 - cfg.stop_pct / 100)
-            qty = percent_risk_size(equity_at_open, cash, fill, stop, cfg)
+            sizing_cfg = cfg
+            if cfg.market_risk_scale != 1 and not market_is_strong(signal_day):
+                sizing_cfg = SimpleNamespace(**{**vars(cfg), 'risk_pct': cfg.risk_pct * cfg.market_risk_scale})
+            qty = percent_risk_size(equity_at_open, cash, fill, stop, sizing_cfg, day=day)
             if qty < 1:
                 skipped += 1
                 continue
-            execution = broker.fill(raw_fill, qty, 'buy')
+            execution = broker.fill(raw_fill, qty, 'buy', day=day)
             fee = execution['fees']
             cash -= qty * fill + fee
             total_fees += fee
@@ -249,7 +312,13 @@ def simulate(datasets, cfg, *, state=None, liquidate=True, allow_entries=True, e
             positions[symbol] = {'entry': fill, 'entry_date': day, 'entry_cost': qty * fill + fee,
                                  'entry_fee': fee, 'quantity': qty, 'stop': stop, 'best_close': fill,
                                  'initial_risk': qty * (fill - stop), 'age': 0,
-                                 'exit_config': {k: getattr(cfg, k) for k in ('pattern', 'stop_pct', 'breakeven_r', 'winner_exit', 'trail_pct', 'max_hold_days')}}
+                                 'exit_config': {k: getattr(cfg, k) for k in exit_keys}}
+            if refined:
+                positions[symbol]['stop_trace'] = []
+                positions[symbol]['entry_pivot'] = pivot_for(context(symbol, day), signal_idx, cfg)
+            if 'charges' in execution:
+                positions[symbol]['entry_charges'] = execution['charges']
+                orders[-1]['charges'] = execution['charges']
             if sector_decision is not None:
                 positions[symbol]['sector'] = sector_decision
             if fundamental_scores is not None:
@@ -261,7 +330,10 @@ def simulate(datasets, cfg, *, state=None, liquidate=True, allow_entries=True, e
                 continue
             idx, b = session[symbol]
             p = positions[symbol]
-            exit_cfg = SimpleNamespace(**p.get('exit_config', {k: getattr(cfg, k) for k in ('pattern', 'stop_pct', 'breakeven_r', 'winner_exit', 'trail_pct', 'max_hold_days')}))
+            exit_cfg = SimpleNamespace(**{'stalled_exit_sessions': 0, 'stalled_min_r': .5, 'failed_breakout_sessions': 0,
+                                         **p.get('exit_config', {k: getattr(cfg, k) for k in exit_keys})})
+            if 'stop_trace' in p:
+                p['stop_trace'].append({'date': day, 'stop': p['stop']})
             target_pct = {'take_8': 8, 'take_15': 15, 'take_25': 25}.get(exit_cfg.winner_exit)
             if symbol in entered_today and cfg.pattern != 'breakout' and cfg.entry_mode in ('close', 'pivot'):
                 # Daily OHLC cannot locate the low relative to an intraday pivot fill.
@@ -278,12 +350,16 @@ def simulate(datasets, cfg, *, state=None, liquidate=True, allow_entries=True, e
             p['best_close'] = max(p['best_close'], b['close'])
             # Close-based updates activate next session, never retroactively.
             if b['close'] >= p['entry'] * (1 + exit_cfg.stop_pct / 100 * exit_cfg.breakeven_r):
-                breakeven = p['entry_cost'] / p['quantity'] / ((1 - sell_fee) * (1 - slip))
+                if cfg.fee_model == 'zerodha_equity':
+                    from core.execution.zerodha import breakeven_price
+                    breakeven = breakeven_price(p['entry_cost'], p['quantity'], day, cfg.slippage_bps)
+                else:
+                    breakeven = p['entry_cost'] / p['quantity'] / ((1 - sell_fee) * (1 - slip))
                 if exit_cfg.pattern == 'breakout':
                     trailing = None
                 elif exit_cfg.winner_exit == 'trail_30w':
                     trailing = moving_average(context(symbol, day), idx, 150)
-                elif target_pct is not None:
+                elif target_pct is not None or exit_cfg.winner_exit == 'trail_pct':
                     trailing = None
                 else:
                     trailing = moving_average(context(symbol, day), idx, 50)
@@ -294,6 +370,12 @@ def simulate(datasets, cfg, *, state=None, liquidate=True, allow_entries=True, e
                     continue
                 else:
                     p['stop'] = max(p['stop'], breakeven, p['best_close'] * (1 - exit_cfg.trail_pct / 100))
+            if (exit_cfg.failed_breakout_sessions and p['age'] <= exit_cfg.failed_breakout_sessions
+                    and p.get('entry_pivot') and b['close'] < p['entry_pivot']):
+                p['pending_exit'] = 'Early breakout failure (next open)'
+            elif (exit_cfg.stalled_exit_sessions and p['age'] >= exit_cfg.stalled_exit_sessions
+                  and p['best_close'] < p['entry'] * (1 + exit_cfg.stop_pct / 100 * exit_cfg.stalled_min_r)):
+                p['pending_exit'] = 'Stalled trade (next open)'
             marks[symbol] = b['close']
             future = datasets[symbol]
             if liquidate and (idx == len(future) - 1 or future[idx + 1]['date'] > str(cfg.end)):
@@ -302,9 +384,14 @@ def simulate(datasets, cfg, *, state=None, liquidate=True, allow_entries=True, e
         peak = max(peak, equity)
         max_dd = max(max_dd, (peak - equity) / peak * 100)
         curve.append({'date': day, 'equity': round(equity, 2), 'drawdown_pct': round((peak - equity) / peak * 100, 4)})
-    wins, losses = [t for t in trades if t['pnl'] > 0], [t for t in trades if t['pnl'] < 0]
+    # Bisection breakeven fills leave tiny floating-point residues. Preserve
+    # historical custom-bps metrics, but don't label Zerodha flat exits wins.
+    tolerance = 1e-6 if cfg.fee_model == 'zerodha_equity' else 0
+    wins, losses = [t for t in trades if t['pnl'] > tolerance], [t for t in trades if t['pnl'] < -tolerance]
     return {'trades': trades, 'curve': curve, 'corporate_actions': action_log, 'sector_checks': sector_checks,
+        'entry_filter_rejections': skip_reasons,
         'state': {'cash': cash, 'positions': positions, 'marks': marks, 'trades': trades, 'curve': curve,
+                  'entry_filter_rejections': skip_reasons,
                   'corporate_actions': action_log,
                   'orders': orders, 'last_session': curve[-1]['date'], 'peak': peak, 'max_dd': max_dd,
                   'total_fees': total_fees, 'total_slippage': total_slippage, 'skipped': skipped},
@@ -431,8 +518,12 @@ def prepare(settings, cfg):
 def run(settings, cfg, log, job_id, *, fundamental_evidence=None, sector_evidence=None):
     universe, datasets, manifest, excluded = prepare(settings, cfg)
     quality = data_quality.audit(datasets, end=cfg.end)
-    data_quality.require_no_anomalies(quality)
-    log(f'Testing {len(datasets)} symbols with one cash balance; {len(excluded)} excluded for missing history, date coverage, warmup or IPO listing evidence.')
+    datasets = data_quality.exclude_anomalies(datasets, quality, log)
+    if not datasets:
+        raise ValueError('No eligible stocks remain after excluding unresolved price gaps.')
+    manifest = [row for row in manifest if row['symbol'] in datasets]
+    excluded = list(dict.fromkeys([*excluded, *quality['excluded_symbols']]))
+    log(f'Testing {len(datasets)} symbols with one cash balance; {len(excluded)} excluded for price gaps, missing history, date coverage, warmup or IPO listing evidence.')
     intraday = getattr(cfg, 'execution_horizon', 'swing') == 'intraday'
     if sector_evidence is None and cfg.comparison_run_id:
         saved_reference = store.read('runs/'+cfg.comparison_run_id, {}).get('sector_reference')
@@ -477,6 +568,7 @@ def run(settings, cfg, log, job_id, *, fundamental_evidence=None, sector_evidenc
                             'All-in fee rates are your assumptions, not a verified historical tax/brokerage schedule.',
                             'No volume participation cap, circuit-limit or non-fill simulation; stops may fill worse in real markets.',
                             'This run is exploratory/in-sample. Reserve a later untouched period before judging the strategy.'])
+    result['warnings'].extend(quality['warnings'])
     if cfg.pattern in dict(bearish.SCREENS):
         result['warnings'].extend([
             'Hypothetical short research: stock-borrow availability, recalls, dividends owed, margin calls and circuit-limit fills are not modeled.',
@@ -488,6 +580,13 @@ def run(settings, cfg, log, job_id, *, fundamental_evidence=None, sector_evidenc
         store.write('run_fundamentals/'+job_id, fundamental_evidence)
         result['fundamental_reference'] = {k: fundamental_evidence[k] for k in ('sha256','captured_at','method','notice')}
         result['warnings'].append(fundamental_evidence['notice'])
+    if cfg.fee_model == 'zerodha_equity':
+        from core.execution.zerodha import SOURCES
+        result['cost_model'] = dict(name='Zerodha NSE cash equity', reviewed_at='2026-10-10', sources=SOURCES,
+            notice='Resident-individual tariff; delivery plus same-day intraday reclassification. Includes DP on delivery sells. '
+                   'Trade-level estimates differ from contract-note rounding. Account AMC and personal income tax excluded. Slippage is separate.')
+        result['warnings'] = [w for w in result['warnings'] if not w.startswith('All-in fee rates')]
+        result['warnings'].append(result['cost_model']['notice'])
     if sector_evidence is not None:
         sector.verify(sector_evidence)
         store.write('run_sector/'+job_id, sector_evidence)
@@ -518,7 +617,8 @@ def run(settings, cfg, log, job_id, *, fundamental_evidence=None, sector_evidenc
         runs.insert(0, {k: result[k] for k in ('id', 'created_at', 'config', 'universe', 'metrics')})
         store.write('runs_index', runs)
     log(f"Recorded {len(result['trades'])} trades and the input/configuration snapshot.")
-    return {'run_id': job_id}
+    return {'run_id': job_id, 'partial': bool(quality['excluded_symbols']),
+            'price_gap_exclusions': quality['excluded_symbols']}
 
 
 def compare_sectors(settings, reference_id, log, job_id):

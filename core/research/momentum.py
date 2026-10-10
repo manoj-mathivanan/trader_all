@@ -504,7 +504,11 @@ def simulate(datasets, cfg, sessions, plan=None, *, entry_check=None, fundamenta
 def run(settings, cfg, log, job_id, *, fundamental_evidence=None):
     universe, datasets, manifest, excluded = prepare(settings, cfg)
     quality = data_quality.audit(datasets, end=cfg.end)
-    data_quality.require_no_anomalies(quality)
+    datasets = data_quality.exclude_anomalies(datasets, quality, log)
+    if not datasets:
+        raise ValueError('No eligible stocks remain after excluding unresolved price gaps.')
+    manifest = [row for row in manifest if row['symbol'] in datasets]
+    excluded = list(dict.fromkeys([*excluded, *quality['excluded_symbols']]))
     plan, requests = entry_plan(datasets, cfg)
     log(f'Momentum: {len(datasets)} daily symbols; scan up to {cfg.liquid_universe_size} per day ranked by prior turnover.')
     if cfg.comparison_run_id:
@@ -568,6 +572,7 @@ def run(settings, cfg, log, job_id, *, fundamental_evidence=None):
         'Optional EMA9/20 and MACD12/26/9 use completed session-aligned 10/60-minute candles with prior-session SMA-seeded warmup. Warmup regular bars end at 15:00; partial terminal bins are discarded. Corporate-action crossings halt indicator tests pending independent intraday basis verification.',
         'Optional flag entries require a directional impulse >=0.25 prior ATR, exactly two adverse candles retracing at most half its body, then a completed close beyond the pullback extremes and opening trigger. This is a mechanical adaptation, not a reproduction of discretionary practitioner trades.',
     ])
+    result['warnings'].extend(quality['warnings'])
     result['evaluation'] = chronological_evaluation(result)
     if fundamental_evidence is not None:
         store.write('run_fundamentals/'+job_id,fundamental_evidence)
@@ -582,7 +587,8 @@ def run(settings, cfg, log, job_id, *, fundamental_evidence=None):
         runs.insert(0, {k:result[k] for k in ('id','created_at','strategy_id','config','universe','metrics')})
         store.write('runs_index', runs)
     log(f"Recorded {len(result['trades'])} momentum trades; net return {result['metrics']['return_pct']:.2f}%.")
-    return {'run_id':job_id}
+    return {'run_id':job_id, 'partial': bool(quality['excluded_symbols']),
+            'price_gap_exclusions': quality['excluded_symbols']}
 
 
 def trade_summary(trades):

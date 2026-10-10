@@ -11,7 +11,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, SecretStr
-from core.research import store, jobs, upstox, backtest, data_quality, market_data, sector
+from core.research import store, jobs, upstox, backtest, data_quality, market_data, sector, price_backfill
 from core.research.config import Settings, DataPreferences, BacktestConfig, BearishBacktestConfig, current_settings
 from core.research import bearish, momentum, scalping, strategy_presets
 from core.research.strategy_presets import ScreenInput
@@ -220,6 +220,17 @@ def backtest_job(value: BacktestConfig | BearishBacktestConfig):
     cfg = settings(value.comparison_run_id)
     backtest.prepare(cfg, value)  # Return actionable validation before creating a job.
     return jobs.submit('Backtest', lambda log, job_id: backtest.run(cfg, value, log, job_id), value.model_dump(mode='json'))
+
+
+@app.post('/api/jobs/backtest-history')
+def backtest_history_job(value: BacktestConfig | BearishBacktestConfig):
+    if value.comparison_run_id:
+        raise ValueError('Comparison inputs are frozen. Use a fresh backtest for backfilling.')
+    store.token()
+    cfg = settings()
+    return jobs.submit('Backfill daily backtest history',
+                       lambda log, job_id: price_backfill.backfill(cfg, value, log, job_id),
+                       value.model_dump(mode='json'))
 
 
 @app.get('/api/backtest/window')

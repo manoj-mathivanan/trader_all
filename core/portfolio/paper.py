@@ -34,8 +34,8 @@ class PaperConfig(TradingConfig):
     pattern: Literal['vcp', 'blue_sky', 'multiyear', 'ipo'] = Field('vcp', title='Banana screen')
     entry_mode: Literal['next_open'] = Field('next_open', title='Entry price')
     slippage_bps: float = Field(10, gt=0, le=500, title='Slippage per side (bps)')
-    buy_cost_bps: float = Field(10, gt=0, le=500, title='All-in buy charges (bps)')
-    sell_cost_bps: float = Field(10, gt=0, le=500, title='All-in sell charges (bps)')
+    buy_cost_bps: float = Field(10, ge=0, le=500, title='All-in buy charges (bps; custom model)')
+    sell_cost_bps: float = Field(10, ge=0, le=500, title='All-in sell charges (bps; custom model)')
     auto_run: bool = Field(False, title='Run automatically on weekdays')
     run_hour: int = Field(16, ge=16, le=23, title='Daily cycle hour (IST)')
     run_minute: int = Field(15, ge=0, le=59, title='Daily cycle minute')
@@ -43,6 +43,8 @@ class PaperConfig(TradingConfig):
 
     @model_validator(mode='after')
     def acknowledge(self):
+        if self.fee_model == 'custom_bps' and (self.buy_cost_bps <= 0 or self.sell_cost_bps <= 0):
+            raise ValueError('Paper custom charges must be positive; choose Zerodha fees for its tariff.')
         if not self.acknowledge_limitations:
             raise ValueError('Acknowledge the paper-trading and data limitations first.')
         return self
@@ -129,6 +131,15 @@ def cycle(log, job_id, *, ingest=True):
             continue
         datasets[item['symbol']] = [b for b in derived if b['date'] <= through.isoformat()]
         histories[item['symbol']] = history
+    quality = data_quality.audit(datasets, end=through.isoformat())
+    datasets = data_quality.exclude_anomalies(datasets, quality, log)
+    quality['suspended_positions'] = sorted(set(quality['excluded_symbols']) & set(ledger.get('positions', {})))
+    if quality['suspended_positions']:
+        warning = ('Paper holdings paused for unresolved price gaps: '+', '.join(quality['suspended_positions'])+
+                   '. Positions and last recorded marks retained; their entries, exits and valuation updates wait for validated data. '
+                   'Portfolio equity includes stale marks for these holdings.')
+        quality['warnings'].append(warning)
+        log(warning)
     # Process the common observed boundary; do not fabricate holidays or force a stale quote.
     if not datasets:
         raise ValueError('No eligible paper inputs after history checks; ledger unchanged.')
@@ -136,7 +147,11 @@ def cycle(log, job_id, *, ingest=True):
     start = max(portfolio['start_session'], (date.fromisoformat(last) + timedelta(days=1)).isoformat() if last else portfolio['start_session'])
     if end < start:
         log(f'No new completed sessions. Portfolio begins {portfolio["start_session"]}; last processed {last or "none"}.')
-        return {'portfolio_id': portfolio['id'], 'sessions': 0}
+        if quality['excluded_symbols']:
+            portfolio.update(data_quality=quality, updated_at=store.now())
+            store.write(KEY, portfolio)
+        return {'portfolio_id': portfolio['id'], 'sessions': 0,
+                'partial': bool(quality['excluded_symbols']), 'price_gap_exclusions': quality['excluded_symbols']}
     for symbol, bars in datasets.items():
         if sum(b['date'] < start for b in bars) < backtest.required_warmup(cfg):
             if symbol in ledger.get('positions', {}):
@@ -167,8 +182,6 @@ def cycle(log, job_id, *, ingest=True):
     if cfg.pattern == 'ipo':
         verified = sum(bars[0].get('listing_metadata', {}).get('ipo_verified') is True for bars in datasets.values())
         log(f'IPO listing evidence: {verified}/{len(datasets)} symbols; missing evidence blocks new IPO entries.')
-    quality = data_quality.audit(datasets, start=start, end=end, after=last)
-    data_quality.require_no_anomalies(quality)
     log(f'Processing {start} through {end}; {portfolio["status"]} paper portfolio, next-open fills with costs.')
     from core.research import fundamentals
     symbol_isins={item['symbol']:item['isin'] for item in instruments}
@@ -208,6 +221,7 @@ def cycle(log, job_id, *, ingest=True):
                                 'sessions': sessions, 'config': cfg.model_dump(mode='json'),
                                 'order_count': len(new_orders), 'status': portfolio['status']})
     portfolio['cycles'][-1].update(history_evidence=histories, provenance=provenance.capture())
+    portfolio['cycles'][-1]['data_quality'] = quality
     portfolio['cycles'][-1]['fundamental_checks']=fundamental_checks
     portfolio['cycles'][-1]['sector_checks'] = result['sector_checks']
     if sector_snapshot is not None:
@@ -220,4 +234,6 @@ def cycle(log, job_id, *, ingest=True):
     # Commit cash, positions, orders, trades and checkpoint together; retries are idempotent.
     store.write(KEY, portfolio)
     log(f'Committed {sessions} sessions, {len(new_orders)} simulated fills, {len(new_ledger["positions"])} open positions.')
-    return {'portfolio_id': portfolio['id'], 'sessions': sessions, 'orders': len(new_orders)}
+    return {'portfolio_id': portfolio['id'], 'sessions': sessions, 'orders': len(new_orders),
+            'partial': bool(quality['excluded_symbols']), 'price_gap_exclusions': quality['excluded_symbols'],
+            'suspended_positions': quality['suspended_positions']}

@@ -125,7 +125,10 @@ def pull_stock(item, *, at=None, retry_failed=False, log=lambda _:None, client=N
             raise ValueError('NSE filing index unavailable; existing data retained.')
         sources = index['sources']
         if not sources:
-            raise ValueError('No supported NSE Ind-AS filings found; existing data retained.')
+            reason = 'No supported NSE financial filings available; existing data retained.'
+            record.update(pull_status='unsupported', reason=reason)
+            store.write(path, record)
+            return dict(symbol=item['symbol'], isin=item['isin'], status='unsupported', reason=reason)
         newest = max(s['period_end'] for s in sources)
         record['latest_index_period'] = newest
         if period and newest <= period:
@@ -239,7 +242,7 @@ def _pull(items, log=lambda _:None, job_id=None, *, retry_failed=False, at=None)
                 store.write('company/fundamentals_pull',result)
                 log(f"Fundamentals checked {n}/{len(items)}: {result['counts']}.")
     result['stocks'] = [ordered[i] for i in range(len(items))]
-    result.update(completed_at=store.now(),partial=bool(result['counts'].get('failed')))
+    result.update(completed_at=store.now(),partial=bool(result['counts'].get('failed') or result['counts'].get('unsupported')))
     result['coverage'] = coverage(items)
     store.write('company/fundamentals_pull',result)
     return result

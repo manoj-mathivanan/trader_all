@@ -34,9 +34,23 @@ def require_no_anomalies(report):
                          "Verify provider adjustment behaviour and the event; do not automatically repair prices.")
 
 
-def audit_cached_universe(settings):
+def exclude_anomalies(datasets, report, log=lambda message: None):
+    """Exclude whole instruments; retain the original findings as warning evidence."""
+    symbols = sorted({finding['symbol'] for finding in report.get('findings', [])})
+    report.update(excluded_symbols=symbols, policy='exclude_stocks_with_unresolved_price_gaps')
+    report['warnings'] = []
+    if symbols:
+        message = ('Price-gap warning: skipped '+', '.join(symbols)+
+                   f" ({len(report['findings'])} unresolved gap(s) at or above {report['gap_threshold_pct']}%). "
+                   'Source candles retained; these stocks are excluded from selection and breadth calculations.')
+        report['warnings'].append(message)
+        log(message)
+    return {symbol: bars for symbol, bars in datasets.items() if symbol not in symbols}
+
+
+def audit_cached_universe(settings, *, universe=None, end=None):
     from core.research import store, market_history
-    universe = store.read('universes/' + settings.universe, {})
+    universe = universe if universe is not None else store.read('universes/' + settings.universe, {})
     report = audit({})
     report.update(universe=settings.universe, symbols_scanned=0, missing_symbols=[],
                   raw_findings=[], history_changes=[])
@@ -47,12 +61,13 @@ def audit_cached_universe(settings):
         if not record.get('bars'):
             report['missing_symbols'].append(item['symbol'])
             continue
-        report['raw_findings'].extend(audit({item['symbol']: record['bars']})['findings'])
+        report['raw_findings'].extend(audit({item['symbol']: record['bars']}, end=end)['findings'])
         bars, history = market_history.prepare(item, record, reference=reference, fingerprint=False)
         if history.get('quarantine') or history.get('removed_prelisting_bars') or history.get('candle_repairs'):
             report['history_changes'].append({'symbol': item['symbol'], **history})
-        report['findings'].extend(audit({item['symbol']: bars})['findings'])
+        report['findings'].extend(audit({item['symbol']: bars}, end=end)['findings'])
         report['symbols_scanned'] += 1
+    exclude_anomalies({}, report)
     return report
 
 

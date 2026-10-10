@@ -54,6 +54,20 @@ class StrategyPresetTests(unittest.TestCase):
         self.assertEqual(len([p for p in strategy_presets.available() if p['id']==saved['id']]),1)
         self.assertEqual(store.read('screens')[0]['minimum_warmup_sessions'],260)
 
+    def test_zerodha_candidate_has_causal_exit_and_valid_tariff_defaults(self):
+        preset=next(p for p in strategy_presets.available() if p['name']=='Blue Sky Stalled Exit - Zerodha')
+        values=preset['trading_defaults']
+        self.assertEqual(values['fee_model'],'zerodha_equity')
+        self.assertEqual(values['winner_exit'],'trail_50d')
+        self.assertEqual(values['stalled_exit_sessions'],10)
+        self.assertEqual(values['stalled_min_r'],.5)
+        self.assertEqual(values['buy_cost_bps'],0)
+        self.assertEqual(values['sell_cost_bps'],0)
+        self.assertIn('Exploratory',preset['description'])
+        BacktestConfig(**values,start='2025-03-03',end='2026-10-08',acknowledge_limitations=True)
+        PaperConfig(**values,acknowledge_limitations=True)
+        self.assertIsNone(store.read('portfolios/swing_patterns'))
+
     def test_legacy_screen_and_conflicting_filters(self):
         simple=strategy_presets.ScreenInput(name='Only a screen',pattern='vcp')
         self.assertIsNone(simple.trading_defaults)

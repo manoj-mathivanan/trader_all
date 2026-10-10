@@ -12,6 +12,18 @@ from scripts.sync_market_refresh import local, ready_refresh, identity
 
 
 class RefreshSyncTests(unittest.TestCase):
+    def test_backfills_are_synced_in_completion_order_after_refresh(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory)
+            refresh = dict(started_at='2026-10-10T10:00:00+00:00', completed_at='2026-10-10T10:01:00+00:00')
+            (source/'market_fetch.json').write_text(json.dumps(refresh))
+            (source/'price_backfills').mkdir()
+            backfill = dict(started_at='2026-10-10T11:00:00+00:00', completed_at='2026-10-10T11:01:00+00:00')
+            (source/'price_backfills/test.json').write_text(json.dumps(backfill))
+            self.assertEqual(ready_refresh(source), refresh)
+            self.assertEqual(ready_refresh(source, refresh['completed_at']), backfill)
+            self.assertIsNone(ready_refresh(source, backfill['completed_at']))
+
     def test_delta_archives_fundamentals_and_filters_candle_window(self):
         with tempfile.TemporaryDirectory() as directory:
             source = Path(directory) / 'data'

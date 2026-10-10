@@ -61,10 +61,14 @@ def lock(path):
         yield
 
 
-def ready_refresh(source):
-    refresh = read(source / 'market_fetch.json')
-    if not refresh.get('completed_at'):
+def ready_refresh(source, after=None):
+    candidates = [read(source / 'market_fetch.json')]
+    candidates.extend(read(path) for path in (source / 'price_backfills').glob('*.json'))
+    candidates = [item for item in candidates if item.get('completed_at') and
+                  (not after or datetime.fromisoformat(item['completed_at']) > datetime.fromisoformat(after))]
+    if not candidates:
         return None
+    refresh = min(candidates, key=lambda item: datetime.fromisoformat(item['completed_at']))
     for key in ('started_at', 'completed_at'):
         if datetime.fromisoformat(refresh[key]).tzinfo is None:
             raise ValueError('Refresh timestamps require a timezone')
@@ -115,7 +119,7 @@ def local(args):
             write(progress, current)
             cleanup(args.state, current['token'])
         return
-    refresh = ready_refresh(args.source)
+    refresh = ready_refresh(args.source, current.get('refresh_completed_at'))
     if not refresh or current.get('token') == identity(refresh, 'local'):
         return
     token, bundle = bundle_for(args.source, args.state, 'local', refresh)
@@ -168,7 +172,7 @@ def server(args):
             failures.append(type(exc).__name__)
     progress = args.state / 'progress.json'
     current = read(progress)
-    refresh = ready_refresh(args.source)
+    refresh = ready_refresh(args.source, current.get('refresh_completed_at'))
     if refresh and current.get('token') != identity(refresh, 'production'):
         try:
             token, bundle = bundle_for(args.source, args.state, 'production', refresh)

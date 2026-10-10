@@ -1,0 +1,39 @@
+{
+  "INE545A01024": {
+    "symbol": "HEGAM",
+    "historical_symbols": ["HEG"],
+    "effective_date": "2026-09-22",
+    "source": "https://nsearchives.nseindia.com/content/circulars/CML76359.pdf",
+    "evidence": "NSE/CML/76359 dated 2026-09-16 changes HEG to HEGAM. ISIN must still match exactly."
+  },
+  "INE811A01038": {
+    "symbol": "KIRLPNU",
+    "historical_isins": ["INE811A01020"],
+    "effective_date": "2026-08-18",
+    "sources": [
+      "https://nsearchives.nseindia.com/content/circulars/CML75754.pdf",
+      "https://nsearchives.nseindia.com/corporate/ixbrl/INTEGRATED_FILING_INDAS_176534_21072026174955_iXBRL_WEB.html"
+    ],
+    "evidence": "NSE circular confirms the new ISIN after the face-value split; the earlier official filing confirms the old ISIN for the same symbol."
+  },
+  "INE419M01035": {
+    "symbol": "TDPOWERSYS",
+    "historical_isins": ["INE419M01027"],
+    "effective_date": "2026-08-24",
+    "sources": [
+      "https://nsearchives.nseindia.com/content/circulars/CML75855.pdf",
+      "https://nsearchives.nseindia.com/corporate/ixbrl/INTEGRATED_FILING_INDAS_185133_11082026172808_iXBRL_WEB.html"
+    ],
+    "evidence": "NSE circular confirms the new ISIN after the face-value split; the earlier official filing confirms the old ISIN for the same symbol."
+  },
+  "INE900L01028": {
+    "symbol": "MBAPL",
+    "historical_isins": ["INE900L01010"],
+    "effective_date": "2026-07-03",
+    "sources": [
+      "https://nsearchives.nseindia.com/corporate/ixbrl/INTEGRATED_FILING_INDAS_174257_14072026110234_iXBRL_WEB.html",
+      "https://nsearchives.nseindia.com/corporate/ixbrl/INTEGRATED_FILING_INDAS_151236_17042026180723_iXBRL_WEB.html"
+    ],
+    "evidence": "The July NSE filing documents the July 3 split and current ISIN; the April NSE filing confirms the prior ISIN for the same symbol."
+  }
+}

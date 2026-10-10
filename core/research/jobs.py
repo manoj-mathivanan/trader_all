@@ -13,10 +13,25 @@ def failure_detail(error):
     return f'Unexpected failure ({type(error).__name__}{location}). Retry this job; valid saved data is retained. No credentials were logged.'
 
 
+def completion_status(result):
+    if not result or not result.get('partial'):
+        return 'success'
+    if ('daily_symbols' in result and 'minute_symbols' in result
+            and result['daily_symbols'] + result['minute_symbols'] == 0):
+        return 'failed'
+    if result.get('counts') and set(result['counts']) <= {'failed'}:
+        return 'failed'
+    return 'warning'
+
+
 def recover():
     for job in store.read("jobs", []):
         if job["status"] in ("queued", "running"):
             update(job["id"], status="failed", message="Interrupted by server restart. Retry this job.")
+        elif (job['status'] == 'failed' and completion_status(job.get('result')) == 'warning'
+              and job.get('logs') and job['logs'][-1]['message'] ==
+              'Completed all stocks with failures; inspect the result and logs, then retry.'):
+            update(job['id'], status='warning', message='Completed with warnings. Saved data retained; inspect coverage details for unavailable inputs.')
 
 
 def update(job_id, *, status=None, message=None, result=None):
@@ -47,8 +62,11 @@ def submit(kind, function, payload=None):
         update(job["id"], status="running", message=f"Started {kind}.")
         try:
             result = function(lambda message: update(job["id"], message=message), job["id"])
-            update(job["id"], status="failed" if result and result.get("partial") else "success",
-                   message="Completed all stocks with failures; inspect the result and logs, then retry." if result and result.get("partial") else "Completed.", result=result)
+            status = completion_status(result)
+            message = {'warning': 'Completed with warnings. Saved data retained; inspect coverage details for unavailable inputs.',
+                       'failed': 'No usable data coverage. Inspect the result and logs before retrying.',
+                       'success': 'Completed.'}[status]
+            update(job['id'], status=status, message=message, result=result)
         except ValueError as exc:
             update(job["id"], status="failed", message=str(exc))
         except Exception as exc:

@@ -139,11 +139,18 @@ def explain_trade(result, datasets, trade, bars, first, last):
         best = max(best, bar['close'])
         if bar['close'] >= trade['entry'] * (1 + cfg.stop_pct / 100 * cfg.breakeven_r):
             length = 150 if cfg.winner_exit == 'trail_30w' else 50
-            trail = averages[length][i] if cfg.pattern != 'breakout' and cfg.winner_exit not in ('take_8', 'take_15', 'take_25') else None
+            trail = averages[length][i] if cfg.pattern != 'breakout' and cfg.winner_exit not in ('take_8', 'take_15', 'take_25', 'trail_pct') else None
             stop = max(stop, breakeven, trail if trail is not None else best * (1 - cfg.trail_pct / 100))
     series.append({'id': 'protective_stop', 'label': 'Reconstructed active stop', 'color': '#d34848'})
+    if trade.get('stop_trace'):
+        trace = {x['date']: x['stop'] for x in trade['stop_trace']}
+        for row in enriched:
+            row['chart_values']['protective_stop'] = trace.get(row['date'])
+        series[-1]['label'] = 'Recorded active stop'
+        early_stop = None
     notices = ['Indicators use the full saved history before the chart is cropped. Signal checks use only the completed signal session.',
-               'The active stop is reconstructed from saved settings and fills; older engine versions may differ. BUY/SELL markers are the recorded ledger.']
+               ('The active stop uses the recorded engine trace. BUY/SELL markers are the recorded ledger.' if trade.get('stop_trace') else
+                'The active stop is reconstructed from saved settings and fills; older engine versions may differ. BUY/SELL markers are the recorded ledger.')]
     if any(x.get('symbol') == trade['symbol'] and trade['entry_date'] < x['date'] <= trade['exit_date']
            for x in result.get('corporate_actions', [])):
         for row in enriched:

@@ -62,7 +62,7 @@ class TradingConfig(BaseModel):
     entry_mode: Literal["pivot", "close", "next_open"] = Field("pivot", title="Entry price")
     risk_pct: float = Field(1.5, gt=0, le=5, title="Risk per trade (%)")
     stop_pct: float = Field(8, gt=0, le=50, title="Initial stop (%)")
-    winner_exit: Literal["trail_50d", "trail_30w", "take_8", "take_15", "take_25"] = Field("trail_50d", title="Winner exit")
+    winner_exit: Literal["trail_50d", "trail_30w", "trail_pct", "take_8", "take_15", "take_25"] = Field("trail_50d", title="Winner exit")
     skip_weak_markets: bool = Field(False, title="Skip weak markets")
     sector_filter: Literal['off', 'trend', 'trend_rs'] = Field('off', title='Sector trend filter')
     market_breadth_pct: float = Field(40, ge=0, le=100, title="Minimum market breadth (%)")
@@ -72,6 +72,16 @@ class TradingConfig(BaseModel):
     trail_pct: float = Field(8, gt=0, le=50, title="Trail below best close (%)")
     max_positions: int = Field(5, ge=1, le=50, title="Maximum open positions")
     max_hold_days: int = Field(120, ge=1, le=1000, title="Maximum holding sessions")
+    max_open_gap_pct: float = Field(0, ge=0, le=30, title='Maximum upward opening gap (%, 0 disables)')
+    require_open_above_pivot: bool = Field(False, title='Require open above breakout level')
+    max_extension_pct: float = Field(0, ge=0, le=200, title='Maximum signal extension above SMA50 (%, 0 disables)')
+    reentry_cooldown_sessions: int = Field(0, ge=0, le=60, title='Sessions to wait after any exit')
+    stalled_exit_sessions: int = Field(0, ge=0, le=120, title='Exit stalled trades after sessions (0 disables)')
+    stalled_min_r: float = Field(.5, ge=0, le=3, title='Minimum closing progress before stalled exit (R)')
+    failed_breakout_sessions: int = Field(0, ge=0, le=20, title='Early breakout-failure window (sessions, 0 disables)')
+    market_risk_scale: float = Field(1, gt=0, le=1, title='Risk multiplier in weak markets (gate off)')
+    market_breadth_trend_sessions: int = Field(0, ge=0, le=60, title='Breadth improvement lookback (sessions, 0 disables)')
+    fee_model: Literal['custom_bps', 'zerodha_equity'] = Field('custom_bps', title='Execution fee model')
     # Legacy API defaults stay costed for old saved experiments; the new UI
     # seeds Banana-style comparison runs with zero costs explicitly.
     slippage_bps: float = Field(10, ge=0, le=500, title="Slippage per side (bps)")
@@ -101,6 +111,15 @@ class BacktestConfig(TradingConfig):
             raise ValueError('Intraday backtests require next-session open entries.')
         if self.sector_filter != 'off' and (self.execution_horizon != 'swing' or self.entry_mode != 'next_open'):
             raise ValueError('Sector filters currently require swing next-session-open entries.')
+        refinements = (self.max_open_gap_pct or self.require_open_above_pivot or self.max_extension_pct
+                       or self.reentry_cooldown_sessions or self.stalled_exit_sessions
+                       or self.failed_breakout_sessions or self.market_risk_scale != 1 or self.market_breadth_trend_sessions
+                       or self.fee_model != 'custom_bps' or self.winner_exit == 'trail_pct')
+        if refinements and (self.pattern not in ('vcp', 'blue_sky', 'multiyear', 'ipo', 'breakout')
+                            or self.execution_horizon != 'swing' or self.entry_mode != 'next_open'):
+            raise ValueError('Swing refinements and Zerodha fees require long swing next-open entries.')
+        if self.fee_model == 'zerodha_equity' and self.start < date(2024, 10, 1):
+            raise ValueError('Zerodha tariff supports tests from 2024-10-01.')
         return self
 
 

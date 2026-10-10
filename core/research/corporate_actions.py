@@ -76,4 +76,6 @@ def rebase_position(position, mark, action):
     result['quantity'] = int(quantity)
     for key in ('entry', 'stop', 'best_close'):
         result[key] /= float(factor)
+    if result.get('entry_pivot'):
+        result['entry_pivot'] /= float(factor)
     return result, mark / float(factor)

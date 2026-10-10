@@ -41,14 +41,16 @@ console.log('Automatic research controls, missing data, filters, escaping and se
   vm.runInContext(company,early);await early.timer();
   vm.runInContext(`
     companyPendingJob='fund';
-    state.jobs=[{id:'fund',type:'Quarterly fundamentals pull',status:'failed'}];
+    state.jobs=[{id:'fund',type:'Quarterly fundamentals pull',status:'warning'}];
     globalThis.reloads=0;globalThis.lastToast='';
     loadCompany=async()=>{globalThis.reloads++;};
     toast=message=>{globalThis.lastToast=message;};
   `,context);
   await context.timer();
   assert.equal(context.reloads,1);
-  assert.match(context.lastToast,/Fundamentals checked with some failures/);
+  assert.match(context.lastToast,/Completed with coverage warnings/);
+  vm.runInContext(`globalThis.warningBadge=badge('warning');`,context);
+  assert.match(context.warningBadge,/Completed with warnings/);
   vm.runInContext(`currentView='company';state.market_fetch={completed_at:'2026-10-09T06:00:00+00:00'};globalThis.reloads=0;`,context);
   await context.timer();assert.equal(context.reloads,1);
   await context.timer();assert.equal(context.reloads,1);

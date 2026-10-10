@@ -28,6 +28,36 @@ def document(year=2026, revenue='1,10,000.00', profit='(1,200.00)', unit='Lakhs'
 
 
 class OfficialFilingTests(unittest.TestCase):
+    def test_verified_heg_rename_accepts_old_symbol_but_requires_same_isin(self):
+        item = dict(ITEM, symbol='HEGAM', isin='INE545A01024')
+        raw = document(isin=item['isin']).replace('TCS','HEG')
+        parsed = filing.parse(raw,URL,item,AT)
+        self.assertEqual(parsed['symbol'],'HEGAM')
+        with self.assertRaisesRegex(ValueError,'identity'):
+            filing.parse(raw.replace('INE545A01024','INE000A01002'),URL,item,AT)
+        with self.assertRaisesRegex(ValueError,'identity'):
+            filing.parse(raw.replace('HEG','UNRELATED'),URL,item,AT)
+
+    def test_verified_split_aliases_preserve_source_identity_and_reject_unreviewed_isins(self):
+        for symbol,current,old in [('KIRLPNU','INE811A01038','INE811A01020'),
+                                   ('TDPOWERSYS','INE419M01035','INE419M01027'),
+                                   ('MBAPL','INE900L01028','INE900L01010')]:
+            item=dict(ITEM,symbol=symbol,isin=current)
+            raw=document(isin=old).replace('TCS',symbol)
+            # Pre-split publication: the July fixture is after MBAPL's split.
+            source=URL.replace('09072026183620','02072026183620') if symbol=='MBAPL' else URL
+            if symbol=='MBAPL':
+                raw=raw.replace('09-07-2026','02-07-2026')
+            parsed=filing.parse(raw,source,item,AT)
+            self.assertEqual(parsed['isin'],current)
+            self.assertEqual(parsed['source_isin'],old)
+            self.assertTrue(parsed['identity_evidence'])
+            with self.assertRaisesRegex(ValueError,'identity'):
+                filing.parse(raw.replace(old,'INE000A01002'),source,item,AT)
+            after=source.replace('02072026183620','09102026183620').replace('09072026183620','09102026183620')
+            with self.assertRaisesRegex(ValueError,'identity'):
+                filing.parse(raw,after,item,AT)
+
     def test_repeat_retrieval_reuses_verified_bytes_without_http_requests(self):
         requests=[]
         def respond(request):

@@ -141,7 +141,7 @@ class ShortBacktestTests(unittest.TestCase):
             self.assertEqual(excluded,['OLD'])
             bars[10]['open'] = 50
             store.write('run_data/'+reference_id,{'A':bars})
-            with self.assertRaisesRegex(ValueError,'Price discontinuity'):
+            with self.assertRaisesRegex(ValueError,'No eligible stocks remain'):
                 backtest.run(Settings(universe='nifty50'),cfg,lambda _:None,'new-reference')
             self.assertIsNone(store.read('runs/new-reference'))
 

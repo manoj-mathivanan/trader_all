@@ -7,8 +7,28 @@ from bisect import bisect_right
 from datetime import datetime, timezone
 import hashlib
 import json
+from pathlib import Path
 
 from core.research import store, official_filings, company_review
+
+
+def calculation_version():
+    """Invalidate derived snapshots when parsing, reconstruction or identity rules change."""
+    root = Path(__file__).resolve().parents[2]
+    paths = [Path(__file__), Path(official_filings.__file__),
+             root/'reference_data/filing_identities.json']
+    return hashlib.sha256(b''.join(path.read_bytes() if path.exists() else b''
+                                  for path in paths)).hexdigest()
+
+
+def load_calculations(version):
+    try:
+        cached = store.read('cache/historical_calculations', {})
+        if cached.get('version') == version and cached.get('sha256') == digest(cached):
+            return cached.get('companies', {})
+    except (OSError, ValueError, TypeError):
+        pass
+    return {}
 
 
 def decision_time(day, entry_mode='next_open'):
@@ -28,7 +48,10 @@ def reconstruct(filings, item):
     for published in sorted({f['filed_at'] for f in filings}, key=datetime.fromisoformat):
         cutoff = datetime.fromisoformat(published)
         available = [f for f in filings if datetime.fromisoformat(f['filed_at']) <= cutoff]
-        snapshot = official_filings.calculate(available, item)
+        latest_end = max(f['end'] for f in available)
+        basis = 'consolidated' if any(f['end'] == latest_end and f['basis'] == 'consolidated'
+                                      for f in available) else 'standalone'
+        snapshot = official_filings.calculate([f for f in available if f['basis'] == basis], item)
         if snapshot:
             versions.append(dict(available_at=published, snapshot=snapshot,
                                  documents=[{k: f[k] for k in ('url', 'sha256', 'filed_at')} for f in available]))
@@ -37,29 +60,70 @@ def reconstruct(filings, item):
 
 def capture(universe, log=lambda message: None):
     series, excluded = {}, []
+    version = calculation_version()
+    calculations = load_calculations(version)
+    changed, reused, rebuilt = False, 0, 0
     at = datetime.now(timezone.utc)
     for index, item in enumerate(universe['instruments']):
-        record = store.read('company/fundamentals/'+item['isin'], {})
-        if record.get('validation', {}).get('status') != 'passed':
+        key = 'company/fundamentals/'+item['isin']
+        records = [store.read(key, {})]
+        records.extend(store.read(key+'/history/'+path.stem, {})
+                       for path in sorted((store.DATA/key/'history').glob('*.json')))
+        records = [record for record in records if record.get('validation', {}).get('status') == 'passed']
+        if not records:
             excluded.append(dict(symbol=item['symbol'], reason='No validated archived financial evidence'))
             continue
         filings = []
         try:
-            for document in record.get('documents', []):
+            documents = {}
+            for record in records:
+                for document in record.get('documents', []):
+                    documents[(document['url'], document['sha256'])] = document
+            # Always verify archived bytes, including on a calculation cache hit.
+            # This keeps corruption and removed artifacts visible on every run.
+            verified = []
+            for document in documents.values():
                 path = (store.DATA/document['artifact']).resolve()
                 if not path.is_relative_to((store.DATA/'company/filings').resolve()):
                     raise ValueError('Filing artifact outside archive')
                 raw = path.read_bytes()
                 if hashlib.sha256(raw).hexdigest() != document['sha256']:
                     raise ValueError('Filing checksum mismatch')
-                parsed = official_filings.parse(raw.decode('utf-8'), document['url'], item, at)
-                parsed['sha256'] = document['sha256']
-                filings.append(parsed)
-            series[item['symbol']] = reconstruct(filings, item)
+                verified.append((document, raw))
+            signature = digest(dict(item=item, documents=list(documents.values())))
+            cached = calculations.get(item['isin'], {})
+            if cached.get('signature') == signature:
+                series[item['symbol']] = cached['versions']
+                reused += 1
+            else:
+                parsed_urls = {}
+                for document, raw in verified:
+                    parsed = official_filings.parse(raw.decode('utf-8'), document['url'], item, at)
+                    # The exchange can change HTML presentation at the same URL.
+                    # Verify every byte variant, then require identical parsed facts.
+                    facts = {k: v for k, v in parsed.items() if k != 'rows'}
+                    if document['url'] in parsed_urls:
+                        if parsed_urls[document['url']] != facts:
+                            raise ValueError('Conflicting archived filing facts')
+                        continue
+                    parsed_urls[document['url']] = facts
+                    parsed['sha256'] = document['sha256']
+                    filings.append(parsed)
+                versions = reconstruct(filings, item)
+                series[item['symbol']] = versions
+                calculations[item['isin']] = dict(signature=signature, versions=versions)
+                changed = True
+                rebuilt += 1
         except (OSError, ValueError, KeyError, UnicodeError) as exc:
             excluded.append(dict(symbol=item['symbol'], reason=str(exc)))
         if index % 50 == 0:
             log(f'Verifying historical financial evidence: {index+1}/{len(universe["instruments"])}')
+    if changed:
+        cached = dict(version=version, companies=calculations)
+        cached['sha256'] = digest(cached)
+        store.write('cache/historical_calculations', cached)
+    log(f'Historical financial calculations: reused {reused}, rebuilt {rebuilt}; '
+        f'{len(excluded)} symbols without usable archived evidence. Filing checksums verified.')
     payload = dict(series=series, excluded=excluded, captured_at=store.now(),
                    method='reconstructed_from_verified_archived_NSE_filings',
                    notice='Downloaded retrospectively. Only filings published by the decision time are used. '

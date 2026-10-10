@@ -160,15 +160,54 @@ class PortfolioTests(unittest.TestCase):
             self.cycle()
         self.assertEqual(store.read(paper.KEY), saved)
 
-    def test_new_price_discontinuity_halts_without_ledger_change(self):
+    def test_no_clean_stock_leaves_paper_ledger_unchanged(self):
         self.cycle()
         saved = store.read(paper.KEY)
         self.bars.append(candle('2026-01-03', 50, 50))
         self.save_bars()
         with patch.object(paper, 'local_now', return_value=datetime(2026, 1, 3, 17, tzinfo=paper.IST)):
-            with self.assertRaisesRegex(ValueError, 'Price discontinuity needs review'):
+            with self.assertRaisesRegex(ValueError, 'No eligible paper inputs'):
                 paper.cycle(lambda _: None, 'gap-cycle', ingest=False)
         self.assertEqual(store.read(paper.KEY), saved)
+
+    def add_clean_stock(self):
+        portfolio = store.read(paper.KEY)
+        portfolio['universe_snapshot']['instruments'].append({'symbol':'CLEAN','isin':'CLEAN0000001'})
+        store.write(paper.KEY, portfolio)
+        store.write('bars/CLEAN0000001', {'bars':self.bars, 'requested_end':'2026-01-04'})
+
+    def test_unheld_historical_gap_is_skipped_while_clean_stock_trades(self):
+        self.add_clean_stock()
+        self.bars[10] = candle(self.bars[10]['date'], 50, 49)
+        self.save_bars()
+        result = self.cycle()
+        saved = store.read(paper.KEY)
+        self.assertTrue(result['partial'])
+        self.assertEqual(result['price_gap_exclusions'], ['TEST'])
+        self.assertNotIn('TEST', saved['ledger']['positions'])
+        self.assertIn('CLEAN', saved['ledger']['positions'])
+        self.assertEqual(saved['cycles'][-1]['data_quality']['excluded_symbols'], ['TEST'])
+
+    def test_gap_holding_keeps_its_mark_and_position_while_clean_stock_continues(self):
+        self.add_clean_stock()
+        self.cycle()
+        before = store.read(paper.KEY)
+        self.bars.append(candle('2026-01-03', 50, 49))
+        self.save_bars()
+        clean = store.read('bars/CLEAN0000001')
+        clean['bars'].append(candle('2026-01-03'))
+        store.write('bars/CLEAN0000001', clean)
+        with patch.object(paper, 'local_now', return_value=datetime(2026, 1, 3, 17, tzinfo=paper.IST)):
+            result = paper.cycle(lambda _: None, 'skip-held-cycle', ingest=False)
+            after = store.read(paper.KEY)
+            paper.cycle(lambda _: None, 'repeat-gap-cycle', ingest=False)
+        self.assertEqual(result['suspended_positions'], ['TEST'])
+        self.assertEqual(after['ledger']['positions']['TEST'], before['ledger']['positions']['TEST'])
+        self.assertEqual(after['ledger']['marks']['TEST'], before['ledger']['marks']['TEST'])
+        self.assertEqual(after['ledger']['last_session'], '2026-01-03')
+        self.assertGreater(after['ledger']['positions']['CLEAN']['age'], before['ledger']['positions']['CLEAN']['age'])
+        self.assertTrue(any('stale marks' in warning for warning in after['data_quality']['warnings']))
+        self.assertEqual(store.read(paper.KEY)['ledger'], after['ledger'])
 
     def test_verified_raw_split_rebases_holding_without_rewriting_buy_or_duplicate_action(self):
         self.cycle()

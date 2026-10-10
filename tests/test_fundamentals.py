@@ -37,6 +37,15 @@ class FundamentalsTests(unittest.TestCase):
         self.assertEqual(str(f.completed_quarter(date(2024,2,29))),'2023-12-31')
         self.assertEqual(f.next_quarter('2026-12-31'),'2027-03-31')
 
+    def test_unavailable_supported_filings_report_unsupported_and_retain_snapshot(self):
+        self.pull()
+        original=store.read(f.key(ITEM['isin']))['snapshot']
+        with patch.object(nse,'discover',return_value=dict(status='available',sources=[])),patch.object(f.time,'sleep'):
+            result=f.pull([ITEM],at=AT+timedelta(days=1))
+        self.assertEqual(result['counts'],{'unsupported':1})
+        self.assertTrue(result['partial'])
+        self.assertEqual(store.read(f.key(ITEM['isin']))['snapshot'],original)
+
     def test_pull_lock_prevents_concurrent_process_writers(self):
         with f.pull_lock():
             with self.assertRaisesRegex(ValueError,'Another fundamentals pull'):

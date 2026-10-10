@@ -76,17 +76,49 @@ class DataQualityTests(unittest.TestCase):
             missing = backtest.simulate({'YOUNG': rows[180:]}, cfg)
             self.assertEqual(missing['state']['orders'], [])
 
-    def test_backtest_gap_halts_before_report_or_inputs_are_written(self):
+    def test_all_stocks_with_gaps_leave_no_backtest_inputs(self):
         with tempfile.TemporaryDirectory() as temp, patch.object(store, 'DATA', Path(temp)):
             rows = candles()
             rows[55]['open'] = 50
             store.write('universes/niftytotalmarket', {'instruments': [{'symbol': 'TEST', 'isin': 'TEST'}]})
             store.write('bars/TEST', {'bars': rows, 'requested_start': '2025-01-01',
                                      'requested_end': '2025-03-01', 'source': 'unit-test'})
-            with self.assertRaisesRegex(ValueError, 'Price discontinuity'):
+            with self.assertRaisesRegex(ValueError, 'No eligible stocks remain'):
                 backtest.run(Settings(), config(), lambda _: None, 'test-run')
             self.assertIsNone(store.read('runs/test-run'))
             self.assertIsNone(store.read('run_data/test-run'))
+
+    def test_backtest_skips_gap_stock_and_saves_warning_and_unchanged_sources(self):
+        with tempfile.TemporaryDirectory() as temp, patch.object(store, 'DATA', Path(temp)):
+            clean, bad = candles(), candles()
+            bad[20].update(open=50, high=51, low=49, close=50)
+            inputs = {'GOOD': clean, 'BAD': bad}
+            universe = {'instruments': [{'symbol': s, 'isin': s} for s in inputs]}
+            manifest = [{'symbol': s} for s in inputs]
+            store.write('bars/BAD', {'bars': bad})
+            source = (store.DATA/'bars/BAD.json').read_bytes()
+            logs = []
+            with patch.object(backtest, 'prepare', return_value=(universe, inputs, manifest, ['OLD'])), \
+                 patch.object(backtest, 'signal', return_value=True):
+                result = backtest.run(Settings(), config(), logs.append, 'skip-run')
+            self.assertTrue(result['partial'])
+            report = store.read('runs/skip-run')
+            self.assertEqual(report['excluded'], ['OLD', 'BAD'])
+            self.assertEqual(report['manifest'], [{'symbol': 'GOOD'}])
+            self.assertEqual(set(store.read('run_data/skip-run')), {'GOOD'})
+            self.assertTrue(report['trades'])
+            self.assertEqual({t['symbol'] for t in report['trades']}, {'GOOD'})
+            self.assertEqual(report['data_quality']['excluded_symbols'], ['BAD'])
+            self.assertTrue(any('Price-gap warning' in warning for warning in report['warnings']))
+            self.assertTrue(any('BAD' in log for log in logs))
+            self.assertEqual((store.DATA/'bars/BAD.json').read_bytes(), source)
+
+    def test_future_gap_does_not_exclude_earlier_backtest(self):
+        rows = candles()
+        rows[55]['open'] = 50
+        report = data_quality.audit({'TEST': rows}, end=rows[54]['date'])
+        self.assertEqual(set(data_quality.exclude_anomalies({'TEST': rows}, report)), {'TEST'})
+        self.assertEqual(report['warnings'], [])
 
     def test_directory_audit_matches_isin_to_trade_symbol_and_preserves_files(self):
         with tempfile.TemporaryDirectory() as temp, patch.object(store, 'DATA', Path(temp)):

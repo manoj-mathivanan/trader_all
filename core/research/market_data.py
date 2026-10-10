@@ -3,7 +3,7 @@ from datetime import date, datetime, timedelta
 from urllib.parse import quote
 import time
 import httpx
-from core.research import store, upstox, intraday_data, fundamentals
+from core.research import store, upstox, intraday_data, fundamentals, data_quality
 from core.research.config import Settings
 
 BENCHMARK = {'key': 'NSE_INDEX|Nifty 50', 'isin': 'NIFTY50', 'symbol': 'NIFTY50'}
@@ -44,7 +44,8 @@ def missing_ranges(sessions, missing):
     return [(date.fromisoformat(a), date.fromisoformat(b)) for a, b in ranges]
 
 
-def save_daily(client, item, token, start, end, *, sessions=None):
+def save_daily(client, item, token, start, end, *, sessions=None, allow_empty_prefix=False,
+               unavailable_ranges=None):
     record = store.read('bars/' + item['isin'], {})
     existing = record.get('bars', [])
     ranges = []
@@ -63,18 +64,28 @@ def save_daily(client, item, token, start, end, *, sessions=None):
             missing = set(eligible) - {b['date'] for b in existing}
             ranges.extend(missing_ranges(eligible, missing))
     additions = []
+    checked_empty_prefix = False
     for range_start, range_end in ranges:
         if range_start > range_end:
             continue
         downloaded = upstox.fetch_range(client, item, token, range_start, range_end)
         if not downloaded:
+            if allow_empty_prefix and existing and range_end < date.fromisoformat(existing[0]['date']):
+                checked_empty_prefix = True
+                continue
+            if unavailable_ranges is not None and existing:
+                unavailable_ranges.append({'start': str(range_start), 'end': str(range_end)})
+                continue
             raise ValueError('No daily candles returned for the missing range.')
         additions.extend(downloaded)
         time.sleep(.15)
     if not additions and existing:
         # Paper coverage metadata can advance without rewriting all stored candles.
-        if record.get('requested_end', '') < str(end):
-            store.write('bars/' + item['isin'], {**record, 'requested_end': str(end)})
+        if checked_empty_prefix or record.get('requested_end', '') < str(end):
+            updated = {**record, 'requested_end': max(record.get('requested_end', ''), str(end))}
+            if checked_empty_prefix:
+                updated['requested_start'] = min(record.get('requested_start', str(start)), str(start))
+            store.write('bars/' + item['isin'], updated)
         return 0
     merged = upstox.merge_candles(existing, additions)
     # Validate both downloaded and retained candles before the atomic replacement.
@@ -205,13 +216,19 @@ def fetch(log, job_id=None):
             log(f"{index}/{result['total_symbols']} · {item['symbol']}: daily {stock['daily']['status']}, five-minute {stock['minute']['status']}; "
                 f"downloaded {stock['daily'].get('bars', 0)} daily / {stock['minute'].get('bars', 0)} five-minute bars, "
                 f"reused {stock['minute'].get('reused_sessions', 0)} complete minute sessions.")
-        log('Market candles saved. Checking quarterly fundamentals for the same stock universe.')
+        log('Market candles saved. Auditing retained daily history for unresolved price gaps.')
+        result['data_quality'] = data_quality.audit_cached_universe(
+            Settings(universe='niftytotalmarket'), universe=universe, end=end)
+        for warning in result['data_quality']['warnings']:
+            log(warning)
+        store.write('market_fetch', result)
+        log('Checking quarterly fundamentals for the same stock universe.')
         try:
             result['fundamentals'] = fundamentals.pull(universe['instruments'], log, job_id, retry_failed=True)
         except Exception as exc:
             result['fundamentals'] = {'status':'failed', 'message':error_detail(exc)}
             log('Fundamentals stage failed; saved market candles retained.')
-        result['partial'] = bool(result['failures'] or result['fundamentals'].get('partial') or
+        result['partial'] = bool(result['failures'] or result['data_quality']['excluded_symbols'] or result['fundamentals'].get('partial') or
                                  result['fundamentals'].get('status') == 'failed')
         result['completed_at'] = store.now()
         store.write('market_fetch', result)

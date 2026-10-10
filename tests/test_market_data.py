@@ -151,6 +151,27 @@ class MarketFetchTests(unittest.TestCase):
         self.assertEqual(daily.call_args.args[1], market.BENCHMARK)
         minute.assert_not_called()
 
+    def test_refresh_warns_on_retained_historical_gap_without_deleting_candles(self):
+        rows = [candle('2020-01-01'), candle('2020-01-02', 50), candle('2026-10-07', 50)]
+        record = {'bars': rows, 'requested_start':'2020-01-01','requested_end':'2026-10-07'}
+        store.write('bars/TESTISIN', record)
+        source = (store.DATA/'bars/TESTISIN.json').read_bytes()
+        logs = []
+        with patch.object(market, 'last_traded_day', return_value=date(2026,10,7)), \
+             patch.object(market.upstox, 'refresh_universe', return_value={'instruments':[self.item]}), \
+             patch.object(market.upstox, 'fetch_range', return_value=[candle('2026-10-07')]), \
+             patch.object(market, 'save_daily', return_value=0), \
+             patch.object(market, 'save_minutes', return_value={'bars':0}), \
+             patch.object(market.fundamentals, 'pull', return_value={'counts':{}}):
+            result = market.fetch(logs.append, 'gap-refresh')
+        self.assertTrue(result['partial'])
+        self.assertEqual(result['failures'], [])
+        self.assertEqual(result['data_quality']['excluded_symbols'], ['TEST'])
+        self.assertEqual(result['data_quality']['findings'][0]['date'], '2020-01-02')
+        self.assertTrue(any('Price-gap warning' in log for log in logs))
+        self.assertEqual(store.read('market_fetch')['data_quality'], result['data_quality'])
+        self.assertEqual((store.DATA/'bars/TESTISIN.json').read_bytes(), source)
+
     def test_special_session_is_complete_with_its_shorter_hours(self):
         day = '2025-10-21'
         raw = [[f'{day}T{t//60:02d}:{t%60:02d}:00+05:30',100,102,98,100,10]

@@ -91,7 +91,9 @@ def prepare_session(day, log):
         raise ValueError('Prior daily history is stale; refresh Market data before starting paper.')
     datasets = {s: rows for s, rows in datasets.items() if rows[-1]['date'] == latest}
     quality = data_quality.audit(datasets, end=latest)
-    data_quality.require_no_anomalies(quality)
+    datasets = data_quality.exclude_anomalies(datasets, quality, log)
+    if not datasets:
+        raise ValueError('No eligible stocks remain after excluding unresolved price gaps.')
     plan, requests = scalping.entry_plan(datasets, cfg, days=[day], require_day_bar=False)
     candidates = plan.get(day, [])
     if not candidates:
@@ -105,7 +107,8 @@ def prepare_session(day, log):
     selected = {c['symbol'] for c in candidates}
     context = dict(day=day, created_at=store.now(), config=cfg.model_dump(mode='json'), candidates=candidates,
                    instruments=[i for i in instruments if i['symbol'] in selected], warmup=warmup,
-                   daily_source_sha256=scalping.digest(datasets), latest_daily_session=latest)
+                   daily_source_sha256=scalping.digest(datasets), latest_daily_session=latest,
+                   data_quality=quality)
     context['sha256'] = scalping.digest(context)
     store.write(context_key(day), context)
     log(f'Scalping context frozen: {len(candidates)} stocks; prior daily boundary {latest}.')
@@ -159,6 +162,7 @@ class QuoteEngine:
             previous['pending'] = {}
             previous['restarted_at'] = clock.isoformat()
             portfolio['stream_session'] = previous
+            portfolio['data_quality'] = context.get('data_quality', {})
             update_metrics(portfolio)
             self.marks = dict(portfolio['ledger']['marks'])
             store.write(KEY, portfolio)

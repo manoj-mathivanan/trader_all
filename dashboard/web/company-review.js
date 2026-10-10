@@ -151,16 +151,17 @@ setInterval(async()=>{
   }
   if(!companyPendingJob)return;
   const job=state.jobs.find(j=>j.id===companyPendingJob);
-  if(!job||!['success','failed'].includes(job.status))return;
+  if(!job||!['success','warning','failed'].includes(job.status))return;
   companyPendingJob=null;
   const fundamentalsJob=job.type==='Quarterly fundamentals pull';
-  if(job.status==='success'||fundamentalsJob){
+  if(['success','warning'].includes(job.status)||fundamentalsJob){
     await loadCompany();
     if(currentView==='company'&&!$('#modal').open&&job.result?.review_id){
       try{companyShowReview(await api('company/reviews/'+encodeURIComponent(job.result.review_id)));}catch(e){toast(e.message);}
     }
   }
-  if(job.status!=='success')toast(fundamentalsJob?'Fundamentals checked with some failures. Saved evidence is refreshed; inspect Jobs & logs.':'Company web research failed. See Jobs & logs for the reason.');
+  if(job.status==='warning')toast('Completed with coverage warnings. Saved evidence is refreshed; inspect Jobs & logs.');
+  else if(job.status==='failed')toast(fundamentalsJob?'Fundamentals check failed. Inspect Jobs & logs.':'Company web research failed. See Jobs & logs for the reason.');
 },3000);
 document.addEventListener('input',event=>{
   if(!['company-search','company-minimum','company-complete','company-candidates'].includes(event.target.id))return;

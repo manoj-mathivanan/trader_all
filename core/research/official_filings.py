@@ -1,6 +1,8 @@
 """Direct NSE Ind-AS filing retrieval and deterministic, conservative calculations."""
 import hashlib
 import re
+import json
+from pathlib import Path
 from contextlib import nullcontext
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
@@ -97,7 +99,20 @@ def parse(html, url, item, at):
             raise ValueError('Missing or conflicting filing field: ' + label)
         return entries.pop()
 
-    if unique('ISIN') != item['isin'] or unique('NSE Symbol').upper() != item['symbol'].upper():
+    # Only repository-reviewed exchange evidence can permit a historical symbol.
+    # User data cannot introduce arbitrary identity aliases.
+    reference = Path(__file__).resolve().parents[2] / 'reference_data' / 'filing_identities.json'
+    identity = json.loads(reference.read_text(encoding='utf-8')) if reference.exists() else {}
+    aliases = identity.get(item['isin'], {})
+    allowed_symbols = {item['symbol'].upper()}
+    allowed_isins = {item['isin']}
+    filed_identity_date = datetime.strptime(FILING.fullmatch(urlsplit(url).path)[1], '%d%m%Y%H%M%S').date().isoformat()
+    if aliases.get('symbol') == item['symbol']:
+        if filed_identity_date < aliases['effective_date']:
+            allowed_symbols.update(aliases.get('historical_symbols', []))
+            allowed_isins.update(aliases.get('historical_isins', []))
+    source_isin, source_symbol = unique('ISIN'), unique('NSE Symbol').upper()
+    if source_isin not in allowed_isins or source_symbol not in allowed_symbols:
         raise ValueError('Official filing identity does not match the selected company.')
     currency = unique('Description of presentation currency')
     if currency not in ('INR', 'INR (in Actuals)'):
@@ -164,7 +179,9 @@ def parse(html, url, item, at):
                          operating_cash_flow=first_column('Net cash flows from (used in) operating activities'))
             annual = dict(start=year_start.isoformat(), end=end.isoformat(),
                           amounts={k: str(v) if v is not None else None for k,v in facts.items()})
-    return dict(url=url, isin=item['isin'], symbol=item['symbol'], basis=basis, unit=unit, company_type=company_type,
+    return dict(url=url, isin=item['isin'], symbol=item['symbol'], source_isin=source_isin, source_symbol=source_symbol,
+                identity_evidence=aliases if source_isin != item['isin'] or source_symbol != item['symbol'].upper() else None,
+                basis=basis, unit=unit, company_type=company_type,
                 start=start.isoformat(), end=end.isoformat(), filed_at=filed.isoformat(),
                 approved_on=approved.isoformat(), amounts={k: str(v) if v is not None else None for k, v in amounts.items()},
                 auditor_concern=False if clean_opinion else None, annual=annual, rows=rows)

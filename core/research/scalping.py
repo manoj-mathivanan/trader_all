@@ -360,7 +360,11 @@ def coverage(settings, cfg):
 def run(settings, cfg, log, job_id):
     universe, daily, manifest, excluded = prepare(settings, cfg)
     quality = data_quality.audit(daily, end=cfg.end)
-    data_quality.require_no_anomalies(quality)
+    daily = data_quality.exclude_anomalies(daily, quality, log)
+    if not daily:
+        raise ValueError('No eligible stocks remain after excluding unresolved price gaps.')
+    manifest = [row for row in manifest if row['symbol'] in daily]
+    excluded = list(dict.fromkeys([*excluded, *quality['excluded_symbols']]))
     plan, requests = entry_plan(daily, cfg)
     sessions = frozen_sessions(cfg) if cfg.comparison_run_id else intraday_data.load_ranges(requests, universe, log, 1)
     result = simulate(daily, cfg, sessions, plan)
@@ -383,6 +387,7 @@ def run(settings, cfg, log, job_id):
                       'Fees and slippage are editable assumptions; short eligibility, circuits, tick sizes, borrow and actual execution are unverified.',
                       'Drawdown uses minute-close marked equity with entry fees, without estimated liquidation fees or intraminute extrema.',
                   ])
+    result['warnings'].extend(quality['warnings'])
     result['evaluation'] = momentum.chronological_evaluation(result)
     store.write('run_data/'+job_id, daily)
     store.write('run_intraday/'+job_id, sessions)
@@ -392,7 +397,8 @@ def run(settings, cfg, log, job_id):
         index.insert(0, {k: result[k] for k in ('id', 'created_at', 'strategy_id', 'config', 'universe', 'metrics')})
         store.write('runs_index', index)
     log(f"Recorded {len(result['trades'])} scalping trades; net return {result['metrics']['return_pct']:.2f}%.")
-    return {'run_id': job_id}
+    return {'run_id': job_id, 'partial': bool(quality['excluded_symbols']),
+            'price_gap_exclusions': quality['excluded_symbols']}
 
 
 def compare(settings, reference_id, log, job_id):
