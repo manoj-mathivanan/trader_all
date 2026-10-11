@@ -76,6 +76,7 @@ class TradingConfig(BaseModel):
     breakeven_r: float = Field(1, ge=0.1, le=10, title="Breakeven trigger (R)")
     trail_pct: float = Field(8, gt=0, le=50, title="Trail below best close (%)")
     max_positions: int = Field(5, ge=1, le=50, title="Maximum open positions")
+    max_sector_positions: int = Field(0, ge=0, le=50, title='Maximum positions per sector (0 disables)')
     max_hold_days: int = Field(120, ge=1, le=1000, title="Maximum holding sessions")
     max_open_gap_pct: float = Field(0, ge=0, le=30, title='Maximum upward opening gap (%, 0 disables)')
     require_open_above_pivot: bool = Field(False, title='Require open above breakout level')

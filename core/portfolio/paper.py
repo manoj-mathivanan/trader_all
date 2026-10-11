@@ -37,12 +37,25 @@ class PaperConfig(TradingConfig):
     buy_cost_bps: float = Field(10, ge=0, le=500, title='All-in buy charges (bps; custom model)')
     sell_cost_bps: float = Field(10, ge=0, le=500, title='All-in sell charges (bps; custom model)')
     auto_run: bool = Field(False, title='Run automatically on weekdays')
-    run_hour: int = Field(16, ge=16, le=23, title='Daily cycle hour (IST)')
+    execution_time: Literal['next_open', 'midday'] = Field('next_open', title='Paper execution timing')
+    run_hour: int = Field(16, ge=9, le=23, title='Daily cycle hour (IST)')
     run_minute: int = Field(15, ge=0, le=59, title='Daily cycle minute')
     acknowledge_limitations: bool = Field(False, title='I understand paper fills and costs are estimates; the edge remains unvalidated')
 
     @model_validator(mode='after')
     def acknowledge(self):
+        if self.execution_time == 'next_open' and self.run_hour < 16:
+            raise ValueError('Daily next-open reconstruction requires a cycle at or after 16:00 IST.')
+        if self.execution_time == 'midday' and not (time(9, 15) <= time(self.run_hour, self.run_minute) < time(15, 15)):
+            raise ValueError('Choose a midday cycle within the regular market session before 15:15 IST.')
+        if self.execution_time == 'midday':
+            if self.sector_filter != 'off' or self.skip_weak_markets and self.market_breadth_scope != 'sector':
+                raise ValueError('Midday mode supports the stock-sector breadth gate, with sector index filters off.')
+            refinements = ('max_open_gap_pct', 'require_open_above_pivot', 'max_extension_pct',
+                           'reentry_cooldown_sessions', 'stalled_exit_sessions', 'failed_breakout_sessions',
+                           'market_breadth_trend_sessions')
+            if any(getattr(self, k) for k in refinements) or self.market_risk_scale != 1:
+                raise ValueError('These entry/exit refinements are not supported by midday quote execution yet.')
         if self.fee_model == 'custom_bps' and (self.buy_cost_bps <= 0 or self.sell_cost_bps <= 0):
             raise ValueError('Paper custom charges must be positive; choose Zerodha fees for its tariff.')
         if not self.acknowledge_limitations:
@@ -86,11 +99,15 @@ def repair_context_start(portfolio, bars, cfg):
     return bars[max(0, index - lookback - 1)]['date'] if bars else None
 
 
-def cycle(log, job_id, *, ingest=True):
-    portfolio = store.read(KEY)
+def cycle(log, job_id, *, ingest=True, portfolio_id=None):
+    portfolio_key = manager.key('swing_patterns', portfolio_id)
+    portfolio = store.read(portfolio_key)
     if not portfolio:
         raise ValueError('Create a paper portfolio first.')
     cfg = PaperConfig(**portfolio['config'])
+    if cfg.execution_time == 'midday':
+        from core.portfolio.midday import cycle as midday_cycle
+        return midday_cycle(log, job_id, portfolio_id=portfolio_id, ingest=ingest)
     clock = local_now()
     through = clock.date() if clock.time() >= time(16) else clock.date() - timedelta(days=1)
     instruments = portfolio['universe_snapshot']['instruments']
@@ -149,7 +166,7 @@ def cycle(log, job_id, *, ingest=True):
         log(f'No new completed sessions. Portfolio begins {portfolio["start_session"]}; last processed {last or "none"}.')
         if quality['excluded_symbols']:
             portfolio.update(data_quality=quality, updated_at=store.now())
-            store.write(KEY, portfolio)
+            store.write(portfolio_key, portfolio)
         return {'portfolio_id': portfolio['id'], 'sessions': 0,
                 'partial': bool(quality['excluded_symbols']), 'price_gap_exclusions': quality['excluded_symbols']}
     for symbol, bars in datasets.items():
@@ -233,7 +250,7 @@ def cycle(log, job_id, *, ingest=True):
         store.write('paper_sector/'+job_id, sector_snapshot)
         portfolio['cycles'][-1]['sector_reference'] = dict(sha256=sector_snapshot['sha256'], notice=sector.NOTICE)
     # Commit cash, positions, orders, trades and checkpoint together; retries are idempotent.
-    store.write(KEY, portfolio)
+    store.write(portfolio_key, portfolio)
     log(f'Committed {sessions} sessions, {len(new_orders)} simulated fills, {len(new_ledger["positions"])} open positions.')
     return {'portfolio_id': portfolio['id'], 'sessions': sessions, 'orders': len(new_orders),
             'partial': bool(quality['excluded_symbols']), 'price_gap_exclusions': quality['excluded_symbols'],

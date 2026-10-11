@@ -48,6 +48,9 @@ def simulate(datasets, cfg, *, state=None, liquidate=True, allow_entries=True, e
             raise ValueError('Sector filter requires explicit captured index inputs.')
     if cfg.candidate_rank == 'fundamental_score' and fundamental_scores is None:
         raise ValueError('Fundamental ranking requires dated financial evidence.')
+    sector_labels = {i['symbol']: i.get('sector', '') for i in (sector_instruments or [])}
+    if getattr(cfg, 'max_sector_positions', 0) and any(not sector_labels.get(s) for s in datasets):
+        raise ValueError('Sector position limits require a captured sector label for every stock.')
     breadth_gate = None
     if cfg.skip_weak_markets and getattr(cfg, 'market_breadth_scope', 'market') == 'sector':
         if sector_instruments is None:
@@ -299,6 +302,12 @@ def simulate(datasets, cfg, *, state=None, liquidate=True, allow_entries=True, e
                 continue
             if len(positions) >= cfg.max_positions:
                 skipped += 1
+                continue
+            if getattr(cfg, 'max_sector_positions', 0) and sum(
+                    sector_labels.get(s) == sector_labels[symbol] for s in positions) >= cfg.max_sector_positions:
+                skipped += 1
+                reason = 'Sector position limit'
+                skip_reasons[reason] = skip_reasons.get(reason, 0) + 1
                 continue
             if cfg.pattern != 'breakout' and cfg.entry_mode == 'close':
                 raw_fill = b['close']

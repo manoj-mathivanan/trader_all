@@ -14,6 +14,12 @@ const context = vm.createContext({
 const source = fs.readFileSync('dashboard/web/app.js', 'utf8');
 vm.runInContext(source.slice(0, source.indexOf("$('#modal').addEventListener('close'")), context);
 vm.runInContext('state={};', context);
+vm.runInContext(`state={paper_scenarios:[{id:'scenario_a',config:{name:'A'}},{id:'scenario_b',config:{name:'B'}}],paper_portfolios:{swing_patterns:{id:'default'}},jobs:[]};selectedPaperScenario='scenario_b';`, context);
+assert.equal(vm.runInContext('paperPortfolio().id', context), 'scenario_b');
+assert.equal(vm.runInContext("paperPath('cycle')", context), 'strategies/swing_patterns/paper/cycle?portfolio_id=scenario_b');
+vm.runInContext("selectedPaperScenario='new_scenario';", context);
+assert.equal(vm.runInContext('paperPortfolio()', context), null);
+vm.runInContext('selectedPaperScenario=null;state={};', context);
 const tariffDetails=vm.runInContext(`swingResearchDetails({cost_model:{name:'Zerodha NSE cash equity',notice:'<unsafe>'},trades:[{charges:{brokerage:12,stt:5}},{charges:{brokerage:8,stt:7}}],entry_filter_rejections:{'Open < pivot':3},research_selection:{calibration:'2025',validation:'2026',audit:'previously inspected',trials:55,notice:'exploratory'}})`,context);
 assert.match(tariffDetails,/Brokerage/);
 assert.match(tariffDetails,/20/);

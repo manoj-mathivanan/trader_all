@@ -28,7 +28,7 @@ PUBLIC_ORIGIN = os.environ.get('TRADER_PUBLIC_ORIGIN', '').rstrip('/')
 ENVIRONMENT = os.environ.get('TRADER_ENV', 'local')
 if ENVIRONMENT not in ('local', 'production'):
     raise RuntimeError('TRADER_ENV must be local or production.')
-PAPER_ENABLED = ENVIRONMENT == 'production'
+PAPER_ENABLED = ENVIRONMENT == 'production' or os.environ.get('TRADER_ENABLE_LOCAL_PAPER') == '1'
 if PUBLIC_ORIGIN:
     public_url = urlsplit(PUBLIC_ORIGIN)
     if public_url.scheme != 'https' or not public_url.hostname or public_url.path or public_url.query or public_url.fragment or public_url.username:
@@ -138,6 +138,7 @@ def bootstrap():
             'environment': ENVIRONMENT, 'paper_enabled': PAPER_ENABLED,
             'paper_schema': paper.PaperConfig.model_json_schema(), 'paper_portfolio': store.read(paper.KEY) if PAPER_ENABLED else None,
             'paper_portfolios': {s['id']: scalping_paper.public_portfolio() if s['id']=='scalping' else portfolios.get(s['id']) for s in all_strategies()} if PAPER_ENABLED else {},
+            'paper_scenarios': portfolios.list_portfolios('swing_patterns') if PAPER_ENABLED else [],
             'paper_schemas': {strategy_id: plugin.config_model.model_json_schema()
                               for strategy_id, plugin in paper_plugins.PLUGINS.items()},
             'screens': strategy_presets.available(), 'token_saved': store.token_saved(), 'remote_enabled': bool(PUBLIC_ORIGIN),
@@ -437,42 +438,47 @@ def paper_config(strategy_id, value):
 
 
 @app.get('/api/strategies/{strategy_id}/paper/portfolio')
-def get_strategy_portfolio(strategy_id: str):
-    return portfolios.get(strategy_id)
+def get_strategy_portfolio(strategy_id: str, portfolio_id: str | None = None):
+    return portfolios.get(strategy_id, portfolio_id)
 
 
 @app.post('/api/strategies/{strategy_id}/paper/portfolio')
-def create_strategy_portfolio(strategy_id: str, value: dict):
+def create_strategy_portfolio(strategy_id: str, value: dict, portfolio_id: str | None = None):
+    portfolios.key(strategy_id, portfolio_id)
     config = paper_config(strategy_id, value)
     if strategy_id=='scalping':
         return create_scalping_paper(config)
-    return portfolios.save(strategy_id, config, settings(), create=True, clock=paper.local_now())
+    return portfolios.save(strategy_id, config, settings(), create=True, clock=paper.local_now(), portfolio_id=portfolio_id)
 
 
 @app.put('/api/strategies/{strategy_id}/paper/portfolio')
-def update_strategy_portfolio(strategy_id: str, value: dict):
+def update_strategy_portfolio(strategy_id: str, value: dict, portfolio_id: str | None = None):
+    portfolios.key(strategy_id, portfolio_id)
     config = paper_config(strategy_id, value)
     if strategy_id=='scalping':
         return update_scalping_paper(config)
-    return portfolios.save(strategy_id, config, settings(), clock=paper.local_now())
+    return portfolios.save(strategy_id, config, settings(), clock=paper.local_now(), portfolio_id=portfolio_id)
 
 
 @app.put('/api/strategies/{strategy_id}/paper/status')
-def update_strategy_status(strategy_id: str, value: PaperStatus):
+def update_strategy_status(strategy_id: str, value: PaperStatus, portfolio_id: str | None = None):
+    portfolios.key(strategy_id, portfolio_id)
     paper_plugins.get_plugin(strategy_id)
     if strategy_id=='scalping':
         return scalping_status(ScalpingPaperStatus(status=value.status))
-    return portfolios.set_status(strategy_id, value.status)
+    return portfolios.set_status(strategy_id, value.status, portfolio_id)
 
 
 @app.post('/api/strategies/{strategy_id}/paper/cycle')
-def strategy_paper_job(strategy_id: str):
+def strategy_paper_job(strategy_id: str, portfolio_id: str | None = None):
     plugin = paper_plugins.get_plugin(strategy_id)
-    if not portfolios.get(strategy_id):
+    if not portfolios.get(strategy_id, portfolio_id):
         raise ValueError('Create a paper portfolio for this strategy first.')
     store.token()
-    return jobs.submit('Paper daily cycle', plugin.run_cycle,
-                       {'portfolio_id': strategy_id, 'strategy_id': strategy_id, 'trigger': 'manual'})
+    from functools import partial
+    runner = partial(paper.cycle, portfolio_id=portfolio_id) if strategy_id == 'swing_patterns' else plugin.run_cycle
+    return jobs.submit('Paper daily cycle', runner,
+                       {'portfolio_id': portfolio_id or strategy_id, 'strategy_id': strategy_id, 'trigger': 'manual'})
 
 
 @app.get('/api/bars/{isin}')
