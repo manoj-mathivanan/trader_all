@@ -19,7 +19,8 @@ HOSTS = {'nsearchives.nseindia.com', 'archives.nseindia.com', 'www.nseindia.com'
          'economictimes.indiatimes.com', 'www.business-standard.com', 'www.livemint.com',
          'www.moneycontrol.com','www.cnbctv18.com','www.thehindubusinessline.com',
          'www.financialexpress.com','www.reuters.com','www.bhel.com','bhel.com',
-         'aether.co.in','www.aether.co.in','stl.tech','www.stl.tech','upstox.com','www.upstox.com'}
+         'aether.co.in','www.aether.co.in','stl.tech','www.stl.tech','upstox.com','www.upstox.com',
+         'www.businesstoday.in','www.zeebiz.com','www.ndtvprofit.com'}
 
 
 def canonical_text(text):
@@ -92,14 +93,20 @@ def read(article, *, force=False, transport=None):
     key = 'investor/full_articles/' + article['id']
     previous = store.read(key)
     from core.research.investor_intelligence import cache_age
-    if previous and previous.get('extraction_version')==3 and not force and 0 <= cache_age(previous) < (86400 if previous['status']=='available' else 3600):
+    if previous and previous.get('extraction_version')==4 and not force and 0 <= cache_age(previous) < (86400 if previous['status']=='available' else 3600):
         return previous
     result = dict(article_id=article['id'], url=article['url'], title=article['title'],
                   published_at=article['published_at'], source_id=article['source_id'], as_of=store.now(),
-                  text='', status='unavailable', reason='Source request failed.',extraction_version=3)
+                  text='', status='unavailable', reason='Source request failed.',extraction_version=4)
     url = article['url']
     try:
+        if urlsplit(url).hostname=='news.google.com':
+            from core.research.investor_discovery import resolve_google
+            url=resolve_google(url,transport=transport,force=force)
+            result['resolved_publisher_url']=url
         if not allowed(url):
+            if urlsplit(url).hostname=='news.google.com':
+                raise ValueError('Google found this headline, but its original publisher URL could not be resolved. Search summaries cannot replace the full article.')
             raise ValueError('Source host is not supported.')
         with httpx.Client(timeout=15, transport=transport, follow_redirects=False,
                           headers={'User-Agent':'TraderPersonalResearch/1.0'}) as client:

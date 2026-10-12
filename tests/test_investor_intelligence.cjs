@@ -37,3 +37,8 @@ assert.match(context.detailsPage,/&lt;script&gt;unsafe/);
 assert.doesNotMatch(context.detailsPage,/<script>unsafe/);
 assert.match(context.detailsPage,/Quote trade time Unknown/);
 console.log('Investor UI checks passed.');
+
+vm.runInContext(`investorEvidence.news_coverage={status:'full_article_unavailable',reason:'<unsafe>'};globalThis.coveragePage=investorView();`,context);
+assert.match(context.coveragePage,/full_article_unavailable/);
+assert.match(context.coveragePage,/&lt;unsafe&gt;/);
+assert.match(context.coveragePage,/Google News and Bing/);

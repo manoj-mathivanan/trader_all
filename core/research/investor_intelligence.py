@@ -232,6 +232,10 @@ def matches(item, article):
     if article.get('source_id') == 'upstox' and ('NSE_EQ|' + item['isin']) in article.get('provider_instrument_keys', []):
         return True
     text = ' ' + normalize(article['text']) + ' '
+    from core.research.investor_discovery import ALIASES
+    aliases=[ALIASES.get(item['symbol'],'')]+item.get('aliases',[])
+    if any(len(normalize(alias))>=5 and (' '+normalize(alias)+' ') in text for alias in aliases):
+        return True
     name = normalize(item.get('name', ''))
     name = re.sub(r'\s+(?:limited|ltd)$', '', name).strip()
     if len(name) >= 5 and (' ' + name + ' ') in text:
@@ -274,7 +278,9 @@ def evidence(settings, isin, *, item=None, news=None):
     latest = store.read('investor/latest/' + isin)
     if latest and os.environ.get('TRADER_ENV') == 'production' and any(a['source_id'] in ('et', 'mint') for a in latest['articles']):
         latest = None
+    from core.research.investor_discovery import coverage_status
     return dict(company=item, articles=articles, groups=groups, review=latest,
+                news_coverage=coverage_status(item,articles,latest,news),
                 details=store.read('investor/stock_details/'+isin,{}),lookback_days=30,
                 as_of=news.get('as_of'), coverage=news.get('coverage', []),
                 article_coverage=store.read('investor/article_coverage/'+isin,{}).get('articles',[]))

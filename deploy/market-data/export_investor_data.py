@@ -14,7 +14,7 @@ def run(query, dsn=None):
     environment=query.get('environment','local')
     if environment not in ('local','production'):raise ValueError('Unknown analysis environment')
     operation=query.get('operation','inventory')
-    if operation not in ('inventory','list','document'):raise ValueError('Unknown archive operation')
+    if operation not in ('inventory','list','document','recent_articles'):raise ValueError('Unknown archive operation')
     kind=query.get('kind','monitor_runs')
     if kind not in KINDS:raise ValueError('Unknown archive kind')
     connection=dict(connect_timeout=10,application_name='investor-history-reader')
@@ -22,6 +22,14 @@ def run(query, dsn=None):
     with psycopg.connect(dsn or '',**connection) as conn:
         conn.execute('SET TRANSACTION READ ONLY')
         conn.execute("SET LOCAL statement_timeout='15s'")
+        if operation=='recent_articles':
+            offset=max(0,int(query.get('offset',0)))
+            rows=conn.execute("SELECT DISTINCT ON (article_id) article_id,sha256,record FROM investor.article_versions WHERE environment=%s AND published_at BETWEEN now()-interval '30 days' AND now() ORDER BY article_id,archived_at DESC,sha256 LIMIT 501 OFFSET %s",(environment,offset)).fetchall()
+            records=[]
+            for _,digest,record in rows[:500]:
+                if hashlib.sha256(json.dumps(record,sort_keys=True).encode()).hexdigest()!=digest:raise ValueError('Archived article integrity check failed')
+                records.append(record)
+            return dict(environment=environment,articles=records,next_offset=offset+500 if len(rows)>500 else None)
         if operation=='inventory':
             counts=dict(conn.execute("SELECT kind,count(*) FROM investor.documents WHERE environment=%s GROUP BY kind UNION ALL SELECT 'article_versions',count(*) FROM investor.article_versions WHERE environment=%s",(environment,environment)).fetchall())
             receipt=conn.execute('SELECT result,synced_at FROM investor.sync_receipts WHERE environment=%s ORDER BY synced_at DESC LIMIT 1',(environment,)).fetchone()

@@ -56,7 +56,7 @@ class DiscoveryTests(InvestorTests):
         def handler(r):calls.append(r);return httpx.Response(200,content=body)
         result=discovery.refresh([ITEM],transport=httpx.MockTransport(handler));self.assertEqual(result['count'],1)
         a=store.read('investor/news')['articles'][0];self.assertEqual(a['url'],'https://www.business-standard.com/news/test');self.assertEqual(a['discovery_isin'],ISIN)
-        discovery.refresh([ITEM],transport=httpx.MockTransport(handler));self.assertEqual(len(calls),1)
+        discovery.refresh([ITEM],transport=httpx.MockTransport(handler));self.assertEqual(len(calls),2)
 
 
 if __name__=='__main__':unittest.main()

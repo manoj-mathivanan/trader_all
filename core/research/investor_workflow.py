@@ -110,7 +110,7 @@ def queues(settings):
         review=value['review']
         from core.research import investor_details
         details=store.read('investor/stock_details/'+isin,{})
-        return dict(row,news_count=len(value['articles']),review_status=status(review,value['articles'],holding=holding),
+        return dict(row,news_count=len(value['articles']),news_coverage=value['news_coverage'],review_status=status(review,value['articles'],holding=holding),
                     details={k:details.get(k) for k in ('as_of','fundamentals','technical','quote')},assessment=investor_details.assessment(row,value,details),
                     outlook=review.get('outlook') if review else None,last_review=review.get('as_of') if review else None,
                     thesis_assessment=review.get('thesis_assessment') if review else None)
@@ -148,6 +148,7 @@ def refresh_news(settings, *, force=False, isin=None, holdings_only=False, log=l
     items=[r['company'] for r in targets]
     if isin:
         items.append(intel.selected_company(settings,isin))
+    archive=investor_discovery.restore_archive(items,force=force,log=log)
     try:
         feeds=intel.refresh_feeds(force=force,log=log)
     except ValueError:
@@ -155,8 +156,8 @@ def refresh_news(settings, *, force=False, isin=None, holdings_only=False, log=l
         log('Broad feeds unavailable; continuing with company-specific sources.')
     upstox=investor_upstox.refresh(items,force=force,log=log)
     discovery=investor_discovery.refresh(items,force=force,log=log)
-    return dict(feeds=feeds,upstox=upstox,discovery=discovery,
-                partial=feeds['partial'] or upstox['partial'] or discovery['partial'])
+    return dict(feeds=feeds,upstox=upstox,discovery=discovery,archive=archive,
+                partial=feeds['partial'] or upstox['partial'] or discovery['partial'] or archive['partial'])
 
 
 def cycle(settings, *, holdings_only=False, log=lambda message:None):
