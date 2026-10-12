@@ -8,7 +8,7 @@
 @media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 .panel-body>.stats{grid-template-columns:repeat(2,minmax(0,1fr))}
 .strategy.planned{opacity:.62;margin-bottom:8px;cursor:default}.strategy.planned>span{color:var(--muted)}.strategy.planned em{margin-left:auto;font-style:normal;font-size:9px;color:var(--gold)}
-.topbar #top-navigation{display:flex;align-items:center;gap:4px;margin-left:auto;margin-right:28px}
+.topbar #top-navigation{display:flex;align-items:center;gap:4px;margin-left:auto;margin-right:28px;min-width:0;overflow-x:auto}
 .topbar #top-navigation .nav-link{padding:9px 11px;gap:7px;white-space:nowrap;font-size:12px}
 .topbar #top-navigation .nav-link .nav-icon{font-size:15px;width:auto}
 .topbar #top-navigation .nav-link.active{background:var(--soft);color:var(--green);font-weight:650}
@@ -62,3 +62,7 @@
 .company-evidence-text{white-space:pre-wrap;overflow-wrap:anywhere}
 #company-financial-form textarea,#company-article-form textarea,#company-review-form textarea,#company-import-form textarea{width:100%;box-sizing:border-box;padding:12px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--ink);font:inherit}
 .badge.warning{background:var(--amber-soft,#fff4d6);color:var(--amber,#8a5a00)}
+
+.investor-article-text { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 65vh; overflow: auto; font: inherit; line-height: 1.7; }
+[id^='investor-'][id$='-form'] label { display: block; margin-bottom: 16px; }
+[id^='investor-'][id$='-form'] textarea { width: 100%; min-height: 100px; }

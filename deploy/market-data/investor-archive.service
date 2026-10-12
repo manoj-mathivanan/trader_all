@@ -1,0 +1,7 @@
+[Unit]
+Description=Archive production investor evidence into shared PostgreSQL
+After=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/opt/market-data/venv/bin/python /opt/market-data/archive_investor_server.py

@@ -211,6 +211,8 @@ def cycle(log, job_id, *, ingest=True, portfolio_id=None):
                 at=datetime.fromisoformat(day+'T09:15:00+05:30'),screen=fundamental_screen)
         return fundamental_cache[symbol,day]
     def entry_check(symbol,day):
+        if any(e.get('symbol')==symbol and e.get('date','')>=day for e in portfolio.get('investor_exits',[])):
+            return False
         check=financial_check(symbol,day)
         fundamental_checks.append(dict(symbol=symbol,day=day,buy_allowed=check['buy_allowed'],score=check['score'],
                                       coverage_pct=check['coverage_pct'],reasons=check['block_reasons'],

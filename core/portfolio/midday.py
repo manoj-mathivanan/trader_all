@@ -153,6 +153,8 @@ def execute(portfolio, cfg, data, checks, quote_map, clock, job_id):
         denial = None
         if portfolio['status'] != 'active':
             denial = 'Entries paused'
+        elif any(e.get('symbol')==s and e.get('date','')>=day for e in portfolio.get('investor_exits',[])):
+            denial = 'Investor news exit; no same-day reentry'
         elif not checks[s]['buy_allowed']:
             denial = '; '.join(checks[s]['block_reasons'])
         elif cfg.skip_weak_markets and not breadth.decision(s, signal_day)['allowed']:

@@ -20,6 +20,7 @@ from core.portfolio import scalping_paper, scalping_control
 from core.strategies.registry import all_strategies
 from strategies.swing_patterns.patterns.registry import definitions as pattern_definitions
 from dashboard.api.company_review import router as company_review_router
+from dashboard.api.investor_intelligence import router as investor_intelligence_router
 
 WEB = Path(__file__).resolve().parents[1] / 'web'
 USER = os.environ.get('DASHBOARD_ADMIN_USER', '')
@@ -54,12 +55,16 @@ async def lifespan(app):
     jobs.recover()
     scalping_control.autostart()
     stop, thread = None, None
+    from core.research import investor_workflow
+    investor_stop, investor_thread = investor_workflow.start()
     if PAPER_ENABLED:
         scheduler.recover_interrupted()
         stop, thread = scheduler.start()
     try:
         yield
     finally:
+        investor_stop.set()
+        investor_thread.join(timeout=2)
         if stop is not None:
             stop.set()
             thread.join(timeout=2)
@@ -68,6 +73,7 @@ async def lifespan(app):
 app = FastAPI(title='Trader research', docs_url=None, redoc_url=None, openapi_url=None,
               dependencies=[Depends(authenticate)], lifespan=lifespan)
 app.include_router(company_review_router)
+app.include_router(investor_intelligence_router)
 
 
 @app.middleware('http')

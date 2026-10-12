@@ -150,8 +150,15 @@ class CompanyReviewTests(unittest.TestCase):
 
     def test_public_unauthenticated_deployment_cannot_trigger_paid_llm(self):
         with patch.dict(os.environ, {'TRADER_ENV': 'production', 'DASHBOARD_ADMIN_USER': '', 'DASHBOARD_ADMIN_PASSWORD': '',
-                                     'OPENAI_API_KEY': 'private-test-key', 'TRADER_NEWS_MODEL': 'configured-model'}):
+                                     'OPENAI_API_KEY': 'private-test-key', 'TRADER_NEWS_MODEL': 'configured-model',
+                                     'TRADER_ALLOW_UNAUTHENTICATED_RESEARCH': ''}):
             self.assertFalse(review.llm_status()['enabled'])
+
+    def test_owner_can_explicitly_enable_research_without_login(self):
+        with patch.dict(os.environ, {'TRADER_ENV': 'production', 'DASHBOARD_ADMIN_USER': '', 'DASHBOARD_ADMIN_PASSWORD': '',
+                                     'OPENAI_API_KEY': 'private-test-key', 'TRADER_NEWS_MODEL': 'configured-model',
+                                     'TRADER_ALLOW_UNAUTHENTICATED_RESEARCH': '1'}):
+            self.assertTrue(review.llm_status()['enabled'])
 
     def call_model(self, findings, articles, status='completed', http_status=200):
         def respond(request):

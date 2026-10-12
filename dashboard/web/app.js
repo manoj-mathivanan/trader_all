@@ -14,7 +14,7 @@ let selectedPaperScenario = null;
 const paperPortfolio = () => selectedPaperStrategy==='swing_patterns'&&selectedPaperScenario ? (state.paper_scenarios||[]).find(p=>p.id===selectedPaperScenario)||null : state.paper_portfolios?.[selectedPaperStrategy] ?? (selectedPaperStrategy==='swing_patterns'?state.paper_portfolio:null);
 const paperSchema = () => state.paper_schemas?.[selectedPaperStrategy] ?? (selectedPaperStrategy==='swing_patterns'?state.paper_schema:null);
 const paperPath = action => `strategies/${encodeURIComponent(selectedPaperStrategy)}/paper/${action}${selectedPaperStrategy==='swing_patterns'&&selectedPaperScenario?'?portfolio_id='+encodeURIComponent(selectedPaperScenario):''}`;
-const nav = [['overview','Overview','▦'],['data','Market data','⌁'],['company','Fundamentals','◇'],['backtests','Backtests','↗'],['momentum','Momentum','⚡'],['scalping','Scalping','⌁'],['paper','Paper trading','◎'],['jobs','Jobs & logs','≡'],['settings','Settings','⚙']];
+const nav = [['overview','Overview','▦'],['data','Market data','⌁'],['company','Fundamentals','◇'],['investor','Investor intelligence','◈'],['backtests','Backtests','↗'],['momentum','Momentum','⚡'],['scalping','Scalping','⌁'],['paper','Paper trading','◎'],['jobs','Jobs & logs','≡'],['settings','Settings','⚙']];
 
 async function api(path, method='GET', body) {
   const response = await fetch('/api/'+path,{method,headers:{'Content-Type':'application/json','X-Trader-Request':'local-ui'},...(body === undefined ? {} : {body:JSON.stringify(body)})});
@@ -279,7 +279,7 @@ function render(){
   $('#saved-screens').innerHTML=(state.screens||[]).map(s=>`<button class="saved-screen" data-action="new-backtest" data-screen="${esc(s.id)}"><span>◇</span><strong>${esc(s.name)}</strong></button>${s.trading_defaults&&state.paper_enabled?`<button class="saved-screen" data-action="paper-preset" data-screen="${esc(s.id)}"><span>◎</span><strong>Use in paper trading</strong></button>`:''}`).join('');
   $('#bearish-screens').innerHTML=(state.bearish_screens||[]).map(([id,label])=>`<button class="saved-screen" data-action="bearish-screen" data-pattern="${esc(id)}"><span>↘</span><strong>${esc(label)}</strong></button>`).join('');
   $('#top-navigation').innerHTML=nav.filter(([id])=>id!=='paper'||state.paper_enabled).map(([id,label,icon])=>`<a class="nav-link ${id===currentView?'active':''}" href="#${id}" ${id===currentView?'aria-current="page"':''}><span class="nav-icon">${icon}</span>${label}${id==='backtests'?`<span class="count">${state.runs.length}</span>`:''}</a>`).join('');
-  $('#view').innerHTML=({overview,data:dataView,company:()=>companyReviewView(),backtests:backtestsView,momentum:momentumView,scalping:scalpingView,paper:paperView,jobs:jobsView,settings:settingsView}[currentView])();
+  $('#view').innerHTML=({overview,data:dataView,company:()=>companyReviewView(),investor:()=>investorView(),backtests:backtestsView,momentum:momentumView,scalping:scalpingView,paper:paperView,jobs:jobsView,settings:settingsView}[currentView])();
 }
 async function refresh(redraw=true){state=await api('bootstrap');if(redraw)render();updateBacktestAvailability();for(const id of ['momentum-form','scalping-form']){const form=$('#'+id);if(form)form.querySelector('[type="submit"]').disabled=Boolean(activeJob())||form.dataset.submitting==='true';}}
 function momentumComparisonTable(c){

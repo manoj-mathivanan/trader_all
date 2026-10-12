@@ -48,7 +48,7 @@ def update(job_id, *, status=None, message=None, result=None):
         store.write("jobs", jobs)
 
 
-def submit(kind, function, payload=None):
+def submit(kind, function, payload=None, *, after_complete=None):
     with store.LOCK:
         jobs = store.read("jobs", [])
         if any(j["status"] in ("queued", "running") for j in jobs):
@@ -72,6 +72,11 @@ def submit(kind, function, payload=None):
         except Exception as exc:
             # Never persist HTTP request headers, tokens, or raw provider responses.
             update(job["id"], status="failed", message=failure_detail(exc))
+        if after_complete is not None:
+            try:
+                after_complete()
+            except Exception:
+                update(job['id'],status='warning',message='Analysis retained locally; shared database sync needs retry.')
 
     POOL.submit(execute)
     return job

@@ -216,9 +216,9 @@ def recent_articles(evidence, isin, at):
 
 
 def llm_status():
-    # Public deployments without authentication must not expose a paid API trigger.
+    # Authentication is the default; an owner can explicitly enable public research.
     if os.environ.get('TRADER_ENV', 'local') == 'production' and not (
-            os.environ.get('DASHBOARD_ADMIN_USER') and os.environ.get('DASHBOARD_ADMIN_PASSWORD')):
+            os.environ.get('DASHBOARD_ADMIN_USER') and os.environ.get('DASHBOARD_ADMIN_PASSWORD')) and os.environ.get('TRADER_ALLOW_UNAUTHENTICATED_RESEARCH') != '1':
         return dict(enabled=False, reason='Automatic web research requires authentication in production.')
     enabled = bool(os.environ.get('OPENAI_API_KEY') and os.environ.get('TRADER_NEWS_MODEL'))
     return dict(enabled=enabled, reason='' if enabled else 'Connect an LLM API on the server to enable automatic web research.')
