@@ -129,10 +129,11 @@ def resolve_google(url, *, transport=None, force=False):
             for line in body.decode('utf-8').splitlines():
                 if not line.startswith('['):continue
                 records=json.loads(line)
+                if not isinstance(records,list):continue
                 for record in records:
-                    if len(record)>2 and record[0]=='wrb.fr' and record[1]=='Fbv4je':
+                    if isinstance(record,list) and len(record)>2 and record[0]=='wrb.fr' and record[1]=='Fbv4je':
                         data=json.loads(record[2])
-                        if data[0]=='garturlres' and urlsplit(data[1]).scheme=='https' and urlsplit(data[1]).hostname!='news.google.com':
+                        if isinstance(data,list) and len(data)>1 and data[0]=='garturlres' and isinstance(data[1],str) and urlsplit(data[1]).scheme=='https' and urlsplit(data[1]).hostname!='news.google.com':
                             result.update(status='resolved',publisher_url=data[1])
                             break
     except (httpx.HTTPError,ValueError,TypeError,IndexError,UnicodeError):pass

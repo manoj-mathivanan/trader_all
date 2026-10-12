@@ -324,6 +324,8 @@ def interpret(settings, isin, *, force=False, full_text=False, context=None, tra
             row=dict(article_id=article['id'],title=article['title'],status=document['status'],reason=document['reason'])
             if document['status']=='available' and total_chars+len(document['text'])<=180_000:
                 complete.append(dict(article,text=article['title']+'\n'+document['text'],evidence_scope='full_article',
+                                     discovery_url=article['url'],url=document.get('final_url',article['url']),
+                                     publisher=urlsplit(document.get('final_url',article['url'])).hostname,
                                      full_document_sha256=document['response_sha256'],
                                      citation_options=[article['title']]+[part.strip() for part in re.split(r'(?<=[.!?])\s+|(?<=[.!?])(?=[A-Z])',document['text']) if 15<=len(part.strip())<=450]))
                 total_chars+=len(document['text'])
