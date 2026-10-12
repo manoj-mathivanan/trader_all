@@ -16,6 +16,8 @@ def signal(bars, i, cfg):
 
 
 def required_warmup(cfg):
+    if getattr(cfg, 'simulation_model', 'legacy') == 'banana_proxy_v1':
+        return 50 if cfg.pattern == 'ipo' else 252
     if cfg.pattern in dict(bearish.SCREENS):
         return bearish.required_history(cfg) - 1
     extra = 220 if getattr(cfg, 'require_rising_long_trend', False) else 200 if getattr(cfg, 'require_long_trend', False) else 0
@@ -39,6 +41,11 @@ def simulate(datasets, cfg, *, state=None, liquidate=True, allow_entries=True, e
 
     State is copied: a failed cycle never mutates the last committed ledger.
     """
+    if getattr(cfg, 'simulation_model', 'legacy') == 'banana_proxy_v1':
+        if state is not None or not liquidate or not allow_entries or entry_check is not None:
+            raise ValueError('Banana proxy supports isolated backtests only.')
+        from core.research.banana_reference import simulate as reference_simulate
+        return reference_simulate(datasets, cfg)
     if getattr(cfg, 'execution_horizon', 'swing') == 'intraday':
         raise ValueError('Intraday backtests require five-minute inputs. Use the backtest job workflow.')
     if getattr(cfg, 'sector_filter', 'off') != 'off':
@@ -526,7 +533,7 @@ def prepare(settings, cfg):
         if cfg.pattern == 'ipo' and (not bars or bars[0].get('listing_metadata', {}).get('ipo_verified') is not True):
             excluded.append(item['symbol'])
             continue
-        if len([b for b in bars if b['date'] < str(cfg.start)]) < warmup:
+        if (cfg.simulation_model != 'banana_proxy_v1' and len([b for b in bars if b['date'] < str(cfg.start)]) < warmup) or len(bars) <= warmup+1:
             excluded.append(item['symbol'])
             continue
         datasets[item['symbol']] = bars
@@ -599,6 +606,9 @@ def run(settings, cfg, log, job_id, *, fundamental_evidence=None, sector_evidenc
                             'All-in fee rates are your assumptions, not a verified historical tax/brokerage schedule.',
                             'No volume participation cap, circuit-limit or non-fill simulation; stops may fill worse in real markets.',
                             'This run is exploratory/in-sample. Reserve a later untouched period before judging the strategy.'])
+    if cfg.simulation_model == 'banana_proxy_v1':
+        result['warnings'] = [w for w in result['warnings'] if not w.startswith('No volume participation')]
+        result['warnings'].extend(result.get('execution_notices', []))
     result['warnings'].extend(quality['warnings'])
     if cfg.skip_weak_markets and cfg.market_breadth_scope == 'sector':
         result['warnings'].append('Sector breadth uses current sector labels within the prepared eligible universe; historical classification bias and small-sector instability remain.')

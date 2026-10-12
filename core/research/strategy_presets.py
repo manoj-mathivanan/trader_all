@@ -30,12 +30,21 @@ class ScreenInput(BaseModel):
     multiyear_max_depth_pct: float = Field(50, gt=0, le=90)
     ipo_max_age_days: int = Field(730, ge=1, le=3653)
     trading_defaults: TradingConfig | None = None
+    backtest_defaults: dict | None = None
+    source_filters: dict | None = None
     minimum_warmup_sessions: int | None = Field(None, ge=50, le=2500)
     source_run_id: str | None = Field(None, pattern=r'^[0-9a-f]{12}(?:_[a-z0-9]+)?$')
     description: str = Field('', max_length=1500)
 
     @model_validator(mode='after')
     def consistent_defaults(self):
+        if self.backtest_defaults:
+            from core.research.config import BacktestConfig
+            cfg = BacktestConfig(**self.backtest_defaults, start='2020-01-01', end='2026-09-30', acknowledge_limitations=True)
+            if cfg.pattern != self.pattern or cfg.simulation_model != 'banana_proxy_v1':
+                raise ValueError('Reference presets require a matching independent proxy backtest model.')
+            if self.trading_defaults:
+                raise ValueError('Reference backtest presets cannot expose paper trading defaults.')
         if self.trading_defaults:
             if self.pattern != self.trading_defaults.pattern:
                 raise ValueError('Saved strategy and trading defaults must use the same pattern.')

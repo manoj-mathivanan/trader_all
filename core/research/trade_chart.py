@@ -7,6 +7,20 @@ from core.research import store
 
 
 def explain_trade(result, datasets, trade, bars, first, last):
+    if result['config'].get('simulation_model') == 'banana_proxy_v1':
+        from core.research.banana_reference import NOTICES
+        cfg = result['config']
+        enriched = [dict(b, chart_values={}) for b in bars]
+        for i, row in enumerate(enriched):
+            if i >= 49:
+                row['chart_values']['sma_50'] = sum(b['close'] for b in bars[i-49:i+1])/50
+            row['chart_values']['initial_stop'] = trade['entry']*(1-cfg['stop_pct']/100)
+        return dict(bars=enriched, pattern=cfg['pattern'], entry_mode=cfg['entry_mode'],
+                    winner_exit=cfg['winner_exit'], candidate_rank='weighted_rs',
+                    signal={'date': bars[first-1]['date'] if first else None}, checks=[],
+                    series=[dict(id='sma_50',label='SMA50 closing exit line',color='#d18b26'),
+                            dict(id='initial_stop',label='Initial entry-relative stop',color='#bd5869')],
+                    notices=NOTICES + ['Legacy three-contraction and intraday SMA-stop explanations do not apply to this saved proxy run.'])
     if trade.get('direction') == 'short':
         from core.research.short_trade_chart import explain_trade as explain_short
         return explain_short(result, datasets, trade, bars, first, last)

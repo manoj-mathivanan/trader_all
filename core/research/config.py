@@ -106,6 +106,11 @@ class TradingConfig(BaseModel):
 
 
 class BacktestConfig(TradingConfig):
+    simulation_model: Literal['legacy', 'banana_proxy_v1'] = Field('legacy', title='Simulation model')
+    reference_same_day: Literal['conservative', 'reference'] = Field('conservative', title='Pivot entry-day stop ordering')
+    reference_cap_pct: float = Field(30, ge=5, le=100, title='Maximum reference position (%)')
+    reference_turnover_pct: float = Field(10, ge=.5, le=100, title='Maximum median-turnover participation (%)')
+
     execution_horizon: Literal['swing', 'intraday'] = Field('swing', title='Holding period')
     square_off_time: str = Field('15:00', pattern=r'^\d{2}:\d{2}$', title='Intraday exit cutoff (IST)')
     comparison_run_id: str | None = Field(None, pattern=r'^[0-9a-f]{12}(?:_[a-z0-9]+)?$', title='Frozen comparison run ID')
@@ -120,6 +125,22 @@ class BacktestConfig(TradingConfig):
             raise ValueError("Test end must be after test start.")
         if not self.acknowledge_limitations:
             raise ValueError("Acknowledge the data and cost limitations before running.")
+        if self.simulation_model == 'banana_proxy_v1':
+            supported = {'name','pattern','capital','entry_mode','risk_pct','stop_pct','winner_exit',
+                         'candidate_rank','max_positions','fee_model','buy_cost_bps','sell_cost_bps','slippage_bps'}
+            for key, field in TradingConfig.model_fields.items():
+                if key not in supported and getattr(self,key) != field.default:
+                    raise ValueError('Banana proxy does not use legacy control: '+key)
+            if (self.pattern not in ('vcp', 'blue_sky', 'multiyear', 'ipo') or self.execution_horizon != 'swing'
+                    or self.entry_mode not in ('pivot', 'next_open') or self.winner_exit != 'trail_50d'
+                    or self.candidate_rank != 'rs_126' or self.fee_model != 'custom_bps'
+                    or self.buy_cost_bps != self.sell_cost_bps or self.slippage_bps != 0
+                    or self.sector_filter != 'off' or self.skip_weak_markets or self.max_sector_positions
+                    or self.min_short_rs_rating or self.min_rs_improvement
+                    or self.max_open_gap_pct or self.require_open_above_pivot or self.max_extension_pct
+                    or self.reentry_cooldown_sessions or self.stalled_exit_sessions or self.failed_breakout_sessions
+                    or self.market_risk_scale != 1 or self.market_breadth_trend_sessions):
+                raise ValueError('Banana proxy requires long swing pivot/next-open, RS priority, SMA50 close exit, equal custom buy/sell costs, zero slippage and no legacy refinements.')
         hour, minute = map(int, self.square_off_time.split(':'))
         if not 9*60+20 <= hour*60+minute <= 15*60+20 or minute%5:
             raise ValueError('Choose a five-minute square-off boundary between 09:20 and 15:20 IST.')
