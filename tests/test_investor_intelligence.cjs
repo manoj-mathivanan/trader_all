@@ -42,3 +42,13 @@ vm.runInContext(`investorEvidence.news_coverage={status:'full_article_unavailabl
 assert.match(context.coveragePage,/full_article_unavailable/);
 assert.match(context.coveragePage,/&lt;unsafe&gt;/);
 assert.match(context.coveragePage,/Google News and Bing/);
+
+// Score ranges retain missing evidence; source text is escaped.
+vm.runInContext(`globalThis.scoreHtml=investorScore({score:null,range:[42,70],confidence:72,decision:'insufficient_evidence',version:'pilot',components:{news:{score:null,range:[0,100],confidence:0,factors:[{name:'<source>',value:null,score:null,weight:100}]}},blockers:['<missing>'],reasons:[],entry_plan:{},notice:'Observation only'});globalThis.historyHtml=investorScoreHistory([{as_of:'2026-10-13T00:00:00Z',score:80,confidence:90,decision:'buy_candidate',outcome:{returns:{5:{net_return_pct:1.5}}}}]);`,context);
+assert.match(context.scoreHtml,/42.*70.*incomplete/);
+assert.match(context.scoreHtml,/News 20%/);
+assert.match(context.scoreHtml,/&lt;source&gt;/);
+assert.match(context.scoreHtml,/&lt;missing&gt;/);
+assert.doesNotMatch(context.scoreHtml,/<missing>|<source>/);
+assert.match(context.historyHtml,/5 sessions: 1\.5%/);
+console.log('Investor score ranges, forward outcomes and source escaping passed.');

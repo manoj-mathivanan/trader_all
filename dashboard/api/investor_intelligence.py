@@ -39,7 +39,12 @@ def overview():
 
 @router.get('/company/{isin}')
 def evidence(isin: str):
-    value=investor.evidence(current_settings(), isin)
+    cfg=current_settings()
+    value=investor.evidence(cfg, isin)
+    from core.research import investor_scores
+    row=next((r for r in workflow.score_targets(cfg) if r['isin']==isin),dict(company=value['company'],isin=isin,kind='candidate'))
+    value['scoring']=investor_scores.evaluate(row,value,value['details'])
+    value['score_history']=[dict(r,outcome=investor_scores.outcomes(r,value['details'].get('technical',{}))) for r in investor_scores.history(isin,20)]
     history=[]
     for path in (store.DATA/'investor/reviews').glob('*.json'):
         import json
@@ -48,6 +53,18 @@ def evidence(isin: str):
             history.append({k:review.get(k) for k in ('id','as_of','outlook','model','full_text')})
     value['review_history']=sorted(history,key=lambda r:r['as_of'],reverse=True)[:100]
     return value
+
+
+@router.post('/scores/refresh')
+def refresh_scores():
+    from core.research import investor_scores
+    return submit_analysis('Investor score observations',lambda log,job_id:investor_scores.observe(current_settings(),refresh=True,log=log))
+
+
+@router.get('/scores/validation')
+def score_validation():
+    from core.research import investor_scores
+    return dict(model=investor_scores.MODEL,report=store.read('investor/assessments/score-validation-latest',{}))
 
 
 @router.post('/refresh')

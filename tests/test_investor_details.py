@@ -29,7 +29,7 @@ class DetailsTests(unittest.TestCase):
             return httpx.Response(200,json=dict(status='success',data=value))
         with patch.object(details,'technical',return_value=dict(status='unavailable')):
             result=details.refresh([self.item],transport=httpx.MockTransport(handler))
-            self.assertFalse(result['partial']);self.assertEqual(len(requests),10)
+            self.assertFalse(result['partial']);self.assertEqual(len(requests),14)
             self.assertTrue(any(r.url.params.get('time_period')=='quarterly' and r.url.params.get('fs')=='true' for r in requests))
             self.assertTrue(any('NSE_EQ|' in r.url.path and r.url.path.endswith('competitors') for r in requests))
             requests.clear();details.refresh([self.item],transport=httpx.MockTransport(handler))

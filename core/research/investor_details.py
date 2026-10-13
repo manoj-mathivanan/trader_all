@@ -4,6 +4,7 @@ import json
 import math
 import time
 from datetime import datetime
+import statistics
 from urllib.parse import quote
 import httpx
 from core.research import store, investor_intelligence as intel, market_history, corporate_actions, data_quality
@@ -47,7 +48,27 @@ def number(value):
 
 def history(data, field, category):
     rows = data.get(field, []) if isinstance(data, dict) else []
-    return next((r.get('history', []) for r in rows if r.get('category') == category), [])
+    result=next((r.get('history', []) for r in rows if r.get('category') == category), [])
+    return sorted([r for r in result if period_date(r.get('period'))],key=lambda r:period_date(r['period']),reverse=True)
+
+
+def period_date(value):
+    try:return datetime.strptime(value or '', '%b %Y').date()
+    except (ValueError,TypeError):return None
+
+
+def statement_usable(sections, *, require_cash=True):
+    today=intel.company.utcnow().date()
+    for name,limit in [('annual_income',550),('quarterly_income',210)]:
+        section=sections.get(name,{})
+        if section.get('status')!='available':return False
+        for category in ('revenue','net_profit'):
+            rows=history(section.get('data',{}),'income_statement',category)
+            if not rows or number(rows[0].get('value')) is None or not 0<=(today-period_date(rows[0]['period'])).days<=limit:return False
+    if require_cash:
+        cash=history(sections.get('cash_flow',{}).get('data',{}),'cash_flow','operating')
+        if sections.get('cash_flow',{}).get('status')!='available' or not cash or number(cash[0].get('value')) is None or not 0<=(today-period_date(cash[0]['period'])).days<=550:return False
+    return True
 
 
 def financial_summary(sections):
@@ -60,7 +81,8 @@ def financial_summary(sections):
         rows = history(annual, 'income_statement', category)
         quarterly = history(quarter, 'income_statement', category)
         current = rows[0] if rows else {}
-        prev = rows[1] if len(rows) > 1 else {}
+        period=period_date(current.get('period'))
+        prev = next((r for r in rows[1:] if period and period_date(r['period']).year==period.year-1 and period_date(r['period']).month==period.month),{})
         a, b = number(current.get('value')), number(prev.get('value'))
         metrics[category] = dict(value=a, period=current.get('period'), annual_yoy_pct=(a/b-1)*100 if a is not None and b is not None and b>0 else None,
                                  quarterly=quarterly[0] if quarterly else None)
@@ -69,7 +91,8 @@ def financial_summary(sections):
     ratios = {r['name']: dict(company=number(r.get('company_value')), sector=number(r.get('sector_value'))) for r in data('ratios', []) if isinstance(r, dict) and 'name' in r}
     shares = {r['category']: r.get('history', []) for r in data('shareholding', []) if isinstance(r, dict) and 'category' in r}
     profile = data('profile', {})
-    return dict(metrics=metrics, ratios=ratios, shareholding=shares, sector=profile.get('sector'),
+    basis=sections.get('annual_income',{}).get('statement_basis') or annual.get('type','consolidated')
+    return dict(metrics=metrics, ratios=ratios, shareholding=shares, sector=profile.get('sector'),statement_basis=basis,
                 business=profile.get('company_profile'), units=annual.get('units_in'),
                 notice='Upstox current snapshot. Reporting period is separate from retrieval date; publication-time history is unavailable. Total liabilities are not debt.')
 
@@ -80,7 +103,8 @@ def technical(item):
         return dict(status='unavailable', reason='Missing daily candles')
     bars, detail = market_history.prepare(item, record, reference=market_history.evidence(snapshot=True), fingerprint=False)
     today = intel.company.utcnow().astimezone(intel.company.IST).date()
-    bars = [b for b in bars if b['date'] < today.isoformat()]
+    clock=intel.company.utcnow().astimezone(intel.company.IST)
+    bars = [b for b in bars if b['date'] < today.isoformat() or (b['date']==today.isoformat() and clock.hour>=16)]
     if detail.get('quarantine') or len(bars) < 100:
         return dict(status='unavailable', reason='Quarantined or insufficient history')
     bars = corporate_actions.adjusted_bars(bars, bars[-1]['date'])
@@ -96,7 +120,23 @@ def technical(item):
     ranges = [max(bars[i]['high']-bars[i]['low'], abs(bars[i]['high']-prices[i-1]), abs(bars[i]['low']-prices[i-1])) for i in range(len(bars)-14, len(bars))]
     trend = 'bullish' if prices[-1] >= ma['20'] >= ma['50'] >= ma['100'] else 'bearish' if prices[-1] < ma['50'] < ma['100'] else 'neutral'
     volume = sum(b['volume'] for b in bars[-21:-1])/20
-    return dict(status='available', price_date=bars[-1]['date'], close=prices[-1], trend=trend, moving_averages=ma,
+    returns=[math.log(prices[i]/prices[i-1]) for i in range(len(prices)-20,len(prices))]
+    peak=prices[-61];drawdown=0
+    for price in prices[-60:]:
+        peak=max(peak,price);drawdown=min(drawdown,(price/peak-1)*100)
+    benchmark=store.read('bars/NIFTY50',{}).get('bars',[])
+    dates=[b['date'] for b in bars[-61:]]
+    bench={b['date']:b for b in benchmark if b.get('date') in dates}
+    aligned=[bench[d] for d in dates if d in bench]
+    valid_benchmark=len(aligned)==61 and not data_quality.audit({'NIFTY50':aligned})['findings']
+    rs=(prices[-1]/prices[-61]-aligned[-1]['close']/aligned[0]['close'])*100 if valid_benchmark else None
+    behaviour=dict(relative_strength60_pp=rs,max_drawdown60_pct=drawdown,volatility20_annual_pct=statistics.stdev(returns)*math.sqrt(252)*100,
+                   turnover20_rupees=sum(b['close']*b['volume'] for b in bars[-20:])/20,
+                   benchmark='Nifty 50',benchmark_sha256=market_history.digest(aligned) if valid_benchmark else None,
+                   notice='Price return relative to Nifty 50; sector-relative strength and breadth are not included.')
+    return dict(status='available', price_date=bars[-1]['date'], close=prices[-1], trend=trend, moving_averages=ma,price_behaviour=behaviour,
+                audited_bars=bars[-101:],benchmark_bars=aligned if valid_benchmark else [],
+                observation_bars=[{k:b[k] for k in ('date','open','close')} for b in bars[-61:]],
                 rsi14=rsi, rsi_method='14-session simple average gains/losses', atr14=sum(ranges)/14,
                 return20_pct=(prices[-1]/prices[-21]-1)*100, volume_ratio=bars[-1]['volume']/volume if volume else None,
                 source='Derived from adjusted, audited Upstox daily candles', evidence_sha256=market_history.digest(bars[-101:]))
@@ -127,8 +167,8 @@ def refresh(items, *, force=False, transport=None, log=lambda message: None):
             sections = {}
             log('Checking company data for ' + item['symbol'] + '.')
             for name, (endpoint, params) in ENDPOINTS.items():
-                old = previous.get('sections', {}).get(name, {})
-                if not force and old.get('status') in ('available', 'empty') and 0 <= intel.cache_age(old) < 3600:
+                old = previous.get('statement_alternatives',{}).get('consolidated',{}).get(name,previous.get('sections', {}).get(name, {}))
+                if not force and old.get('status') in ('available', 'empty') and old.get('statement_basis','consolidated')!='standalone' and 0 <= intel.cache_age(old) < (3600 if name=='quarterly_income' else 21600):
                     sections[name] = old
                     continue
                 # Live competitors currently requires instrument key despite the ISIN documentation.
@@ -139,14 +179,34 @@ def refresh(items, *, force=False, transport=None, log=lambda message: None):
                     payload, sha = request(client, url, params)
                     expected_type=list if name in ('ratios','shareholding','corporate_actions','competitors') else dict
                     if not isinstance(payload,expected_type): raise ValueError('Invalid company data shape')
-                    sections[name] = dict(status='available' if payload else 'empty', data=payload, response_sha256=sha, as_of=store.now(), url=url)
+                    sections[name] = dict(status='available' if payload else 'empty', data=payload, response_sha256=sha, as_of=store.now(), url=url,params=params,statement_basis=params.get('type'))
                 except (httpx.HTTPError, ValueError):
                     sections[name] = dict(status='unavailable', reason='Upstox endpoint unavailable; prior data is retained as background.',
                                           data=old.get('data'), as_of=store.now(), last_success=old.get('last_success', old.get('as_of')), url=url)
                 if transport is None: time.sleep(.15)
-            # Failed endpoints retain data but may not qualify a purchase assessment.
+            financial_names=('annual_income','quarterly_income','balance_sheet','cash_flow')
+            consolidated={n:sections[n] for n in financial_names};standalone={};basis='consolidated'
+            sector=(sections.get('profile',{}).get('data') or {}).get('sector','') or ''
+            require_cash=not any(s in sector.lower() for s in ('bank','finance','financial'))
+            if not statement_usable(sections,require_cash=require_cash):
+                log('Checking consistent standalone financials for '+item['symbol']+'.')
+                for name in financial_names:
+                    endpoint,params=ENDPOINTS[name];params=dict(params,type='standalone')
+                    old=previous.get('statement_alternatives',{}).get('standalone',{}).get(name,{})
+                    if not force and old.get('status') in ('available','empty') and 0<=intel.cache_age(old)<(3600 if name=='quarterly_income' else 21600):
+                        standalone[name]=old;continue
+                    url='https://api.upstox.com/v2/fundamentals/'+quote(item['isin'],safe='')+'/'+endpoint
+                    try:
+                        if not token:raise ValueError('Missing token')
+                        payload,sha=request(client,url,params)
+                        if not isinstance(payload,dict):raise ValueError('Invalid statement shape')
+                        standalone[name]=dict(status='available' if payload else 'empty',data=payload,response_sha256=sha,as_of=store.now(),url=url,params=params,statement_basis='standalone')
+                    except (httpx.HTTPError,ValueError):standalone[name]=dict(status='unavailable',as_of=store.now(),statement_basis='standalone')
+                if statement_usable(standalone,require_cash=require_cash):sections.update(standalone);basis='standalone'
+            # Select the entire statement family; never mix consolidated and standalone growth.
             usable = {k: v for k, v in sections.items() if v['status'] == 'available'}
             value = dict(company=item, as_of=store.now(), sections=sections, fundamentals=financial_summary(usable),
+                         statement_basis=basis,statement_alternatives=dict(consolidated=consolidated,standalone=standalone),
                          technical=technical(item), quote=quotes.get(item.get('key') or 'NSE_EQ|' + item['isin']),
                          partial=any(v['status'] == 'unavailable' for v in sections.values()))
             store.write(key, value)
@@ -211,7 +271,9 @@ def assessment(row, evidence, details):
     try:
         quote_age = (intel.company.utcnow().timestamp()*1000 - float(quote_data['last_trade_time']))/1000
     except (KeyError, TypeError, ValueError): quote_age = None
+    from core.research import investor_scores
     return dict(as_of=store.now(), decision=decision, reasons=reasons+failures, blockers=blockers, advisory_only=True,
+                scoring=investor_scores.evaluate(row,evidence,details),
                 entry_trigger=row.get('pivot'), invalidation=row.get('invalidation_reference'), latest_price=quote_data.get('last_price'),
                 quote_age_seconds=quote_age, technical_date=t.get('price_date'), details_as_of=details.get('as_of'), news_review_id=review.get('id'),
                 details_sha256=hashlib.sha256(json.dumps(details,sort_keys=True).encode()).hexdigest() if details else None,

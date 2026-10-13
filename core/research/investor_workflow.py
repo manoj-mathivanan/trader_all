@@ -15,6 +15,8 @@ class TrackingInput(company.Input):
     thesis: str = Field('',max_length=2000)
     entry_date: date | None = None
     quantity: float | None = Field(None,gt=0)
+    stop_price: float | None = Field(None,gt=0)
+    target_price: float | None = Field(None,gt=0)
 
 
 class MonitorSettings(company.Input):
@@ -85,7 +87,7 @@ def status(review, articles, *, holding=False):
     return 'no_material_adverse_event_found'
 
 
-def queues(settings):
+def score_targets(settings):
     tracked=store.read('investor/watchlist',[])
     overrides={r['isin']:r for r in tracked if r['kind']=='holding'}
     holdings=paper_holdings(settings)
@@ -94,6 +96,7 @@ def queues(settings):
     for row in holdings:
         if row['isin'] in overrides:
             row.update({k:overrides[row['isin']][k] for k in ('thesis','entry_date','quantity')})
+            row.update({k:overrides[row['isin']].get(k) for k in ('stop_price','target_price')})
     scan=store.read('investor/scan',{})
     candidates=[dict(r,isin=r['company']['isin'],thesis='Early breakout with a tightening base',source='early_breakout') for r in scan.get('matches',[])]
     seen={r['isin'] for r in candidates}
@@ -101,6 +104,15 @@ def queues(settings):
     candidate_theses={r['isin']:r['thesis'] for r in tracked if r['kind']=='candidate'}
     for row in candidates:
         if row['isin'] in candidate_theses:row['thesis']=candidate_theses[row['isin']]
+        override=next((r for r in tracked if r['isin']==row['isin'] and r['kind']=='candidate'),{})
+        row.update(kind='candidate',stop_price=override.get('stop_price'),target_price=override.get('target_price'))
+    return holdings+candidates
+
+
+def queues(settings):
+    targets=score_targets(settings)
+    holdings=[r for r in targets if r['kind']=='holding'];candidates=[r for r in targets if r['kind']=='candidate']
+    scan=store.read('investor/scan',{})
     cache={}
     news=store.read('investor/news',{})
     def decorate(row,holding=False):
@@ -115,6 +127,7 @@ def queues(settings):
                     outlook=review.get('outlook') if review else None,last_review=review.get('as_of') if review else None,
                     thesis_assessment=review.get('thesis_assessment') if review else None)
     candidates=[decorate(r) for r in candidates]
+    candidates.sort(key=lambda r:(r['assessment'].get('scoring',{}).get('decision')!='avoid',r['assessment'].get('scoring',{}).get('range',[0])[0],r['assessment'].get('scoring',{}).get('confidence',0)),reverse=True)
     holdings=[decorate(r,True) for r in holdings]
     held={r['isin'] for r in holdings}
     catalysts=[]
@@ -229,6 +242,8 @@ def cycle(settings, *, holdings_only=False, log=lambda message:None):
         store.write('investor/assessments/'+identity,snapshot)
     result=dict(id=uuid.uuid4().hex,as_of=store.now(),price_date=scan['price_date'],candidate_count=len(scan['matches']),
                 execution=execution,discovery=discovery,upstox=news['upstox'],details=details,holdings_only=holdings_only,reviews=completed,pending=max(0,len(work)-len(completed)),partial=news['partial'] or details['partial'] or any(r['status']=='unavailable' for r in completed))
+    from core.research import investor_scores
+    result['scores']=investor_scores.observe(settings,log=log,holdings_only=holdings_only)
     store.write('investor/monitor_runs/'+result['id'],result)
     store.write('investor/monitor',result)
     return result
