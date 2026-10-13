@@ -5,6 +5,7 @@ import json
 import os
 import re
 import uuid
+from functools import lru_cache
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from urllib.parse import urlsplit, urlunsplit
@@ -224,6 +225,7 @@ def refresh_feeds(*, force=False, transport=None, log=lambda message: None):
     return dict(articles=len(articles), coverage=coverage, cached=False, partial=any(r['status'] != 'available' or r['skipped'] for r in coverage))
 
 
+@lru_cache(maxsize=32768)
 def normalize(value):
     return re.sub(r'[^a-z0-9]+', ' ', value.lower()).strip()
 
