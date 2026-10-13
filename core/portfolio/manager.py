@@ -68,6 +68,13 @@ def save(strategy_id, config, settings, *, create=False, clock, portfolio_id=Non
             raise ValueError('Portfolio strategy identity mismatch; trading halted.')
         if not create and existing['config'].get('execution_time', 'next_open') != getattr(config, 'execution_time', 'next_open') and existing.get('ledger'):
             raise ValueError('Create a separate scenario to change execution timing after trading starts.')
+        if not create and (existing['config'].get('simulation_model','legacy') == 'banana_proxy_v1'
+                           or getattr(config,'simulation_model','legacy') == 'banana_proxy_v1'):
+            editable = {'name','auto_run','run_hour','run_minute','acknowledge_limitations'}
+            previous = type(config)(**existing['config']).model_dump(mode='json')
+            current = config.model_dump(mode='json')
+            if any(previous[k] != current[k] for k in current if k not in editable):
+                raise ValueError('Create a separate reference scenario to change its engine, filters or execution rules.')
         existing['config'] = config.model_dump(mode='json')
         existing['config_history'].append({'at': store.now(), 'config': existing['config']})
         existing['updated_at'] = store.now()

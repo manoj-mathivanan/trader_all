@@ -37,5 +37,32 @@
     "now_vs_pivot_min_pct": -20,
     "now_vs_pivot_max_pct": 0
   },
-  "description": "Observed Banana screen thresholds saved independently. Backtests use declared fixed-window proxies with the reference execution rules. Historical market cap, full-market RS and nested-base structure are unavailable; identical results are not verified. IPO is not available in the source backtest selector."
+  "description": "Observed Banana screen thresholds saved independently. Backtests use declared fixed-window proxies with the reference execution rules. Historical market cap, full-market RS and nested-base structure are unavailable; identical results are not verified. IPO is not available in the source backtest selector.",
+  "paper_defaults": {
+    "name": "Banana reference - IPO base",
+    "pattern": "ipo",
+    "simulation_model": "banana_proxy_v1",
+    "reference_same_day": "conservative",
+    "reference_cap_pct": 30,
+    "reference_turnover_pct": 10,
+    "capital": 1000000,
+    "risk_pct": 1,
+    "stop_pct": 8,
+    "max_positions": 10,
+    "entry_mode": "pivot",
+    "winner_exit": "trail_50d",
+    "candidate_rank": "rs_126",
+    "skip_weak_markets": false,
+    "sector_filter": "off",
+    "fee_model": "custom_bps",
+    "buy_cost_bps": 25,
+    "sell_cost_bps": 25,
+    "slippage_bps": 10,
+    "execution_time": "next_open",
+    "run_hour": 16,
+    "run_minute": 15,
+    "auto_run": false,
+    "fundamental_mode": "required",
+    "investor_news_exits": false
+  }
 }

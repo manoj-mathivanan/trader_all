@@ -64,6 +64,16 @@ const form = context.form;
 function changeScreen(value) {
   listeners.change({target:{id:'screen-picker',value,closest:()=>form}});
 }
+
+const referencePrior=vm.runInContext('state.screens',context);
+const referenceHidden=vm.runInContext(`readForm({elements:{investor_news_exits:{type:"hidden",value:"false"},require_long_trend:{type:"hidden",value:"true"}}},{properties:{investor_news_exits:{type:"boolean"},require_long_trend:{type:"boolean"}}})`,context);
+assert.equal(referenceHidden.investor_news_exits,false);
+assert.equal(referenceHidden.require_long_trend,true);
+vm.runInContext(`state.screens=[{id:"reference_paper",pattern:"blue_sky",backtest_defaults:{slippage_bps:0},paper_defaults:{simulation_model:"banana_proxy_v1",slippage_bps:10,fundamental_mode:"required",investor_news_exits:false}}]`,context);
+assert.equal(vm.runInContext(`screenPreset("reference_paper",true).slippage_bps`,context),10);
+assert.equal(vm.runInContext(`screenPreset("reference_paper").slippage_bps`,context),0);
+
+context.priorScreens=referencePrior;vm.runInContext('state.screens=priorScreens',context);
 (async () => {
   // Custom -> built-in must reset every filter, not just the pattern name.
   changeScreen('custom_test');

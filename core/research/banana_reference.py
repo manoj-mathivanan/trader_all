@@ -4,6 +4,7 @@ The licensed source prices, historical market-wide ranks, market caps and
 proprietary nested-base lifecycle are unavailable. No detector parity claim.
 """
 import math
+from copy import deepcopy
 from bisect import bisect_left, bisect_right
 from collections import Counter
 from datetime import date
@@ -71,24 +72,33 @@ def setup_proxy(rows, i, cfg, historical_pivot=None):
 
 def _simulate(data, cfg, *, exits='reference', setup='confirmed', entry='next_open',
              ranking='rs', min_rs=0, turnover_floor=0, cost_bps=25,
-             same_day='conservative', cap_pct=30, turnover_pct=10, rs_method='126', mark_end=True):
+             same_day='conservative', cap_pct=30, turnover_pct=10, rs_method='126', mark_end=True,
+             state=None, allow_entries=True, entry_check=None, entry_warmup=0):
     """Cash portfolio with yesterday's decisions and next-day sale settlement.
 
     confirmed: original local completed-close signals, bought next open.
     setup: local three-window VCP setup, prior-window high/close pivot crossed
     today. No claim of reproducing the proprietary base/lifecycle algorithm.
     """
+    state = deepcopy(state or {})
+    if state and state.get('simulation_model') != 'banana_proxy_v1':
+        raise ValueError('Reference paper requires a separate portfolio; legacy ledgers cannot be converted.')
     days = {}
     indices = {s: {b['date']: i for i, b in enumerate(rows)} for s, rows in data.items()}
     for s, rows in data.items():
         for i, b in enumerate(rows):
-            if str(cfg.start) <= b['date'] <= str(cfg.end):
+            if str(cfg.start) <= b['date'] <= str(cfg.end) and b['date'] > state.get('last_session', ''):
                 days.setdefault(b['date'], {})[s] = (i, b)
-    cash, unsettled = cfg.capital, 0.0
-    positions, marks, trades, curve = {}, {}, [], []
-    rejected = Counter()
-    peak, drawdown, fees, exposure = cash, 0.0, 0.0, []
+    cash, unsettled = state.get('cash', cfg.capital), state.get('unsettled', 0.0)
+    positions, marks = state.get('positions', {}), state.get('marks', {})
+    trades, curve, orders = state.get('trades', []), state.get('curve', []), state.get('orders', [])
+    rejected = Counter(state.get('entry_filter_rejections', {}))
+    peak, drawdown, fees = state.get('peak', cfg.capital), state.get('max_dd', 0.0), state.get('total_fees', 0.0)
+    exposure = state.get('exposure', [])
+    action_log = state.get('corporate_actions', [])
     cost = cost_bps / 10000
+    slip = getattr(cfg,'slippage_bps',0) / 10000
+    total_slippage = state.get('total_slippage',0)
     rs_cache = {}
     context_cache = {}
     prefix_cache = {}
@@ -117,27 +127,32 @@ def _simulate(data, cfg, *, exits='reference', setup='confirmed', entry='next_op
         return rs_cache[day]
 
     def close(s, price, day, reason):
-        nonlocal unsettled, fees
+        nonlocal unsettled, fees, total_slippage
         p = positions.pop(s)
+        total_slippage += p['quantity'] * price * slip
+        price *= 1-slip
         charge = p['quantity'] * price * cost
         proceeds = p['quantity'] * price - charge
         unsettled += proceeds
         fees += charge
+        orders.append(dict(id=f'{s}:{day}:sell',symbol=s,date=day,side='sell',quantity=p['quantity'],
+                           price=price,fees=charge,status='FILLED',reason=reason))
         trades.append(dict(symbol=s, entry_date=p['entry_date'], exit_date=day,
                            entry=p.get('entry_fill', p['entry']), exit=price,
                            quantity=p.get('entry_quantity', p['quantity']),
                            pnl=proceeds-p['entry_cost'], reason=reason,
-                           fees=p['entry_fee']+charge))
+                           fees=p['entry_fee']+charge, initial_risk=p['initial_risk']))
 
     for day, session in sorted(days.items()):
         cash += unsettled
         unsettled = 0
         exited = set()
         for s, p in list(positions.items()):
-            for action in corporate_actions.actions(data[s]):
+            for action in corporate_actions.actions(data.get(s, [])):
                 if action['ex_date'] == day and action['price_basis'] == 'raw':
                     positions[s], marks[s] = corporate_actions.rebase_position(p, marks[s], action)
                     p = positions[s]
+                    action_log.append(dict(action, symbol=s))
             if s not in session:
                 continue
             i, b = session[s]
@@ -152,7 +167,7 @@ def _simulate(data, cfg, *, exits='reference', setup='confirmed', entry='next_op
                       if s in session else p['quantity']*marks[s] for s,p in positions.items())
         candidates = []
         for s, (i, b) in session.items():
-            if i < max(cfg.minimum_warmup_sessions, backtest.required_warmup(cfg))+1:
+            if not allow_entries or i < max(getattr(cfg,'minimum_warmup_sessions',0), backtest.required_warmup(cfg), entry_warmup)+1:
                 continue
             prior_day = data[s][i-1]['date']
             rows = context(s, day)
@@ -237,7 +252,11 @@ def _simulate(data, cfg, *, exits='reference', setup='confirmed', entry='next_op
             if b['high'] == b['low']:
                 rejected['Locked circuit'] += 1
                 continue
-            price = max(b['open'], pivot) if entry=='pivot' else b['open']
+            if entry_check is not None and not entry_check(s, day):
+                rejected['Entry eligibility filter'] += 1
+                continue
+            raw_price = max(b['open'], pivot) if entry=='pivot' else b['open']
+            price = raw_price*(1+slip)
             stop = price*(1-cfg.stop_pct/100)
             qty = max(0, math.floor(min(equity_open*cfg.risk_pct/100/(price-stop),
                       equity_open*cap_pct/100/price, liquidity*turnover_pct/100/price,
@@ -248,8 +267,12 @@ def _simulate(data, cfg, *, exits='reference', setup='confirmed', entry='next_op
             charge = qty*price*cost
             cash -= qty*price+charge
             fees += charge
+            total_slippage += qty*raw_price*slip
             positions[s] = dict(entry=price, quantity=qty, stop=stop, best_close=price,
-                entry_date=day, entry_cost=qty*price+charge, entry_fee=charge, line_armed=False)
+                entry_date=day, entry_cost=qty*price+charge, entry_fee=charge, line_armed=False,
+                initial_risk=qty*(price-stop))
+            orders.append(dict(id=f'{s}:{day}:buy',symbol=s,date=day,side='buy',quantity=qty,
+                               price=price,fees=charge,status='FILLED',reason='Reference breakout'))
             marks[s] = price
             entered.add(s)
         for s,p in list(positions.items()):
@@ -286,37 +309,43 @@ def _simulate(data, cfg, *, exits='reference', setup='confirmed', entry='next_op
         curve.append(dict(date=day,equity=round(equity,2)))
     if not curve:
         raise ValueError('No candles in the chosen test interval.')
+    equity = cash+unsettled+sum(p['quantity']*marks[s] for s,p in positions.items())
+    state.update(simulation_model='banana_proxy_v1',cash=cash,unsettled=unsettled,positions=positions,
+                 marks=marks,trades=trades,curve=curve,orders=orders,last_session=curve[-1]['date'],
+                 peak=peak,max_dd=drawdown,total_fees=fees,total_slippage=total_slippage,
+                 entry_filter_rejections=dict(rejected),skipped=sum(rejected.values()),
+                 exposure=exposure,corporate_actions=action_log)
     wins=[t for t in trades if t['pnl']>0]
     losses=[t for t in trades if t['pnl']<0]
     return dict(metrics=dict(initial_capital=cfg.capital, return_pct=(equity/cfg.capital-1)*100,final_equity=equity,
         max_drawdown_pct=drawdown,trade_count=len(trades),win_rate=len(wins)/len(trades)*100 if trades else 0,
         profit_factor=sum(t['pnl'] for t in wins)/-sum(t['pnl'] for t in losses) if losses else None,
-        fees=fees,modeled_fees=fees,modeled_slippage=0,expectancy_r=None,skipped_entries=sum(rejected.values()),average_deployed_pct=sum(exposure)/len(exposure)),
-        rejections=dict(rejected),trades=trades,curve=curve,open_positions=positions,
+        fees=fees,modeled_fees=fees,modeled_slippage=total_slippage,expectancy_r=None,skipped_entries=sum(rejected.values()),average_deployed_pct=sum(exposure)/len(exposure)),
+        state=state,corporate_actions=action_log,rejections=dict(rejected),trades=trades,curve=curve,open_positions=positions,
         open_pnl=sum(p['quantity']*marks[s]-p['entry_cost'] for s,p in positions.items()))
 
 
-def simulate(data, cfg):
+def simulate(data, cfg, *, state=None, allow_entries=True, entry_check=None, entry_warmup=0):
     if cfg.pattern == 'ipo' and not any(rows and rows[0].get('listing_metadata', {}).get('ipo_verified') is True for rows in data.values()):
         raise ValueError('IPO backtest unavailable: frozen inputs contain no verified IPO listing evidence. A first candle is not an IPO date.')
     result = _simulate(data, cfg, setup='screen_proxy', entry=cfg.entry_mode,
                        min_rs={'vcp':70, 'blue_sky':70, 'multiyear':60, 'ipo':0}[cfg.pattern],
                        turnover_floor=10000000, cost_bps=cfg.buy_cost_bps,
                        cap_pct=cfg.reference_cap_pct, turnover_pct=cfg.reference_turnover_pct,
-                       same_day=cfg.reference_same_day, rs_method='weighted')
+                       same_day=cfg.reference_same_day, rs_method='weighted',state=state,
+                       allow_entries=allow_entries,entry_check=entry_check,entry_warmup=entry_warmup)
     for trade in result['trades']:
-        trade['r'] = trade['pnl']/(trade['entry']*trade['quantity']*cfg.stop_pct/100)
+        trade['r'] = trade['pnl']/trade['initial_risk']
         trade['hold_days'] = (date.fromisoformat(trade['exit_date'])-date.fromisoformat(trade['entry_date'])).days
     result['metrics']['expectancy_r'] = sum(t['r'] for t in result['trades'])/len(result['trades']) if result['trades'] else None
     result['metrics']['trade_count'] = len(result['trades']) + len(result['open_positions'])
     result['metrics']['closed_trade_count'] = len(result['trades'])
     result['metrics']['open_trade_count'] = len(result['open_positions'])
-    result['state'] = {}
-    result['corporate_actions'] = []
     result['sector_checks'] = []
     result['entry_filter_rejections'] = result.pop('rejections')
     result['execution_notices'] = NOTICES + [
         'Entry-day OHLC stop ordering: '+cfg.reference_same_day+'. Daily bars do not establish the actual intraday path.',
         'Trade count includes open holdings; win rate and profit factor use closed trades only.'
+        ,f'Modeled slippage: {getattr(cfg,"slippage_bps",0):g} bps per side.'
     ]
     return result

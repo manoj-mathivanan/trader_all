@@ -6,7 +6,7 @@ from types import SimpleNamespace
 from pydantic import Field, model_validator
 from typing import Literal
 from core.research import store, backtest, upstox, data_quality, market_history, provenance, candle_repairs, sector
-from core.research.config import TradingConfig, Settings
+from core.research.config import TradingConfig, Settings, BacktestConfig
 from core.portfolio import manager
 
 IST = timezone(timedelta(hours=5, minutes=30))
@@ -32,8 +32,14 @@ class PaperConfig(TradingConfig):
     name: str = Field('Swing paper portfolio', min_length=1, max_length=80, title='Portfolio name')
     capital: float = Field(..., ge=1000, le=1e10, title='Allocated capital (₹)')
     pattern: Literal['vcp', 'blue_sky', 'multiyear', 'ipo'] = Field('vcp', title='Banana screen')
-    entry_mode: Literal['next_open'] = Field('next_open', title='Entry price')
-    slippage_bps: float = Field(10, gt=0, le=500, title='Slippage per side (bps)')
+    simulation_model: Literal['legacy','banana_proxy_v1'] = Field('legacy', title='Strategy engine')
+    reference_same_day: Literal['conservative','reference'] = Field('conservative', title='Pivot entry-day stop ordering')
+    reference_cap_pct: float = Field(30, ge=5, le=100, title='Maximum reference position (%)')
+    reference_turnover_pct: float = Field(10, ge=.5, le=100, title='Maximum median-turnover participation (%)')
+    fundamental_mode: Literal['required','observe'] = Field('required', title='Fundamental entry policy')
+    investor_news_exits: bool = Field(True, title='Allow investor news paper exits')
+    entry_mode: Literal['next_open','pivot'] = Field('next_open', title='Entry price')
+    slippage_bps: float = Field(10, ge=0, le=500, title='Slippage per side (bps)')
     buy_cost_bps: float = Field(10, ge=0, le=500, title='All-in buy charges (bps; custom model)')
     sell_cost_bps: float = Field(10, ge=0, le=500, title='All-in sell charges (bps; custom model)')
     auto_run: bool = Field(False, title='Run automatically on weekdays')
@@ -44,6 +50,13 @@ class PaperConfig(TradingConfig):
 
     @model_validator(mode='after')
     def acknowledge(self):
+        if self.simulation_model == 'banana_proxy_v1':
+            values = {k:getattr(self,k) for k in BacktestConfig.model_fields if hasattr(self,k)}
+            BacktestConfig(**{**values,'start':date(2020,1,1),'end':date(2020,1,2),'acknowledge_limitations':True})
+            if self.execution_time != 'next_open' or self.investor_news_exits:
+                raise ValueError('Reference paper uses completed daily reconstruction with investor news exits disabled; news remains available for review.')
+        elif self.entry_mode != 'next_open' or self.slippage_bps <= 0 or self.fundamental_mode != 'required':
+            raise ValueError('Legacy paper requires next-open entries, positive slippage and the fundamental buy gate.')
         if self.execution_time == 'next_open' and self.run_hour < 16:
             raise ValueError('Daily next-open reconstruction requires a cycle at or after 16:00 IST.')
         if self.execution_time == 'midday' and not (time(9, 15) <= time(self.run_hour, self.run_minute) < time(15, 15)):
@@ -199,10 +212,11 @@ def cycle(log, job_id, *, ingest=True, portfolio_id=None):
     if cfg.pattern == 'ipo':
         verified = sum(bars[0].get('listing_metadata', {}).get('ipo_verified') is True for bars in datasets.values())
         log(f'IPO listing evidence: {verified}/{len(datasets)} symbols; missing evidence blocks new IPO entries.')
-    log(f'Processing {start} through {end}; {portfolio["status"]} paper portfolio, next-open fills with costs.')
+    log(f'Processing {start} through {end}; {portfolio["status"]} {cfg.simulation_model} portfolio, {cfg.entry_mode} daily reconstruction with costs.')
     from core.research import fundamentals
     symbol_isins={item['symbol']:item['isin'] for item in instruments}
-    fundamental_screen=fundamentals.buy_screen('swing_patterns')
+    fundamental_screen=(fundamentals.BuyScreen(**portfolio['fundamental_screen'])
+                        if portfolio.get('fundamental_screen') else fundamentals.buy_screen('swing_patterns'))
     fundamental_checks=[]
     fundamental_cache={}
     def financial_check(symbol,day):
@@ -216,8 +230,9 @@ def cycle(log, job_id, *, ingest=True, portfolio_id=None):
         check=financial_check(symbol,day)
         fundamental_checks.append(dict(symbol=symbol,day=day,buy_allowed=check['buy_allowed'],score=check['score'],
                                       coverage_pct=check['coverage_pct'],reasons=check['block_reasons'],
-                                      snapshot_id=(check['snapshot'] or {}).get('id'),screen=check['screen']))
-        return check['buy_allowed']
+                                      snapshot_id=(check['snapshot'] or {}).get('id'),screen=check['screen'],
+                                      policy=cfg.fundamental_mode))
+        return check['buy_allowed'] or cfg.fundamental_mode == 'observe'
     def ranking_score(symbol,day):
         check=financial_check(symbol,day)
         return {k:check[k] for k in ('score','coverage_pct','flags','period_end') if k in check}

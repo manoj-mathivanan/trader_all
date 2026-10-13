@@ -42,10 +42,11 @@ def simulate(datasets, cfg, *, state=None, liquidate=True, allow_entries=True, e
     State is copied: a failed cycle never mutates the last committed ledger.
     """
     if getattr(cfg, 'simulation_model', 'legacy') == 'banana_proxy_v1':
-        if state is not None or not liquidate or not allow_entries or entry_check is not None:
-            raise ValueError('Banana proxy supports isolated backtests only.')
+        if sector_gate is not None or fundamental_scores is not None:
+            raise ValueError('Reference portfolios use weighted RS ranking; extra ranking or sector gates are unsupported.')
         from core.research.banana_reference import simulate as reference_simulate
-        return reference_simulate(datasets, cfg)
+        return reference_simulate(datasets, cfg, state=state, allow_entries=allow_entries,
+                                  entry_check=entry_check, entry_warmup=entry_warmup)
     if getattr(cfg, 'execution_horizon', 'swing') == 'intraday':
         raise ValueError('Intraday backtests require five-minute inputs. Use the backtest job workflow.')
     if getattr(cfg, 'sector_filter', 'off') != 'off':

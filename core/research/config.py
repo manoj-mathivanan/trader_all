@@ -134,13 +134,13 @@ class BacktestConfig(TradingConfig):
             if (self.pattern not in ('vcp', 'blue_sky', 'multiyear', 'ipo') or self.execution_horizon != 'swing'
                     or self.entry_mode not in ('pivot', 'next_open') or self.winner_exit != 'trail_50d'
                     or self.candidate_rank != 'rs_126' or self.fee_model != 'custom_bps'
-                    or self.buy_cost_bps != self.sell_cost_bps or self.slippage_bps != 0
+                    or self.buy_cost_bps != self.sell_cost_bps
                     or self.sector_filter != 'off' or self.skip_weak_markets or self.max_sector_positions
                     or self.min_short_rs_rating or self.min_rs_improvement
                     or self.max_open_gap_pct or self.require_open_above_pivot or self.max_extension_pct
                     or self.reentry_cooldown_sessions or self.stalled_exit_sessions or self.failed_breakout_sessions
                     or self.market_risk_scale != 1 or self.market_breadth_trend_sessions):
-                raise ValueError('Banana proxy requires long swing pivot/next-open, RS priority, SMA50 close exit, equal custom buy/sell costs, zero slippage and no legacy refinements.')
+                raise ValueError('Banana proxy requires long swing pivot/next-open, RS priority, SMA50 close exit, equal custom buy/sell costs and no legacy refinements.')
         hour, minute = map(int, self.square_off_time.split(':'))
         if not 9*60+20 <= hour*60+minute <= 15*60+20 or minute%5:
             raise ValueError('Choose a five-minute square-off boundary between 09:20 and 15:20 IST.')

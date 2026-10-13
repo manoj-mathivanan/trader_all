@@ -32,6 +32,8 @@ def transition(portfolio,symbol,quote,review,clock,alert_id):
     """No replay fills: profit is measured at a fresh executable bid, after costs."""
     if portfolio.get('mode')!='paper' or portfolio.get('strategy_name')!='swing_patterns':
         return portfolio,dict(status='unsupported_portfolio')
+    if portfolio.get('config',{}).get('investor_news_exits',True) is False:
+        return portfolio,dict(status='news_exits_disabled_for_scenario')
     position=portfolio.get('ledger',{}).get('positions',{}).get(symbol)
     if not position:return portfolio,dict(status='already_closed')
     if clock.weekday()>=5 or not time(9,15)<=clock.time().replace(tzinfo=None)<time(15,30):
