@@ -230,24 +230,24 @@ def normalize(value):
     return re.sub(r'[^a-z0-9]+', ' ', value.lower()).strip()
 
 
+@lru_cache(maxsize=4096)
+def match_rules(symbol, name, aliases):
+    terms=[normalize(alias) for alias in aliases if len(normalize(alias))>=5]
+    name=re.sub(r'\s+(?:limited|ltd)$','',normalize(name)).strip()
+    if len(name)>=5:terms.append(name)
+    short=normalize(symbol)
+    if len(short)>=5:terms.append(short)
+    headline=re.compile(r'(?<![A-Za-z0-9])'+re.escape(symbol)+r'(?![A-Za-z0-9])') if len(short)>=3 and short not in {'idea','yes','all','one','ace','new'} else None
+    return tuple(' '+term+' ' for term in terms),headline
+
+
 def matches(item, article):
     if article.get('source_id') == 'upstox' and ('NSE_EQ|' + item['isin']) in article.get('provider_instrument_keys', []):
         return True
-    text = ' ' + normalize(article['text']) + ' '
     from core.research.investor_discovery import ALIASES
-    aliases=[ALIASES.get(item['symbol'],'')]+item.get('aliases',[])
-    if any(len(normalize(alias))>=5 and (' '+normalize(alias)+' ') in text for alias in aliases):
-        return True
-    name = normalize(item.get('name', ''))
-    name = re.sub(r'\s+(?:limited|ltd)$', '', name).strip()
-    if len(name) >= 5 and (' ' + name + ' ') in text:
-        return True
-    # Short symbols need uppercase headline evidence, excluding common word tickers.
-    symbol = normalize(item['symbol'])
-    if len(symbol) >= 5 and (' ' + symbol + ' ') in text:
-        return True
-    return (len(symbol) >= 3 and symbol not in {'idea', 'yes', 'all', 'one', 'ace', 'new'}
-            and bool(re.search(r'(?<![A-Za-z0-9])' + re.escape(item['symbol']) + r'(?![A-Za-z0-9])', article.get('title', ''))))
+    terms,headline=match_rules(item['symbol'],item.get('name',''),tuple([ALIASES.get(item['symbol'],'')]+item.get('aliases',[])))
+    text=' '+normalize(article['text'])+' '
+    return any(term in text for term in terms) or bool(headline and headline.search(article.get('title','')))
 
 
 def group_articles(articles):
