@@ -11,6 +11,7 @@ from core.research.config import Settings
 def main():
     parser=argparse.ArgumentParser()
     parser.add_argument('--source',type=Path)
+    parser.add_argument('--manual',action='store_true',help='Create local scenarios with automatic cycles disabled.')
     args=parser.parse_args()
     source=json.loads(args.source.read_text()) if args.source else {}
     frozen=source.get('frozen') or store.read('runs/b4584ee01955')
@@ -41,14 +42,14 @@ def main():
     prior={k:v for k,v in old['config'].items() if k in paper.PaperConfig.model_fields}
     variants.append(('banana_old_blue_control',paper.PaperConfig(**{**prior,'name':'Old Blue Sky - forward control',
         'capital':1000000,'fee_model':'custom_bps','buy_cost_bps':25,'sell_cost_bps':25,'slippage_bps':10,
-        'auto_run':True,'run_hour':16,'run_minute':15,'execution_time':'next_open',
+        'auto_run':not args.manual,'run_hour':16,'run_minute':15,'execution_time':'next_open',
         'sector_observe_only':False,'investor_news_exits':False,'acknowledge_limitations':True})))
     for preset in strategy_presets.available():
         if not preset.get('paper_defaults') or preset['pattern']=='ipo':continue
         for mode in ('observe','required'):
             label='technical only' if mode=='observe' else 'fundamentals required'
             cfg=paper.PaperConfig(**{**preset['paper_defaults'],'name':preset['name']+' - '+label,
-                'fundamental_mode':mode,'auto_run':True,'acknowledge_limitations':True})
+                'fundamental_mode':mode,'auto_run':not args.manual,'acknowledge_limitations':True})
             variants.append(('banana_'+preset['pattern']+'_'+mode,cfg))
     results=[]
     for identity,cfg in variants:
