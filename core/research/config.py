@@ -2,6 +2,7 @@ from datetime import date
 from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from core.research.bearish import BearishConfig
+from core.research.investor_rules import Rules as InvestorRules
 
 CURRENT_UNIVERSE = 'niftytotalmarket'
 
@@ -42,8 +43,9 @@ def current_settings(reference_id=None):
 class TradingConfig(BaseModel):
     model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
     name: str = Field("Breakout experiment", min_length=1, max_length=80, title="Run name")
+    screen_id: str | None = Field(None, max_length=100, title="Saved screen identity")
     # Keep the legacy value valid for old saved experiments; new UI runs default to VCP.
-    pattern: Literal["breakout", "vcp", "blue_sky", "multiyear", "ipo"] = Field("breakout", title="Banana screen")
+    pattern: Literal["breakout", "vcp", "blue_sky", "multiyear", "ipo"] = Field("breakout", title="Technical screen")
     capital: float = Field(1000000, ge=1000, le=1e10, title="Starting capital (₹)")
     base_days: int = Field(25, ge=5, le=250, title="Base length (sessions)")
     max_depth_pct: float = Field(30, gt=0, le=80, title="Maximum base depth (%)")
@@ -106,6 +108,8 @@ class TradingConfig(BaseModel):
 
 
 class BacktestConfig(TradingConfig):
+    pattern: Literal['breakout', 'vcp', 'blue_sky', 'multiyear', 'ipo', 'investor_early_breakout'] = Field('breakout', title='Research screen')
+    investor_rules: InvestorRules | None = Field(None, title='Investor technical rules')
     simulation_model: Literal['legacy', 'banana_proxy_v1'] = Field('legacy', title='Simulation model')
     reference_same_day: Literal['conservative', 'reference'] = Field('conservative', title='Pivot entry-day stop ordering')
     reference_cap_pct: float = Field(30, ge=5, le=100, title='Maximum reference position (%)')
@@ -125,8 +129,18 @@ class BacktestConfig(TradingConfig):
             raise ValueError("Test end must be after test start.")
         if not self.acknowledge_limitations:
             raise ValueError("Acknowledge the data and cost limitations before running.")
+        if self.pattern == 'investor_early_breakout':
+            if self.entry_mode != 'next_open' or self.execution_horizon != 'swing':
+                raise ValueError('Investor technical backtests require swing next-session-open entries.')
+            if self.candidate_rank == 'fundamental_score':
+                raise ValueError('Investor technical backtests do not use financial or news ranking.')
+            if self.require_long_trend or self.require_rising_long_trend:
+                raise ValueError('Investor trend qualification uses investor_rules.strict_trend, not the legacy 200-day trend controls.')
+            self.investor_rules = self.investor_rules or InvestorRules()
+        elif self.investor_rules is not None:
+            raise ValueError('Investor rules require the investor early-breakout screen.')
         if self.simulation_model == 'banana_proxy_v1':
-            supported = {'name','pattern','capital','entry_mode','risk_pct','stop_pct','winner_exit',
+            supported = {'name','screen_id','pattern','capital','entry_mode','risk_pct','stop_pct','winner_exit',
                          'candidate_rank','max_positions','fee_model','buy_cost_bps','sell_cost_bps','slippage_bps'}
             for key, field in TradingConfig.model_fields.items():
                 if key not in supported and getattr(self,key) != field.default:
@@ -134,13 +148,13 @@ class BacktestConfig(TradingConfig):
             if (self.pattern not in ('vcp', 'blue_sky', 'multiyear', 'ipo') or self.execution_horizon != 'swing'
                     or self.entry_mode not in ('pivot', 'next_open') or self.winner_exit != 'trail_50d'
                     or self.candidate_rank != 'rs_126' or self.fee_model != 'custom_bps'
-                    or self.buy_cost_bps != self.sell_cost_bps or self.slippage_bps != 0
+                    or self.buy_cost_bps != self.sell_cost_bps
                     or self.sector_filter != 'off' or self.skip_weak_markets or self.max_sector_positions
                     or self.min_short_rs_rating or self.min_rs_improvement
                     or self.max_open_gap_pct or self.require_open_above_pivot or self.max_extension_pct
                     or self.reentry_cooldown_sessions or self.stalled_exit_sessions or self.failed_breakout_sessions
                     or self.market_risk_scale != 1 or self.market_breadth_trend_sessions):
-                raise ValueError('Banana proxy requires long swing pivot/next-open, RS priority, SMA50 close exit, equal custom buy/sell costs, zero slippage and no legacy refinements.')
+                raise ValueError('Banana proxy requires long swing pivot/next-open, RS priority, SMA50 close exit, equal custom buy/sell costs and no legacy refinements.')
         hour, minute = map(int, self.square_off_time.split(':'))
         if not 9*60+20 <= hour*60+minute <= 15*60+20 or minute%5:
             raise ValueError('Choose a five-minute square-off boundary between 09:20 and 15:20 IST.')
@@ -156,11 +170,11 @@ class BacktestConfig(TradingConfig):
                        or self.reentry_cooldown_sessions or self.stalled_exit_sessions
                        or self.failed_breakout_sessions or self.market_risk_scale != 1 or self.market_breadth_trend_sessions
                        or self.fee_model != 'custom_bps' or self.winner_exit == 'trail_pct')
-        if refinements and (self.pattern not in ('vcp', 'blue_sky', 'multiyear', 'ipo', 'breakout')
+        if refinements and (self.pattern not in ('vcp', 'blue_sky', 'multiyear', 'ipo', 'breakout', 'investor_early_breakout')
                             or self.execution_horizon != 'swing' or self.entry_mode != 'next_open'):
             raise ValueError('Swing refinements and Zerodha fees require long swing next-open entries.')
         if self.fee_model == 'zerodha_equity' and self.start < date(2024, 10, 1):
-            raise ValueError('Zerodha tariff supports tests from 2024-10-01.')
+            raise ValueError('Zerodha tariff supports tests from 2024-10-01. Choose a start date on or after 2024-10-01, or select Custom buy/sell bps for earlier tests.')
         return self
 
 

@@ -180,9 +180,8 @@ def latest_snapshot(evidence, isin, at):
             eligible.append(cached)
         elif cached:
             # Forward paper catch-up may need the version retained before a new quarter was pulled.
-            history = store.DATA/'company/fundamentals'/isin/'history'
-            for path in history.glob('*.json'):
-                old = store.read('company/fundamentals/'+isin+'/history/'+path.stem,{}).get('snapshot')
+            for _,record in store.records('company/fundamentals/'+isin+'/history/'):
+                old = record.get('snapshot')
                 if old and datetime.fromisoformat(old['recorded_at']) <= at and datetime.fromisoformat(old['source']['published_at']) <= at:
                     eligible.append(old)
     # A late import of an older quarter must not replace newer financial information.

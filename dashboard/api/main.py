@@ -1,16 +1,17 @@
-"""Loopback-only research and simulated paper trading. No live broker orders."""
+"""Research, paper portfolios and explicitly armed Upstox live execution."""
 import os
 import secrets
+import re
 from pathlib import Path
 from contextlib import asynccontextmanager
 from urllib.parse import urlsplit
-from typing import Annotated, Literal
+from typing import Annotated, Literal, get_args
 from fastapi import Depends, FastAPI, HTTPException, Request, Query
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, ConfigDict, Field, SecretStr
+from pydantic import BaseModel, ConfigDict, Discriminator, Field, SecretStr, Tag
 from core.research import store, jobs, upstox, backtest, data_quality, market_data, sector, price_backfill
 from core.research.config import Settings, DataPreferences, BacktestConfig, BearishBacktestConfig, current_settings
 from core.research import bearish, momentum, scalping, strategy_presets
@@ -21,6 +22,8 @@ from core.strategies.registry import all_strategies
 from strategies.swing_patterns.patterns.registry import definitions as pattern_definitions
 from dashboard.api.company_review import router as company_review_router
 from dashboard.api.investor_intelligence import router as investor_intelligence_router
+from dashboard.api.live_trading import router as live_trading_router
+from core.portfolio import live
 
 WEB = Path(__file__).resolve().parents[1] / 'web'
 USER = os.environ.get('DASHBOARD_ADMIN_USER', '')
@@ -52,33 +55,42 @@ def authenticate(credentials: Annotated[HTTPBasicCredentials | None, Depends(sec
 
 @asynccontextmanager
 async def lifespan(app):
-    jobs.recover()
-    scalping_control.autostart()
-    stop, thread = None, None
-    from core.research import investor_workflow
-    investor_stop, investor_thread = investor_workflow.start()
-    if PAPER_ENABLED:
-        scheduler.recover_interrupted()
-        stop, thread = scheduler.start()
-    try:
-        yield
-    finally:
-        investor_stop.set()
-        investor_thread.join(timeout=2)
-        if stop is not None:
-            stop.set()
-            thread.join(timeout=2)
+    with store.application_lock():
+        store.ensure_ready()
+        jobs.recover()
+        scalping_control.autostart()
+        stop, thread = None, None
+        from core.research import investor_workflow
+        investor_stop, investor_thread = investor_workflow.start()
+        if PAPER_ENABLED:
+            scheduler.recover_interrupted()
+            stop, thread = scheduler.start()
+        try:
+            yield
+        finally:
+            live.shutdown()
+            investor_stop.set()
+            investor_thread.join(timeout=2)
+            if stop is not None:
+                stop.set()
+                thread.join(timeout=2)
+            if store.database_enabled():
+                from core.research import postgres_store
+                postgres_store.close()
 
 
 app = FastAPI(title='Trader research', docs_url=None, redoc_url=None, openapi_url=None,
               dependencies=[Depends(authenticate)], lifespan=lifespan)
 app.include_router(company_review_router)
 app.include_router(investor_intelligence_router)
+app.include_router(live_trading_router)
 
 
 @app.middleware('http')
 async def local_boundary(request: Request, call_next):
     path = request.url.path
+    if path.startswith('/api/live') and PUBLIC_ORIGIN and not USER:
+        return JSONResponse({'detail': 'Configure dashboard administrator authentication before exposing live trading.'}, status_code=403)
     if not PAPER_ENABLED and (path.startswith('/api/paper/') or path == '/api/jobs/paper' or
                               (path.startswith('/api/strategies/') and '/paper/' in path)):
         return JSONResponse({'detail': 'Paper trading is available only in production.'}, status_code=403)
@@ -129,7 +141,9 @@ def bootstrap():
     for item in universe.get('instruments', []):
         summary = catalog.get(item['isin'], {'count': 0, 'first': None, 'last': None, 'close': None, 'change': None})
         instruments.append({**item, **summary})
-    return {'settings': cfg.model_dump(mode='json'), 'settings_schema': DataPreferences.model_json_schema(),
+    return {'storage': {'backend': 'postgres' if store.database_enabled() else 'json',
+                        'namespace': os.environ.get('TRADER_DB_NAMESPACE',ENVIRONMENT)},
+            'settings': cfg.model_dump(mode='json'), 'settings_schema': DataPreferences.model_json_schema(),
             'market_fetch': store.read('market_fetch'),
             'sector_fetch': store.read('sector/fetch'), 'sector_comparisons': store.read('sector/comparisons', [])[:20],
             'backtest_schema': BacktestConfig.model_json_schema(), 'patterns': pattern_definitions(),
@@ -147,10 +161,12 @@ def bootstrap():
             'paper_scenarios': portfolios.list_portfolios('swing_patterns') if PAPER_ENABLED else [],
             'paper_schemas': {strategy_id: plugin.config_model.model_json_schema()
                               for strategy_id, plugin in paper_plugins.PLUGINS.items()},
-            'screens': strategy_presets.available(), 'token_saved': store.token_saved(), 'remote_enabled': bool(PUBLIC_ORIGIN),
+            'screens': strategy_presets.selectable(), 'reference_only': strategy_presets.reference_only(),
+            'retired_strategy_choices': strategy_presets.RETIRED_STRATEGY_CHOICES,
+            'token_saved': store.token_saved(), 'remote_enabled': bool(PUBLIC_ORIGIN),
             'instruments': instruments, 'universe_updated': universe.get('fetched_at'),
             'jobs': store.read('jobs', [])[:100], 'runs': store.read('runs_index', []),
-            'strategies': all_strategies(), 'auth_enabled': bool(USER)}
+            'strategies': [s for s in all_strategies() if not strategy_presets.reference_only() or s['id']=='swing_patterns'], 'auth_enabled': bool(USER)}
 
 
 @app.put('/api/settings')
@@ -177,12 +193,15 @@ def save_connection(value: TokenInput):
     cleaned = value.access_token.get_secret_value().strip()
     if len(cleaned) < 20:
         raise ValueError('Enter a valid access token, not whitespace.')
-    store.save_token(cleaned)
+    with live.mutex('live_control', timeout=30):
+        live.connection_change()
+        store.save_token(cleaned)
     return {'saved': True, 'message': 'Token saved on the server. It will be validated on the next data fetch.'}
 
 
 @app.post('/api/screens')
 def save_screen(value: ScreenInput):
+    strategy_presets.require_reference(value.backtest_defaults or {})
     import hashlib
     screen = value.model_dump(mode='json')
     screen['id'] = 'custom_' + hashlib.sha1(value.name.encode('utf-8')).hexdigest()[:10]
@@ -206,10 +225,11 @@ def audit_price_history():
 
 
 @app.post('/api/jobs/ingest')
-def ingest_job():
+def ingest_job(include_fundamentals: bool = True):
     store.token()
-    return jobs.submit('Fetch market history', lambda log, job_id: market_data.fetch(log, job_id),
-                       {'universe': 'niftytotalmarket', 'daily': 'rolling year', 'five_minute': '10 calendar days'})
+    return jobs.submit('Fetch market history', lambda log, job_id: market_data.fetch(log, job_id, include_fundamentals=include_fundamentals),
+                       {'universe': 'niftytotalmarket', 'daily': 'rolling year', 'five_minute': '10 calendar days',
+                        'include_fundamentals': include_fundamentals})
 
 
 @app.post('/api/jobs/universe-expansion')
@@ -222,15 +242,29 @@ def universe_expansion_job(value: Settings):
                        value.model_dump(mode='json'))
 
 
+def backtest_config_kind(value):
+    # Missing pattern retains the legacy long configuration default.
+    pattern = value.get('pattern') if isinstance(value, dict) else value.pattern
+    return 'bearish' if pattern in get_args(BearishBacktestConfig.model_fields['pattern'].annotation) else 'long'
+
+
+BacktestRequest = Annotated[
+    Annotated[BacktestConfig, Tag('long')] | Annotated[BearishBacktestConfig, Tag('bearish')],
+    Discriminator(backtest_config_kind),
+]
+
+
 @app.post('/api/jobs/backtest')
-def backtest_job(value: BacktestConfig | BearishBacktestConfig):
+def backtest_job(value: BacktestRequest):
+    strategy_presets.require_reference(value)
     cfg = settings(value.comparison_run_id)
     backtest.prepare(cfg, value)  # Return actionable validation before creating a job.
     return jobs.submit('Backtest', lambda log, job_id: backtest.run(cfg, value, log, job_id), value.model_dump(mode='json'))
 
 
 @app.post('/api/jobs/backtest-history')
-def backtest_history_job(value: BacktestConfig | BearishBacktestConfig):
+def backtest_history_job(value: BacktestRequest):
+    strategy_presets.require_reference(value)
     if value.comparison_run_id:
         raise ValueError('Comparison inputs are frozen. Use a fresh backtest for backfilling.')
     store.token()
@@ -274,6 +308,7 @@ class SectorComparisonInput(BaseModel):
 
 @app.post('/api/jobs/sector-comparison')
 def sector_comparison_job(value: SectorComparisonInput):
+    strategy_presets.require_reference(value,'sector_comparison')
     cfg = settings(value.reference_id)
     reference = store.read('runs/'+value.reference_id, {})
     config = reference.get('config', {})
@@ -284,6 +319,7 @@ def sector_comparison_job(value: SectorComparisonInput):
 
 @app.post('/api/jobs/momentum')
 def momentum_job(value: momentum.MomentumConfig):
+    strategy_presets.require_reference(value,'intraday_momentum')
     cfg = settings(value.comparison_run_id)
     momentum.prepare(cfg, value)
     return jobs.submit('Momentum backtest', lambda log, job_id: momentum.run(cfg, value, log, job_id), value.model_dump(mode='json'))
@@ -297,6 +333,7 @@ class MomentumComparisonInput(BaseModel):
 
 @app.post('/api/jobs/momentum-comparison')
 def momentum_comparison_job(value: MomentumComparisonInput):
+    strategy_presets.require_reference(value,'intraday_momentum')
     cfg = settings(value.reference_id)
     reference = store.read('runs/'+value.reference_id)
     if not reference or reference.get('strategy_id')!='intraday_momentum':
@@ -315,13 +352,14 @@ def momentum_coverage(value: momentum.MomentumConfig):
         frozen = store.read('run_intraday/'+value.comparison_run_id,{})
         ready = sum(bool(frozen.get(s,{}).get(d)) for s,d in requests)
     else:
-        ready = sum((store.DATA/(intraday_data_key(instruments[s]['isin'],d)+'.json')).exists() for s,d in requests)
+        ready = sum(store.exists(intraday_data_key(instruments[s]['isin'],d)) for s,d in requests)
     return dict(stock_sessions=len(requests), cached=ready, missing=len(requests)-ready, excluded=excluded,
                 source='frozen reference' if value.comparison_run_id else 'shared cache')
 
 
 @app.post('/api/jobs/scalping')
 def scalping_job(value: scalping.ScalpingConfig):
+    strategy_presets.require_reference(value,'scalping')
     cfg = settings(value.comparison_run_id)
     scalping.prepare(cfg, value)
     return jobs.submit('Scalping backtest', lambda log, job_id: scalping.run(cfg, value, log, job_id), value.model_dump(mode='json'))
@@ -339,6 +377,7 @@ class ScalpingComparisonInput(BaseModel):
 
 @app.post('/api/jobs/scalping-comparison')
 def scalping_comparison_job(value: ScalpingComparisonInput):
+    strategy_presets.require_reference(value,'scalping')
     cfg = settings(value.reference_id)
     reference = store.read('runs/'+value.reference_id)
     if not reference or reference.get('strategy_id') != 'scalping':
@@ -446,6 +485,25 @@ def paper_config(strategy_id, value):
 @app.get('/api/strategies/{strategy_id}/paper/portfolio')
 def get_strategy_portfolio(strategy_id: str, portfolio_id: str | None = None):
     return portfolios.get(strategy_id, portfolio_id)
+
+
+@app.get('/api/strategies/{strategy_id}/paper/opportunities')
+def get_strategy_opportunities(strategy_id: str, portfolio_id: str | None = None, cycle_id: str | None = None):
+    portfolio = portfolios.get(strategy_id, portfolio_id)
+    if not portfolio or strategy_id != 'swing_patterns':
+        raise HTTPException(404,'Swing paper portfolio not found.')
+    identity = portfolio_id or strategy_id
+    if portfolio['id'] != identity:
+        raise HTTPException(409,'Portfolio identity mismatch.')
+    cycles = portfolio.get('cycles',[])
+    cycle = next((c for c in reversed(cycles) if cycle_id is None or c['job_id']==cycle_id),None)
+    if not cycle or not cycle.get('candidate_audit_reference'):
+        return dict(records=[],summary={},notice='No recorded opportunity audit for this cycle; older decisions are not reconstructed.')
+    job = cycle['job_id']
+    if not re.fullmatch(r'[A-Za-z0-9_-]{1,80}',job):
+        raise HTTPException(409,'Invalid cycle identity.')
+    return store.read('paper_candidate_audits/'+identity+'/'+job,
+                      dict(records=[],summary={},notice='Audit archive unavailable.'))
 
 
 @app.post('/api/strategies/{strategy_id}/paper/portfolio')

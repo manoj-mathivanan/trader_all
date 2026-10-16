@@ -102,6 +102,6 @@ class DetailsTests(unittest.TestCase):
              patch.object(intel.company,'llm_status',return_value=dict(enabled=True)), \
              patch.object(workflow,'paper_holdings',return_value=[holding]), \
              patch.object(api.jobs,'submit',side_effect=submit), \
-             patch.object(intel,'interpret',return_value={}) as review:
+             patch('core.research.investor_reviews.interpret',return_value={}) as review:
             api.interpret(intel.ResearchRequest(isin=self.item['isin']))
         self.assertEqual(review.call_args.kwargs['context'],dict(thesis='',entry_date='2026-10-07',holding=True))

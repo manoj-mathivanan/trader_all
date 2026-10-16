@@ -12,6 +12,10 @@ from core.research import relative_strength as emerging_rs
 
 
 def signal(bars, i, cfg):
+    if cfg.pattern == 'investor_early_breakout':
+        from core.research.investor_breakouts import setup
+        result = setup(bars[:i + 1], cfg.investor_rules)
+        return bool(result and result['stage'] == 'early_breakout')
     return matches(bars, i, cfg)
 
 
@@ -25,6 +29,8 @@ def required_warmup(cfg):
         extra = max(extra, cfg.rs_short_lookback + (cfg.rs_improvement_sessions if cfg.min_rs_improvement else 0))
     if getattr(cfg, 'min_rs_rating', 0) > 0 or getattr(cfg, 'candidate_rank', 'alphabetical') == 'rs_126':
         extra = max(extra, 126)
+    if cfg.pattern == 'investor_early_breakout':
+        return max(100, cfg.investor_rules.resistance_sessions, extra)
     if cfg.pattern == 'vcp':
         return max(cfg.vcp_window_days * 3, cfg.sma_days, 50, extra)
     if cfg.pattern == 'blue_sky':
@@ -42,10 +48,11 @@ def simulate(datasets, cfg, *, state=None, liquidate=True, allow_entries=True, e
     State is copied: a failed cycle never mutates the last committed ledger.
     """
     if getattr(cfg, 'simulation_model', 'legacy') == 'banana_proxy_v1':
-        if state is not None or not liquidate or not allow_entries or entry_check is not None:
-            raise ValueError('Banana proxy supports isolated backtests only.')
+        if sector_gate is not None or fundamental_scores is not None:
+            raise ValueError('Reference portfolios use weighted RS ranking; extra ranking or sector gates are unsupported.')
         from core.research.banana_reference import simulate as reference_simulate
-        return reference_simulate(datasets, cfg)
+        return reference_simulate(datasets, cfg, state=state, allow_entries=allow_entries,
+                                  entry_check=entry_check, entry_warmup=entry_warmup)
     if getattr(cfg, 'execution_horizon', 'swing') == 'intraday':
         raise ValueError('Intraday backtests require five-minute inputs. Use the backtest job workflow.')
     if getattr(cfg, 'sector_filter', 'off') != 'off':
@@ -163,7 +170,9 @@ def simulate(datasets, cfg, *, state=None, liquidate=True, allow_entries=True, e
         return sum(row['close'] for row in bars[idx - length + 1:idx + 1]) / length
 
     def pivot_for(bars, signal_idx, cfg):
-        if cfg.pattern == 'blue_sky':
+        if cfg.pattern == 'investor_early_breakout':
+            lookback = min(cfg.investor_rules.resistance_sessions, signal_idx)
+        elif cfg.pattern == 'blue_sky':
             lookback = min(cfg.blue_sky_lookback_days, signal_idx)
         elif cfg.pattern == 'multiyear':
             lookback = min(cfg.multiyear_base_days, signal_idx)
@@ -447,18 +456,15 @@ _WINDOW_RECORDS = {}
 def available_window(settings, warmup=50):
     """Cache compact date metadata; never retain every symbol's OHLCV in memory."""
     universe = store.read('universes/' + settings.universe, {})
+    if store.database_enabled():
+        from core.research import postgres_store
+        return postgres_store.available_window(universe.get('instruments',[]),warmup)
     summaries, missing = [], []
     for item in universe.get('instruments', []):
         name = 'bars/' + item['isin']
-        path = store.DATA / (name + '.json')
-        try:
-            stat = path.stat()
-            # Atomic replacements may have the same size and timestamp on Windows.
-            # Include file identity so ingestion cannot reuse an obsolete summary.
-            signature = (stat.st_ino, stat.st_ctime_ns, stat.st_mtime_ns, stat.st_size)
-        except FileNotFoundError:
-            signature = None
-        cached = _WINDOW_RECORDS.get(str(path))
+        signature = store.version(name)
+        cache_key = (str(store.DATA), name)
+        cached = _WINDOW_RECORDS.get(cache_key)
         if cached and cached[0] == signature:
             summary = cached[1]
         else:
@@ -469,7 +475,7 @@ def available_window(settings, warmup=50):
                        'requested_end': record.get('requested_end') if record else None}
             if len(_WINDOW_RECORDS) >= 2048:
                 _WINDOW_RECORDS.clear()
-            _WINDOW_RECORDS[str(path)] = (signature, summary)
+            _WINDOW_RECORDS[cache_key] = (signature, summary)
         if not summary['dates']:
             missing.append(item['symbol'])
         summaries.append(summary)
@@ -610,6 +616,9 @@ def run(settings, cfg, log, job_id, *, fundamental_evidence=None, sector_evidenc
         result['warnings'] = [w for w in result['warnings'] if not w.startswith('No volume participation')]
         result['warnings'].extend(result.get('execution_notices', []))
     result['warnings'].extend(quality['warnings'])
+    if cfg.pattern == 'investor_early_breakout':
+        result['warnings'] = [w for w in result['warnings'] if not w.startswith('Screens use independent')]
+        result['warnings'].append('Investor technical baseline: only completed-session early_breakout signals enter at the next open. Approaching setups, current news, LLM interpretations and company financial assessments are excluded. This does not validate the combined investor workflow.')
     if cfg.skip_weak_markets and cfg.market_breadth_scope == 'sector':
         result['warnings'].append('Sector breadth uses current sector labels within the prepared eligible universe; historical classification bias and small-sector instability remain.')
     if cfg.pattern in dict(bearish.SCREENS):

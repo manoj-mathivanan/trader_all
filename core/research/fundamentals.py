@@ -78,7 +78,7 @@ def validate(snapshot, documents, item, at):
     for doc in documents:
         if doc['artifact'] != 'company/filings/'+doc['sha256']+'.html':
             raise ValueError('Invalid filing artifact path.')
-        data = (store.DATA/doc['artifact']).read_bytes()
+        data = store.read_bytes(doc['artifact'])
         if hashlib.sha256(data).hexdigest() != doc['sha256']:
             raise ValueError('Filing checksum mismatch.')
         parsed.append(official_filings.parse(data.decode('utf-8'), doc['url'], item, at))
@@ -161,6 +161,11 @@ def pull_stock(item, *, at=None, retry_failed=False, log=lambda _:None, client=N
 
 @contextmanager
 def pull_lock():
+    if store.database_enabled():
+        from core.research import postgres_store
+        with postgres_store.mutex('fundamentals-pull', timeout=0):
+            yield
+        return
     path=store.DATA/'company/fundamentals-pull.lock'
     path.parent.mkdir(parents=True,exist_ok=True)
     with path.open('a+b') as handle:
@@ -265,8 +270,7 @@ def coverage(items):
             versions[(item['isin'], record['snapshot']['id'])] = record['snapshot']
             for document in record.get('documents', []):
                 documents[document['sha256']] = document
-        for path in (store.DATA/name/'history').glob('*.json'):
-            old = store.read(name+'/history/'+path.stem, {})
+        for _,old in store.records(name+'/history/'):
             if old.get('validation', {}).get('status') == 'passed' and old.get('snapshot'):
                 versions[(item['isin'], old['snapshot']['id'])] = old['snapshot']
                 for document in old.get('documents', []):

@@ -9,6 +9,8 @@ import time
 def main():
     if os.geteuid() != 0:
         raise SystemExit('Run as root on the server')
+    if not Path('/mnt/trader_data').is_mount():
+        raise SystemExit('Mount the trader-data volume at /mnt/trader_data before starting PostgreSQL.')
     root = Path('/srv/market-data')
     private = root / 'private'
     for path in (root, private, root / 'imports', root / 'backups'):

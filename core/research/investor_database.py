@@ -18,6 +18,9 @@ def connection():
     return target,key
 
 def read(query):
+    if store.database_enabled() and query.get('environment','local')==os.environ.get('TRADER_ENV','local'):
+        from core.research import postgres_history
+        return postgres_history.read(query)
     if os.environ.get('TRADER_INVESTOR_DB_DSN'):
         try:return helper('export_investor_data').run(query,os.environ['TRADER_INVESTOR_DB_DSN'])
         except Exception:raise ValueError('Shared database read failed; working analysis is unchanged.') from None
@@ -32,6 +35,8 @@ def read(query):
         raise ValueError('Shared database unavailable; working analysis is unchanged.') from None
 
 def sync(log=lambda message:None):
+    if store.database_enabled():
+        return dict(status='complete',storage='postgres',synced_at=store.now())
     if os.environ.get('TRADER_INVESTOR_DB_DSN'):
         from scripts.sync_investor_data import bundle,batches
         import hashlib

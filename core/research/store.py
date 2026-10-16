@@ -1,16 +1,82 @@
-"""Atomic local research artifacts. Replace with Postgres/RQ for deployment."""
+"""Application storage with an explicit PostgreSQL cutover and legacy JSON mode."""
 import json
 import os
 import time
 from uuid import uuid4
 from pathlib import Path
-from threading import RLock
+from threading import RLock, local
 from datetime import datetime, timezone
 from cryptography.fernet import Fernet
+from contextlib import contextmanager
 
 ROOT = Path(__file__).resolve().parents[2]
 DATA = Path(os.environ.get("TRADER_DATA_DIR", ROOT / "data"))
-LOCK = RLock()
+
+def database_enabled():
+    mode = os.environ.get('TRADER_STORAGE', 'postgres' if os.environ.get('TRADER_DB_DSN') or os.environ.get('TRADER_DB_DSN_FILE') else 'json')
+    if mode not in ('json', 'postgres'):
+        raise ValueError('TRADER_STORAGE must be json or postgres.')
+    return mode == 'postgres'
+
+
+def ensure_ready():
+    if database_enabled():
+        from core.research import postgres_store
+        ready = postgres_store.read('storage/migration_ready', {})
+        if ready.get('status') != 'verified' or postgres_store.read('strategy_catalog') is None:
+            raise ValueError('Database migration is incomplete. Verify the migration before starting the application.')
+        if token_saved():
+            token()  # Check that this environment can unlock its own token.
+
+
+@contextmanager
+def application_lock():
+    if database_enabled():
+        from core.research import postgres_store
+        with postgres_store.mutex('application-instance', timeout=0):
+            yield
+    else:
+        yield
+
+
+class StoreLock:
+    """Make existing read/modify/write blocks atomic across database processes."""
+    def __init__(self):
+        self.lock = RLock()
+        self.state = local()
+
+    def __enter__(self):
+        self.lock.acquire()
+        depth = getattr(self.state, 'depth', 0)
+        try:
+            if depth == 0 and database_enabled():
+                from core.research import postgres_store
+                self.state.transaction = postgres_store.transaction()
+                self.state.transaction.__enter__()
+            self.state.depth = depth + 1
+            return self
+        except BaseException:
+            self.state.transaction = None
+            self.lock.release()
+            raise
+
+    def __exit__(self, *error):
+        try:
+            self.state.depth -= 1
+            if self.state.depth == 0 and getattr(self.state, 'transaction', None):
+                transaction, self.state.transaction = self.state.transaction, None
+                return transaction.__exit__(*error)
+        finally:
+            self.lock.release()
+
+
+LOCK = StoreLock()
+
+
+def validate_name(name):
+    if not isinstance(name, str) or not name or '\\' in name or ':' in name or name.startswith('/') or any(p in ('', '.', '..') for p in name.split('/')):
+        raise ValueError('Invalid storage key.')
+    return name
 
 
 def private_dir():
@@ -22,13 +88,21 @@ def now():
 
 
 def read(name, default=None):
+    validate_name(name)
+    if database_enabled():
+        from core.research import postgres_store
+        return postgres_store.read(name, default)
     with LOCK:
         path = DATA / (name + ".json")
         return json.loads(path.read_text(encoding="utf-8")) if path.exists() else default
 
 
 def write(name, value):
+    validate_name(name)
     with LOCK:
+        if database_enabled():
+            from core.research import postgres_store
+            return postgres_store.write(name, value)
         path = DATA / (name + ".json")
         path.parent.mkdir(parents=True, exist_ok=True)
         temp = path.with_name(f'.{path.name}.{uuid4().hex}.tmp')
@@ -54,9 +128,13 @@ def write(name, value):
 
 
 def cipher():
+    if os.environ.get('TRADER_TOKEN_KEY'):
+        return Fernet(os.environ['TRADER_TOKEN_KEY'].encode())
     path = Path(os.environ.get("TRADER_KEY_FILE", ROOT / ".local-key"))
     with LOCK:
         if not path.exists():
+            if database_enabled():
+                raise ValueError('Database token encryption requires TRADER_TOKEN_KEY or an existing TRADER_KEY_FILE.')
             path.parent.mkdir(parents=True, exist_ok=True)
             with path.open("xb") as keyfile:
                 keyfile.write(Fernet.generate_key())
@@ -66,6 +144,9 @@ def cipher():
 
 def save_token(value):
     with LOCK:
+        if database_enabled():
+            from core.research import postgres_store
+            return postgres_store.save_token(os.environ.get('TRADER_USER_ID', 'owner'), cipher().encrypt(value.encode()))
         private_dir().mkdir(parents=True, exist_ok=True)
         path = private_dir() / 'upstox.json'
         temp = path.with_suffix('.tmp')
@@ -78,10 +159,19 @@ def save_token(value):
 
 
 def token_saved():
+    if database_enabled():
+        from core.research import postgres_store
+        return postgres_store.token_saved(os.environ.get('TRADER_USER_ID', 'owner'))
     return (private_dir() / 'upstox.json').exists() or bool(read('private/upstox'))
 
 
 def token():
+    if database_enabled():
+        from core.research import postgres_store
+        value = postgres_store.token(os.environ.get('TRADER_USER_ID', 'owner'))
+        if not value:
+            raise ValueError('Save your Upstox access token in Settings first.')
+        return cipher().decrypt(value).decode()
     path = private_dir() / 'upstox.json'
     record = json.loads(path.read_text(encoding='utf-8')) if path.exists() else read('private/upstox')
     if not record:
@@ -90,3 +180,77 @@ def token():
         return record['access_token']
     # Read existing local installations without losing their saved connection.
     return cipher().decrypt(record["encrypted_token"].encode()).decode()
+
+
+def keys(prefix='', *, recursive=False):
+    if prefix:
+        validate_name(prefix.rstrip('/'))
+    if database_enabled():
+        from core.research import postgres_store
+        return postgres_store.keys(prefix, recursive)
+    # Key enumeration replaces runtime directory scans; source-code files remain
+    # ordinary files and are deliberately outside this API.
+    base = DATA / prefix.rstrip('/')
+    if not prefix.endswith('/') and prefix:
+        base = base.parent
+    paths = base.rglob('*.json') if recursive else base.glob('*.json')
+    return sorted(p.relative_to(DATA).as_posix()[:-5] for p in paths
+                  if p.relative_to(DATA).as_posix()[:-5].startswith(prefix))
+
+
+def version(name):
+    validate_name(name)
+    if database_enabled():
+        from core.research import postgres_store
+        return postgres_store.version(name)
+    try:
+        stat = (DATA / (name+'.json')).stat()
+        return (stat.st_ino, stat.st_ctime_ns, stat.st_mtime_ns, stat.st_size)
+    except FileNotFoundError:
+        return None
+
+
+def records(prefix='', *, recursive=False):
+    """Yield documents in bounded batches, avoiding one network trip per file."""
+    names = keys(prefix,recursive=recursive)
+    for start in range(0,len(names),128):
+        batch = names[start:start+128]
+        if database_enabled():
+            from core.research import postgres_store
+            values = postgres_store.read_many(batch)
+        else:
+            values = {name:read(name) for name in batch}
+        for name in batch:
+            if name in values:
+                yield name,values[name]
+
+
+def exists(name):
+    return version(name) is not None
+
+
+def read_bytes(name):
+    validate_name(name)
+    if database_enabled():
+        from core.research import postgres_store
+        return postgres_store.read_bytes(name)
+    return (DATA / name).read_bytes()
+
+
+def write_bytes(name, data):
+    validate_name(name)
+    with LOCK:
+        if database_enabled():
+            from core.research import postgres_store
+            return postgres_store.write_bytes(name, data)
+        path = DATA / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        pending = path.with_name('.'+path.name+'.'+uuid4().hex+'.tmp')
+        try:
+            with pending.open('xb') as stream:
+                stream.write(data)
+                stream.flush()
+                os.fsync(stream.fileno())
+            pending.replace(path)
+        finally:
+            pending.unlink(missing_ok=True)

@@ -17,8 +17,10 @@ def calculation_version():
     root = Path(__file__).resolve().parents[2]
     paths = [Path(__file__), Path(official_filings.__file__),
              root/'reference_data/filing_identities.json']
-    return hashlib.sha256(b''.join(path.read_bytes() if path.exists() else b''
-                                  for path in paths)).hexdigest()
+    source = b''.join(path.read_bytes() if path.exists() else b'' for path in paths[:2])
+    identities = (json.dumps(store.read('reference/filing_identities', {}), sort_keys=True).encode()
+                  if store.database_enabled() else paths[2].read_bytes() if paths[2].exists() else b'')
+    return hashlib.sha256(source+identities).hexdigest()
 
 
 def load_calculations(version):
@@ -67,8 +69,7 @@ def capture(universe, log=lambda message: None):
     for index, item in enumerate(universe['instruments']):
         key = 'company/fundamentals/'+item['isin']
         records = [store.read(key, {})]
-        records.extend(store.read(key+'/history/'+path.stem, {})
-                       for path in sorted((store.DATA/key/'history').glob('*.json')))
+        records.extend(value for _,value in store.records(key+'/history/'))
         records = [record for record in records if record.get('validation', {}).get('status') == 'passed']
         if not records:
             excluded.append(dict(symbol=item['symbol'], reason='No validated archived financial evidence'))
@@ -83,10 +84,10 @@ def capture(universe, log=lambda message: None):
             # This keeps corruption and removed artifacts visible on every run.
             verified = []
             for document in documents.values():
-                path = (store.DATA/document['artifact']).resolve()
-                if not path.is_relative_to((store.DATA/'company/filings').resolve()):
+                artifact = store.validate_name(document['artifact'])
+                if not artifact.startswith('company/filings/'):
                     raise ValueError('Filing artifact outside archive')
-                raw = path.read_bytes()
+                raw = store.read_bytes(artifact)
                 if hashlib.sha256(raw).hexdigest() != document['sha256']:
                     raise ValueError('Filing checksum mismatch')
                 verified.append((document, raw))

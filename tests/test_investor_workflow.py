@@ -6,7 +6,7 @@ from datetime import timedelta
 from unittest.mock import patch
 import httpx
 from pypdf import PdfWriter
-from core.research import investor_articles as articles, investor_breakouts as breakout, investor_workflow as workflow, store
+from core.research import investor_articles as articles, investor_breakouts as breakout, investor_workflow as workflow, investor_reviews as reviews, store
 from tests.test_investor_intelligence import InvestorTests, ISIN, ITEM, rss, intel
 
 
@@ -99,7 +99,7 @@ class WorkflowTests(InvestorTests):
         calls=[]
         def interpret(cfg,isin,**kw):
             calls.append(isin);store.write('investor/latest/'+isin,dict(id='x',full_text=True,context=kw['context'],thesis_assessment={'status':'unknown'}));return dict(review_id='x',isin=isin)
-        with patch.object(intel,'refresh_feeds',return_value={'partial':False}),patch.object(breakout,'scan',return_value={'price_date':'2026-10-09','matches':[]}),patch.object(workflow,'queues',return_value=view),patch.object(intel,'interpret',side_effect=interpret):
+        with patch.object(intel,'refresh_feeds',return_value={'partial':False}),patch.object(breakout,'scan',return_value={'price_date':'2026-10-09','matches':[]}),patch.object(workflow,'queues',return_value=view),patch.object(reviews,'interpret',side_effect=interpret):
             first=workflow.cycle(self.cfg);self.assertEqual(calls,[ISIN]);self.assertEqual(first['pending'],1)
             holding.update(review_status='no_material_adverse_event_found',last_review=store.now())
             workflow.cycle(self.cfg);self.assertEqual(calls,[ISIN,candidate['isin']])
@@ -107,7 +107,7 @@ class WorkflowTests(InvestorTests):
     def test_thesis_change_creates_deduplicated_advisory_alert(self):
         row=dict(isin=ISIN,company=ITEM,thesis='Growth',entry_date='2020-01-01',news_count=1,last_review=None,review_status='needs_full_article_review')
         def interpret(*args,**kwargs):store.write('investor/latest/'+ISIN,dict(id='x',thesis_assessment={'status':'challenged','reason':'Growth cancelled','citations':[]}));return {'review_id':'x'}
-        with patch.object(intel,'refresh_feeds',return_value={'partial':False}),patch.object(breakout,'scan',return_value={'price_date':'2026-10-09','matches':[]}),patch.object(workflow,'queues',return_value=dict(holdings=[row],candidates=[],catalysts=[])),patch.object(intel,'interpret',side_effect=interpret):
+        with patch.object(intel,'refresh_feeds',return_value={'partial':False}),patch.object(breakout,'scan',return_value={'price_date':'2026-10-09','matches':[]}),patch.object(workflow,'queues',return_value=dict(holdings=[row],candidates=[],catalysts=[])),patch.object(reviews,'interpret',side_effect=interpret):
             workflow.cycle(self.cfg);workflow.cycle(self.cfg)
         paths=list((store.DATA/'investor/alerts').glob('*.json'));self.assertEqual(len(paths),1)
         alert=json.loads(paths[0].read_text());self.assertIn('No portfolio orders',alert['notice'])

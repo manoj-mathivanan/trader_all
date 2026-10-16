@@ -16,6 +16,8 @@ Trader is a browser-based workspace for researching Indian equity swing strategi
 **Short deployment reference:** [Deployment summary](architecture.md#deploy-readme)
 
 **Shared market-data database:** [PostgreSQL setup and import notes](architecture.md#deploy-market-data-readme).
+
+The existing production PostgreSQL cluster now uses the 100 GB `trader-data` volume mounted at `/mnt/trader_data`, on the same `manoj-projects` server. Its Docker data mount is `/mnt/trader_data/postgres`; provisioning refuses to start if the volume is unmounted. The original cluster files at `/srv/market-data/postgres` and the previous Compose configuration at `/mnt/trader_data/migration-backups/compose.before-volume.yaml` are retained for rollback. This storage expansion does not itself switch application JSON readers to PostgreSQL.
 The separate database mirrors existing market inputs; application/backtest readers still use their JSON storage until the next migration phase.
 
 This guide covers the published MVP. Enhancements being developed in other threads become production features only after their code is merged and deployed. Trader application storage remains independent JSON in each environment. Separate PostgreSQL import/archive provisioning is present; completed local and production market refreshes sync automatically. Trader readers remain on JSON. Redis/RQ remains a roadmap item.
@@ -68,6 +70,10 @@ npm.cmd run vendor
 ```
 
 Open http://127.0.0.1:8765. Local mode supports research/backtests and separate Scalping quote paper. Generic Swing paper and its scheduler run only in production. Keep the terminal running. Use one server process, without `--reload` or multiple workers: the research worker runs in that process.
+
+Investor intelligence → **Backtest technical rules** tests the scanner's `early_breakout` stage using completed daily candles and next-session-open swing entries. Approaching-breakout watchlist rows do not enter. Each report saves the exact investor rules, prices, costs, equity and trades; Adjust & rerun preserves the rules. Financial assessments, current articles, LLM interpretations and thesis-driven paper exits are excluded from this technical baseline. It does not validate the combined investor workflow. The default illustrative charges and slippage are 10 bps each per side; edit them for the experiment. A recent listing can shorten the common safe window; choosing a longer window excludes stocks lacking date coverage or warmup, which the report lists.
+
+For a matched Blue Sky comparison on the same frozen inputs, run `.venv/Scripts/python.exe scripts/research_investor_baseline.py --start YYYY-MM-DD --end YYYY-MM-DD`. It saves both dashboard reports and `artifacts/investor_baseline/comparison.json`, with identical capital, risk, exits, costs and input manifest. Reserve another untouched period before judging performance.
 
 ## First real-data run
 

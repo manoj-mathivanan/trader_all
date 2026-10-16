@@ -4,20 +4,8 @@ import json
 import math
 import uuid
 from datetime import date
-from pydantic import Field
+from core.research.investor_rules import Rules
 from core.research import company_review as company, store, market_history, corporate_actions, data_quality
-
-
-class Rules(company.Input):
-    resistance_sessions: int = Field(40, ge=20, le=100)
-    max_distance_pct: float = Field(10, ge=.1, le=15)
-    max_extension_pct: float = Field(5, ge=0, le=10)
-    max_base_range_pct: float = Field(30, ge=2, le=40)
-    max_contraction_ratio: float = Field(1.15, ge=.1, le=1.5)
-    max_dry_volume_ratio: float = Field(1.5, ge=.1, le=2)
-    min_breakout_volume_ratio: float = Field(1.05, ge=1, le=5)
-    min_turnover_rupees: float = Field(5_000_000, ge=0)
-    strict_trend: bool = False
 
 
 def setup(bars, rules):

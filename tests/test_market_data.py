@@ -11,6 +11,21 @@ def candle(day, close=100):
 
 
 class MarketFetchTests(unittest.TestCase):
+    def test_stock_refresh_can_skip_fundamentals_while_legacy_fetch_still_includes_them(self):
+        for include in (False, True):
+            with self.subTest(include_fundamentals=include), \
+                 patch.object(market.httpx, 'Client'), \
+                 patch.object(market, 'last_traded_day', return_value=date(2026, 10, 15)), \
+                 patch.object(market.upstox, 'fetch_range', return_value=[candle('2026-10-15')]), \
+                 patch.object(market.upstox, 'refresh_universe', return_value={'instruments': []}), \
+                 patch.object(market.data_quality, 'audit_cached_universe', return_value={'warnings': [], 'excluded_symbols': []}), \
+                 patch.object(market.fundamentals, 'pull', return_value={'partial': False}) as fundamentals_pull:
+                result = market.fetch(Mock(), include_fundamentals=include)
+                self.assertEqual(fundamentals_pull.call_count, int(include))
+                self.assertFalse(result['partial'])
+                if not include:
+                    self.assertEqual(result['fundamentals']['status'], 'not_requested')
+
     def setUp(self):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)

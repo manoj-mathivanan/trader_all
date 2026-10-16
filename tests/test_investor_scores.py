@@ -32,6 +32,12 @@ class ScoreTests(unittest.TestCase):
         self.assertEqual(r['confidence'],100);self.assertFalse(r['model']['validated'])
         self.assertTrue(r['advisory_only']);self.assertEqual(r['model']['execution_mode'],'paper_observation')
 
+    def test_nonpositive_equity_is_hard_veto(self):
+        self.snapshot['fundamentals']['metrics']['balance_equity']=dict(value=-1,period='Mar 2026')
+        self.assertEqual(self.evaluate()['decision'],'avoid')
+        self.row['kind']='holding'
+        self.assertEqual(self.evaluate()['decision'],'exit_candidate')
+
     def test_unknown_retains_weight_and_cannot_buy(self):
         self.snapshot['fundamentals']['ratios'].pop('Debt/Equity')
         r=self.evaluate();self.assertIsNone(r['score']);self.assertEqual(r['decision'],'insufficient_evidence')
@@ -109,6 +115,20 @@ class ScoreTests(unittest.TestCase):
         self.assertEqual(scores.outcomes(record,dict(status='available',observation_bars=bars))['status'],'pending')
 
 
+    def test_nonpositive_sector_pe_uses_explicit_ev_ebitda(self):
+        self.snapshot['fundamentals']['ratios']['P/E']['sector']=-10
+        self.snapshot['fundamentals']['ratios']['EV/EBITDA']=dict(company=10,sector=12)
+        r=self.evaluate()
+        self.assertIsNotNone(r['components']['fundamentals']['score'])
+        self.assertTrue(any('EV/EBITDA' in reason for reason in r['reasons']))
+    def test_stale_supplement_does_not_become_fresh_on_snapshot_refresh(self):
+        self.snapshot['fundamentals']['ratios']['Debt/Equity']['source']='https://www.screener.in/company/EXAMPLE/'
+        self.snapshot['sections']={'financial_supplement':dict(status='available',as_of=(self.now-timedelta(days=2)).isoformat())}
+        r=self.evaluate()
+        self.assertIsNone(r['components']['fundamentals']['score'])
+        self.assertNotEqual(r['decision'],'buy_candidate')
+
+
 class StatementFallbackTests(unittest.TestCase):
     setUp=ScoreTests.setUp
     tearDown=ScoreTests.tearDown
@@ -135,6 +155,7 @@ class StatementFallbackTests(unittest.TestCase):
         rows=[dict(value=100,period='Mar 2026'),dict(value=50,period='Mar 2024')]
         r=details.financial_summary(dict(annual_income=dict(data=dict(type='standalone',income_statement=[dict(category='revenue',history=rows)]))))
         self.assertIsNone(r['metrics']['revenue']['annual_yoy_pct'])
+
 
 
 if __name__=='__main__':unittest.main()

@@ -14,7 +14,7 @@ VERSION='investor-score-v1'
 WEIGHTS=dict(fundamentals=40,price_behaviour=20,technicals=20,news=20)
 THRESHOLDS=dict(buy=75,confidence=80,hold=55,reduce=45,min_turnover=5_000_000,max_entry_risk_pct=8,max_extension_pct=5,min_volume_ratio=1.05)
 MODEL=dict(version=VERSION,weights=WEIGHTS,thresholds=THRESHOLDS,validated=False,execution_mode='paper_observation',round_trip_cost_bps=50)
-MODEL['implementation_sha256']=hashlib.sha256(Path(__file__).read_bytes().replace(b'\r\n',b'\n')+b'\0'+(store.ROOT/'core/research/investor_details.py').read_bytes().replace(b'\r\n',b'\n')).hexdigest()
+MODEL['implementation_sha256']=hashlib.sha256(Path(__file__).read_bytes().replace(b'\r\n',b'\n')+b'\0'+(store.ROOT/'core/research/investor_details.py').read_bytes().replace(b'\r\n',b'\n')+b'\0'+(store.ROOT/'core/research/investor_financials.py').read_bytes().replace(b'\r\n',b'\n')+b'\0'+(store.ROOT/'core/research/investor_paper.py').read_bytes().replace(b'\r\n',b'\n')).hexdigest()
 
 
 def num(value):
@@ -63,6 +63,10 @@ def evaluate(row,evidence,details):
     margin=profit/revenue*100 if profit is not None and revenue is not None and revenue>0 and m.get('revenue',{}).get('period')==m.get('net_profit',{}).get('period') else None
     valuation=ratios.get('P/B' if financial else 'P/E',{})
     cv,sv=num(valuation.get('company')),num(valuation.get('sector'))
+    valuation_method='P/B' if financial else 'P/E'
+    if not financial and (cv is None or cv<=0 or sv is None or sv<=0):
+        fallback=ratios.get('EV/EBITDA',{});a,b=num(fallback.get('company')),num(fallback.get('sector'))
+        if a is not None and a>0 and b is not None and b>0:cv,sv=a,b;valuation_method='EV/EBITDA (P/E benchmark unavailable)'
     relative_value=cv/sv if cv is not None and cv>0 and sv is not None and sv>0 else None
     factors=[factor('Revenue growth (%)',metric('revenue','annual_yoy_pct'),[(-10,0),(0,40),(10,70),(25,100)]),
              factor('Net profit margin (%)',margin,[(-5,0),(0,40),(10,70),(20,100)]),
@@ -76,6 +80,9 @@ def evaluate(row,evidence,details):
                         factor('Debt / equity',ratio('Debt/Equity','Debt to Equity','Debt/Equity Ratio','D/E'),[(0,100),(.5,80),(1,50),(2,0)])])
     sections=details.get('sections',{})
     fresh=bool(details) and 0<=intel.cache_age(details)<86400 and annual_ok and quarterly_ok and all(s.get('status')=='available' and 0<=intel.cache_age(s)<86400 for k,s in sections.items() if k in ('annual_income','quarterly_income','ratios'))
+    supplement=sections.get('financial_supplement',{})
+    if any(v.get('source','').startswith('https://www.screener.in/') for v in ratios.values()) or str(ocf.get('source','')).startswith('https://www.screener.in/'):
+        fresh=fresh and supplement.get('status')=='available' and 0<=intel.cache_age(supplement)<86400
     fundamental=component(factors,fresh=fresh)
     b=t.get('price_behaviour',{})
     price=component([factor('60-session strength versus Nifty (pp)',b.get('relative_strength60_pp'),[(-15,0),(0,50),(15,100)],40),
@@ -131,10 +138,16 @@ def evaluate(row,evidence,details):
     if price['score'] is None:blockers.append('Price behaviour or aligned Nifty history is incomplete.')
     if technical['score'] is None:blockers.append('Technical evidence or an entry setup is incomplete.')
     if news['score'] is None:blockers.append('News coverage/full-article review is incomplete; sentiment is unknown.')
+    reasons.append('Valuation uses '+valuation_method+'.')
+    supplement=sections.get('financial_supplement',{})
+    if supplement.get('status')=='available' and 0<=intel.cache_age(supplement)<86400:reasons.append('Supplementary statement fields are reconciled to the selected accounting basis and year.')
     if negative:reasons.append('Verified material adverse or conflicting news requires investigation.')
     financial_risk=bool(not financial and (num(ocf.get('value')) is not None and num(ocf.get('value'))<=0 or ratio('Debt/Equity','Debt to Equity','Debt/Equity Ratio','D/E') is not None and ratio('Debt/Equity','Debt to Equity','Debt/Equity Ratio','D/E')>2)) or relative_value is not None and relative_value>2
     if financial_risk:reasons.append('Cash generation, leverage or valuation exceeds the pilot buy-risk limits.')
     if holding and not row.get('thesis'):blockers.append('Holding thesis has not been recorded.')
+    equity=m.get('balance_equity') or {}
+    insolvent=fresh and equity.get('period')==m.get('net_profit',{}).get('period') and num(equity.get('value')) is not None and num(equity['value'])<=0
+    if insolvent:reasons.append('Non-positive reported equity is a hard solvency-risk veto; no favourable debt ratio inferred.')
     loss=bool(fresh and (profit is not None and profit<=0 or num(quarter.get('value')) is not None and num(quarter.get('value'))<0))
     if details.get('statement_basis')=='standalone':
         from core.research.investor_details import history as statement_history
@@ -157,7 +170,7 @@ def evaluate(row,evidence,details):
     prior=store.read('investor/assessments/score-latest-'+row.get('isin',row.get('company',{}).get('isin','unknown'))+'-'+('holding' if holding else 'candidate'),{})
     comparable=prior.get('model',{}).get('implementation_sha256')==MODEL['implementation_sha256']
     delta=round(score-prior['score'],2) if score is not None and prior.get('score') is not None and prior.get('version')==VERSION and comparable else None
-    if adverse or challenged or loss:decision='exit_candidate' if holding else 'avoid'
+    if adverse or challenged or loss or insolvent:decision='exit_candidate' if holding else 'avoid'
     elif blockers or not complete:decision='review' if holding else 'insufficient_evidence'
     elif holding:
         if score<45 and comparable and prior.get('score') is not None and prior['score']<45 and prior.get('technical_date')!=t.get('price_date') and prior.get('confidence',0)>=80:decision='reduce_candidate'
@@ -193,8 +206,7 @@ def save(row,value,details):
 
 def history(isin,limit=50):
     records=[]
-    for p in (store.DATA/'investor/assessments').glob('score-history-'+isin+'-*.json'):
-        r=json.loads(p.read_text(encoding='utf-8'))
+    for _,r in store.records('investor/assessments/score-history-'+isin+'-'):
         if r.get('isin')==isin:records.append(r)
     return sorted(records,key=lambda r:r['as_of'],reverse=True)[:limit]
 

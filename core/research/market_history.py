@@ -11,8 +11,11 @@ VERSION = 'history-evidence-v1'
 
 
 def evidence(*, snapshot=False):
-    ref = json.loads(EVIDENCE_FILE.read_text(encoding='utf-8'))
-    ref['candle_repairs'] = json.loads(EVIDENCE_FILE.with_name('candle_repairs.json').read_text(encoding='utf-8'))
+    ref = store.read('reference/history_evidence') if store.database_enabled() else json.loads(EVIDENCE_FILE.read_text(encoding='utf-8'))
+    if ref is None:
+        raise ValueError('Database history reference is missing. Complete the database migration first.')
+    ref['candle_repairs'] = (store.read('reference/candle_repairs', {}) if store.database_enabled()
+                             else json.loads(EVIDENCE_FILE.with_name('candle_repairs.json').read_text(encoding='utf-8')))
     if snapshot:
         ref['listings'] = merge_listings(ref.get('listings', {}), store.read('metadata/listings', {}))
         ref['corporate_actions'] = store.read('metadata/corporate_actions', {})

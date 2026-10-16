@@ -176,7 +176,7 @@ def error_detail(exc):
     return str(exc) if isinstance(exc, ValueError) else f'Unexpected {type(exc).__name__}; existing valid data retained.'
 
 
-def fetch(log, job_id=None):
+def fetch(log, job_id=None, *, include_fundamentals=True):
     token = store.token()
     with httpx.Client(timeout=40) as client:
         window = windows(last_traded_day(client, token))
@@ -222,15 +222,18 @@ def fetch(log, job_id=None):
         for warning in result['data_quality']['warnings']:
             log(warning)
         store.write('market_fetch', result)
-        log('Checking quarterly fundamentals for the same stock universe.')
-        try:
-            result['fundamentals'] = fundamentals.pull(universe['instruments'], log, job_id, retry_failed=True)
-        except Exception as exc:
-            result['fundamentals'] = {'status':'failed', 'message':error_detail(exc)}
-            log('Fundamentals stage failed; saved market candles retained.')
+        result['fundamentals'] = {'status': 'not_requested'}
+        if include_fundamentals:
+            log('Checking quarterly fundamentals for the same stock universe.')
+            try:
+                result['fundamentals'] = fundamentals.pull(universe['instruments'], log, job_id, retry_failed=True)
+            except Exception as exc:
+                result['fundamentals'] = {'status':'failed', 'message':error_detail(exc)}
+                log('Fundamentals stage failed; saved market candles retained.')
         result['partial'] = bool(result['failures'] or result['data_quality']['excluded_symbols'] or result['fundamentals'].get('partial') or
                                  result['fundamentals'].get('status') == 'failed')
         result['completed_at'] = store.now()
         store.write('market_fetch', result)
-        log(f"Finished all {result['total_symbols']} stocks: daily {result['daily_symbols']}, five-minute {result['minute_symbols']}; {len(result['failures'])} candle failures. Quarterly fundamentals checked; inspect the fundamentals result for coverage and failures. Older history retained.")
+        fundamentals_note = 'Quarterly fundamentals checked; inspect the fundamentals result for coverage and failures.' if include_fundamentals else 'Fundamentals were not requested.'
+        log(f"Finished all {result['total_symbols']} stocks: daily {result['daily_symbols']}, five-minute {result['minute_symbols']}; {len(result['failures'])} candle failures. {fundamentals_note} Older history retained.")
         return result

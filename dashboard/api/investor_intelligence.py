@@ -46,9 +46,7 @@ def evidence(isin: str):
     value['scoring']=investor_scores.evaluate(row,value,value['details'])
     value['score_history']=[dict(r,outcome=investor_scores.outcomes(r,value['details'].get('technical',{}))) for r in investor_scores.history(isin,20)]
     history=[]
-    for path in (store.DATA/'investor/reviews').glob('*.json'):
-        import json
-        review=json.loads(path.read_text(encoding='utf-8'))
+    for _,review in store.records('investor/reviews/'):
         if review['company']['isin']==isin:
             history.append({k:review.get(k) for k in ('id','as_of','outlook','model','full_text')})
     value['review_history']=sorted(history,key=lambda r:r['as_of'],reverse=True)[:100]
@@ -57,8 +55,12 @@ def evidence(isin: str):
 
 @router.post('/scores/refresh')
 def refresh_scores():
-    from core.research import investor_scores
-    return submit_analysis('Investor score observations',lambda log,job_id:investor_scores.observe(current_settings(),refresh=True,log=log))
+    from core.research import investor_scores,investor_paper
+    def run(log,job_id):
+        cfg=current_settings();result=investor_scores.observe(cfg,refresh=True,log=log)
+        result['paper']=investor_paper.run(cfg,log=log)
+        return result
+    return submit_analysis('Investor score observations',run)
 
 
 @router.get('/scores/validation')
@@ -86,7 +88,7 @@ def interpret(value: investor.ResearchRequest):
         tracked=next((r for r in workflow.paper_holdings(cfg) if r['isin']==value.isin),{})
     context=dict(thesis=tracked.get('thesis',''),entry_date=tracked.get('entry_date'),holding=bool(tracked))
     return submit_analysis('Investor interpretation',
-                       lambda log, job_id:investor.interpret(cfg, value.isin, force=value.force, full_text=value.full_text, context=context, log=log), value.model_dump())
+                       lambda log, job_id:__import__('core.research.investor_reviews',fromlist=['interpret']).interpret(cfg,value.isin,force=value.force,context=context,log=log) if value.full_text else investor.interpret(cfg,value.isin,force=value.force,full_text=False,context=context,log=log), value.model_dump())
 
 
 @router.post('/scan')
@@ -142,3 +144,21 @@ def review(review_id: str):
     result=store.read('investor/reviews/'+review_id)
     if not result:raise ValueError('Review not found.')
     return result
+
+
+@router.post('/reviews/complete')
+def complete_reviews():
+    from core.research import investor_reviews
+    return submit_analysis('Investor complete article reviews',lambda log,job_id:investor_reviews.run(current_settings(),log=log))
+
+
+@router.get('/paper')
+def paper_state():
+    from core.research import investor_paper
+    return investor_paper.state()
+
+
+@router.post('/paper/run')
+def paper_run():
+    from core.research import investor_paper
+    return submit_analysis('Investor composite paper simulation',lambda log,job_id:investor_paper.run(current_settings(),log=log,force=True))

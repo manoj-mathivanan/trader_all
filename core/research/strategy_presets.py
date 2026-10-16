@@ -31,6 +31,7 @@ class ScreenInput(BaseModel):
     ipo_max_age_days: int = Field(730, ge=1, le=3653)
     trading_defaults: TradingConfig | None = None
     backtest_defaults: dict | None = None
+    paper_defaults: dict | None = None
     source_filters: dict | None = None
     minimum_warmup_sessions: int | None = Field(None, ge=50, le=2500)
     source_run_id: str | None = Field(None, pattern=r'^[0-9a-f]{12}(?:_[a-z0-9]+)?$')
@@ -38,6 +39,11 @@ class ScreenInput(BaseModel):
 
     @model_validator(mode='after')
     def consistent_defaults(self):
+        if self.paper_defaults:
+            from core.portfolio.paper import PaperConfig
+            cfg = PaperConfig(**self.paper_defaults, acknowledge_limitations=True)
+            if not self.backtest_defaults or cfg.pattern != self.pattern or cfg.simulation_model != 'banana_proxy_v1':
+                raise ValueError('Reference paper defaults require a matching reference backtest preset.')
         if self.backtest_defaults:
             from core.research.config import BacktestConfig
             cfg = BacktestConfig(**self.backtest_defaults, start='2020-01-01', end='2026-09-30', acknowledge_limitations=True)
@@ -62,13 +68,51 @@ def identity(name):
     return 'custom_'+hashlib.sha1(name.encode('utf-8')).hexdigest()[:10]
 
 
-def available():
-    # Bundled presets survive deployment to a separate paper state directory.
+# Catalog cleanup requested after auditing the saved backtest index. Historical
+# definitions remain available to replay old reports and research scripts.
+RETIRED_PRESET_IDS = frozenset({
+    'custom_22fd6f8ec3', 'custom_1564f13016',
+    'custom_b3ce32a98b', 'custom_491bf98903',
+    'custom_3264ad820f', 'custom_39051a295d',
+})
+RETIRED_STRATEGY_CHOICES = (
+    'builtin:ipo', 'bearish:new_lows',
+    'bearish:multiyear_breakdown', 'bearish:ipo_breakdown',
+)
+
+
+def selectable():
+    if reference_only():
+        return [p for p in available() if (p.get('backtest_defaults') or {}).get('simulation_model')=='banana_proxy_v1']
+    return [preset for preset in available() if preset['id'] not in RETIRED_PRESET_IDS]
+
+
+def reference_only():
+    return store.read('strategy_catalog_policy',{}).get('mode')=='reference_only'
+
+
+def require_reference(config, strategy_id='swing_patterns'):
+    if not reference_only():
+        return
+    model=(config.get('simulation_model') if isinstance(config,dict) else getattr(config,'simulation_model',None))
+    if strategy_id!='swing_patterns' or model!='banana_proxy_v1':
+        raise ValueError('Choose one of the available fixed-rule strategies.')
+
+
+def bundled_presets():
+    """Deployment seeds; PostgreSQL runtime reads its saved catalog."""
     bundled=[]
     directory=store.ROOT/'strategies/swing_patterns/presets'
     for path in sorted(directory.glob('*.json')):
         value=ScreenInput.model_validate(json.loads(path.read_text(encoding='utf-8')))
         bundled.append(dict(**value.model_dump(mode='json'),id=identity(value.name),bundled=True))
+    return bundled
+
+
+def available():
+    bundled=store.read('strategy_catalog') if store.database_enabled() else bundled_presets()
+    if bundled is None:
+        raise ValueError('Database strategy catalog is missing. Complete the database migration first.')
     saved=store.read('screens',[])
     archived_ids={s['id'] for s in store.read('archived_screens',[])}
     return [p for p in saved+[p for p in bundled if p['id'] not in {s['id'] for s in saved}]

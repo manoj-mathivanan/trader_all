@@ -308,9 +308,9 @@ def interpretation_key(item, articles, model, *, full_text=False,context=None):
                                          schema=company.structured_schema(Interpretation)), sort_keys=True).encode()).hexdigest()
 
 
-def interpret(settings, isin, *, force=False, full_text=False, context=None, transport=None, article_transport=None, log=lambda message: None):
+def interpret(settings, isin, *, force=False, full_text=False, context=None, transport=None, article_transport=None, article_ids=None, log=lambda message: None):
     value = evidence(settings, isin)
-    articles = value['articles'][:30]
+    articles = [a for a in value['articles'] if article_ids is None or a['id'] in article_ids][:30]
     from core.research.investor_workflow import news_digest
     news_input_sha256=news_digest(articles)
     if not articles:

@@ -2,6 +2,12 @@
   "name": "trader-control-panel",
   "private": true,
   "version": "0.1.0",
-  "scripts": { "vendor": "node scripts/vendor.mjs", "check": "node --check dashboard/web/app.js && node --check dashboard/web/company-review.js && node --check dashboard/web/investor-intelligence.js", "test": "node tests/test_screen_presets.cjs && node tests/test_trade_chart.cjs && node tests/test_bearish_screens.cjs && node tests/test_momentum.cjs && node tests/test_company_review.cjs && node tests/test_scalping.cjs && node tests/test_investor_intelligence.cjs" },
-  "dependencies": { "klinecharts": "9.8.12" }
+  "scripts": {
+    "vendor": "node scripts/vendor.mjs",
+    "check": "node --check dashboard/web/app.js && node --check dashboard/web/company-review.js && node --check dashboard/web/investor-intelligence.js && node --check dashboard/web/live-trading.js",
+    "test": "node tests/test_screen_presets.cjs && node tests/test_trade_chart.cjs && node tests/test_bearish_screens.cjs && node tests/test_momentum.cjs && node tests/test_company_review.cjs && node tests/test_scalping.cjs && node tests/test_investor_intelligence.cjs && node tests/test_parameter_controls.cjs && node tests/test_workspace_redesign.cjs && node tests/test_live_trading.cjs"
+  },
+  "dependencies": {
+    "klinecharts": "9.8.12"
+  }
 }

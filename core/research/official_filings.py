@@ -102,7 +102,8 @@ def parse(html, url, item, at):
     # Only repository-reviewed exchange evidence can permit a historical symbol.
     # User data cannot introduce arbitrary identity aliases.
     reference = Path(__file__).resolve().parents[2] / 'reference_data' / 'filing_identities.json'
-    identity = json.loads(reference.read_text(encoding='utf-8')) if reference.exists() else {}
+    identity = (store.read('reference/filing_identities', {}) if store.database_enabled()
+                else json.loads(reference.read_text(encoding='utf-8')) if reference.exists() else {})
     aliases = identity.get(item['isin'], {})
     allowed_symbols = {item['symbol'].upper()}
     allowed_isins = {item['isin']}
@@ -332,7 +333,7 @@ def cached_filing(url, item, at, documents):
         if not re.fullmatch(r'[a-f0-9]{64}', digest) or doc.get('artifact') != 'company/filings/'+digest+'.html':
             continue
         try:
-            data = (store.DATA/doc['artifact']).read_bytes()
+            data = store.read_bytes(doc['artifact'])
             if len(data) > MAX_BYTES or hashlib.sha256(data).hexdigest() != digest:
                 continue
             parsed = parse(data.decode('utf-8'), url, item, at)
@@ -378,10 +379,12 @@ def retrieve(item, sources, at, *, transport=None, log=lambda message: None, dis
                     parsed = parse(data.decode('utf-8'), url, item, at)
                     digest = hashlib.sha256(data).hexdigest()
                     artifact = 'company/filings/'+digest
-                    path = store.DATA / (artifact+'.html')
-                    path.parent.mkdir(parents=True, exist_ok=True)
-                    if not path.exists() or hashlib.sha256(path.read_bytes()).hexdigest() != digest:
-                        path.write_bytes(data)
+                    try:
+                        existing = store.read_bytes(artifact+'.html')
+                    except FileNotFoundError:
+                        existing = b''
+                    if hashlib.sha256(existing).hexdigest() != digest:
+                        store.write_bytes(artifact+'.html', data)
                     parsed.update(sha256=digest, artifact=artifact+'.html')
                     store.write(artifact, parsed)
                     store.write('company/filing_cache/'+hashlib.sha256(url.encode()).hexdigest(),

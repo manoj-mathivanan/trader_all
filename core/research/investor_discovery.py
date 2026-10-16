@@ -47,8 +47,8 @@ def restore_archive(items, *, force=False, log=lambda m:None):
                     old=found.get(a['id'])
                     if old is None or a['retrieved_at']>old['retrieved_at']:found[a['id']]=a
             except (KeyError,TypeError,ValueError):continue
-    for path in (store.DATA/'investor/articles').glob('*.json'):
-        collect([json.loads(path.read_text(encoding='utf-8'))])
+    for _,value in store.records('investor/articles/'):
+        collect([value])
     coverage=[]
     from core.research import investor_database
     for environment in ('local','production'):

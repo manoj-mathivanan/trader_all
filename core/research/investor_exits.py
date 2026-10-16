@@ -32,6 +32,8 @@ def transition(portfolio,symbol,quote,review,clock,alert_id):
     """No replay fills: profit is measured at a fresh executable bid, after costs."""
     if portfolio.get('mode')!='paper' or portfolio.get('strategy_name')!='swing_patterns':
         return portfolio,dict(status='unsupported_portfolio')
+    if portfolio.get('config',{}).get('investor_news_exits',True) is False:
+        return portfolio,dict(status='news_exits_disabled_for_scenario')
     position=portfolio.get('ledger',{}).get('positions',{}).get(symbol)
     if not position:return portfolio,dict(status='already_closed')
     if clock.weekday()>=5 or not time(9,15)<=clock.time().replace(tzinfo=None)<time(15,30):
@@ -70,8 +72,7 @@ def transition(portfolio,symbol,quote,review,clock,alert_id):
 def execute(*,log=lambda m:None):
     if not store.read('investor/settings',{}).get('profit_exit_enabled'):return {'exits':0}
     exits=0;clock=paper.local_now()
-    for path in sorted((store.DATA/'investor/alerts').glob('*.json')):
-        alert=store.read('investor/alerts/'+path.stem)
+    for _,alert in store.records('investor/alerts/'):
         if alert.get('status')=='executed':continue
         if alert.get('kind')=='holding_data_review':continue
         review=store.read('investor/reviews/'+alert['review_id'],{})

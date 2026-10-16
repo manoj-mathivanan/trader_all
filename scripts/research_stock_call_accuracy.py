@@ -34,10 +34,10 @@ def outcome(bars, signal_index, cfg):
     b = bars[entry_index]
     pivot_length = (cfg.blue_sky_lookback_days if cfg.pattern == 'blue_sky' else
                     cfg.multiyear_base_days if cfg.pattern == 'multiyear' else cfg.base_days)
-    pivot = max(x['high'] for x in bars[max(0, signal_index-pivot_length):signal_index])
+    pivot = max((x['high'] for x in bars[max(0, signal_index-pivot_length):signal_index]), default=None)
     entry = b['close'] if cfg.entry_mode == 'close' else b['open']
     if cfg.entry_mode == 'pivot':
-        entry = max(entry, pivot)
+        entry = max(entry, pivot or entry)
         if b['high'] < entry:
             return dict(signal_date=bars[signal_index]['date'], status='pivot_not_filled')
     stop = entry * (1-cfg.stop_pct/100)
@@ -58,14 +58,14 @@ def outcome(bars, signal_index, cfg):
             best = max(best, row['close'])
             if row['close'] >= entry * (1+cfg.stop_pct/100*cfg.breakeven_r):
                 length = 150 if cfg.winner_exit == 'trail_30w' else 50
-                if cfg.winner_exit in ('trail_30w', 'trail_50d') and i+1 >= length:
+                if cfg.pattern != 'breakout' and cfg.winner_exit in ('trail_30w', 'trail_50d') and i+1 >= length:
                     stop = max(stop, entry, sum(x['close'] for x in bars[i-length+1:i+1])/length)
                 elif target is not None and row['close'] >= entry*(1+target/100):
                     reason, price = f'Take profit +{target}%', row['close']
                 else:
                     stop = max(stop, entry, best*(1-cfg.trail_pct/100))
             age = i-entry_index+1
-            if cfg.failed_breakout_sessions and age <= cfg.failed_breakout_sessions and row['close'] < pivot:
+            if cfg.failed_breakout_sessions and age <= cfg.failed_breakout_sessions and pivot and row['close'] < pivot:
                 pending = 'Early breakout failure (next open)'
             elif cfg.stalled_exit_sessions and age >= cfg.stalled_exit_sessions and best < entry*(1+cfg.stop_pct/100*cfg.stalled_min_r):
                 pending = 'Stalled trade (next open)'
@@ -88,7 +88,8 @@ def summarize(calls):
         sample = [c for c in closed if c['entry_date'].startswith(year)]
         years[year] = dict(closed=len(sample), correct=sum(c['status']=='correct' for c in sample),
                            accuracy_pct=round(100*sum(c['status']=='correct' for c in sample)/len(sample), 3))
-    return dict(signals=len(calls), closed=n, correct=wins, incorrect=counts['incorrect'], flat=counts['flat'],
+    return dict(signals=len(calls), closed=n, distinct_closed_signal_dates=len({c['signal_date'] for c in closed}),
+                correct=wins, incorrect=counts['incorrect'], flat=counts['flat'],
                 open=counts['open'], no_next_session=counts['no_next_session'],
                 pivot_not_filled=counts['pivot_not_filled'], accuracy_pct=round(100*wins/n, 3) if n else None,
                 wilson_low_pct=low, wilson_high_pct=high,
@@ -103,6 +104,43 @@ def export_csv(path, rows):
         writer = csv.DictWriter(f, fieldnames=keys)
         writer.writeheader()
         writer.writerows({k: json.dumps(v) if isinstance(v, (dict,list)) else v for k,v in r.items()} for r in rows)
+
+
+def export_html(path, report):
+    compact = {k:report[k] for k in ('protocol','screen_summaries','ranked_stocks','coverage_counts','unique_summary')}
+    payload = json.dumps(compact).replace('<','\\u003c')
+    page = '''<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Stock call accuracy · 11 October 2026</title><style>
+body{margin:0;background:#f4f6fa;color:#142138;font:15px system-ui,sans-serif}main{max-width:1250px;margin:auto;padding:32px}
+h1{font-size:30px;margin-bottom:8px}h2{margin-top:30px}p{line-height:1.6;max-width:1050px}.muted{color:#58667a}
+.cards{display:flex;flex-wrap:wrap;gap:12px}.card{background:white;padding:18px 22px;border-radius:12px;flex:1;min-width:160px}.card b{display:block;font-size:27px}
+input,select{border:1px solid #b8c4d5;border-radius:6px;padding:10px;background:white;margin:4px}.wrap{overflow:auto;background:white;border-radius:10px}
+table{border-collapse:collapse;width:100%;white-space:nowrap}th,td{text-align:left;padding:11px;border-bottom:1px solid #e2e7f0}th{background:#eaf0fa;cursor:pointer}td.num{text-align:right}
+details{padding:10px;border-bottom:1px solid #d6dfed}summary{cursor:pointer}.good{color:#09684e;font-weight:600}.bad{color:#a64232}.controls{margin:20px 0}
+</style><main><p class="muted">Local research · completed 11 October 2026 · cached daily history</p>
+<h1>Which stocks follow the saved-screen calls?</h1>
+<p>Every qualifying buy signal is scored independently against the saved stop, profit and trailing exits. A correct call earns a positive gross price return; a flat exit is not a correct call. Sell events close the long call. There are no cash, position, holding-time, breadth or sector limits. Costs and slippage are zero.</p>
+<div class="cards" id="cards"></div>
+<p class="muted">Retained history: January 2018–9 October 2026, varying by stock. Saved screens require 260 warmup sessions, so scored entries begin in 2019. Open calls remain unscored. Five saved screens are included; identical calls are deduplicated for combined results. Relative-strength and liquidity screen predicates remain enabled where saved.</p>
+<h2>Consistency across years</h2><p id="shortlist"></p>
+<p class="muted">Shortlist: at least 30 distinct completed signal dates, descriptive 95% Wilson lower bound above 50%, at least three entry years with five completed calls, and at least 50% accuracy in every observed entry year. This is a retrospective screen, not proof of future reliability. Calls overlap and exit variants share signals; confidence bounds do not adjust for that dependence.</p>
+<h2>Every stock and every screen</h2><div class="controls"><input id="search" placeholder="Search stock" aria-label="Search stock"><select id="screen" aria-label="Screen"><option value="">Combined, deduplicated</option></select><input id="minimum" type="number" min="0" value="0" aria-label="Minimum closed calls" style="width:90px"> minimum closed calls <span id="count"></span></div>
+<div class="wrap"><table><thead><tr><th data-key="symbol">Stock ↕</th><th data-key="accuracy_pct">Correct % ↕</th><th data-key="closed">Closed ↕</th><th data-key="distinct_closed_signal_dates">Signal dates ↕</th><th data-key="correct">Correct ↕</th><th data-key="incorrect">Incorrect ↕</th><th data-key="flat">Flat ↕</th><th data-key="open">Open ↕</th><th data-key="wilson_low_pct">95% interval ↕</th><th data-key="coverage_status">History status ↕</th></tr></thead><tbody id="body"></tbody></table></div>
+<h2>Screen totals</h2><div class="wrap"><table><thead><tr><th>Saved screen</th><th>Completed calls</th><th>Correct %</th><th>Open</th></tr></thead><tbody id="totals"></tbody></table></div>
+<h2>Limitations and inspection</h2><p class="muted">751 current universe records: 736 stocks have usable history; 13 have unresolved price gaps, one is quarantined and one has no history. Estimates are unavailable for those records and for stocks with no completed signals. Current membership introduces survivorship bias. Blue Sky highs are highs within retained history. High accuracy can coexist with poor returns, and past outcomes cannot establish that a stock always follows a trend.</p><p>Select a stock row to see its yearly outcomes and per-screen accuracy. Exported CSV and JSON files contain the full results and individual call ledger.</p>
+<div id="detail"></div></main><script>const data=__DATA__;
+const esc=x=>String(x??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const fmt=x=>x==null?'—':Number(x).toFixed(2);const overall=data.unique_summary;
+document.getElementById('cards').innerHTML=[['Overall correct',fmt(overall.accuracy_pct)+'%'],['Completed calls',overall.closed.toLocaleString()],['Unfinished calls',overall.open],['Saved screens',data.screen_summaries.length]].map(([a,b])=>`<div class="card"><span>${a}</span><b>${b}</b></div>`).join('');
+document.getElementById('shortlist').innerHTML=data.ranked_stocks.filter(x=>x.consistent_observed).map(x=>`<b>${esc(x.symbol)}</b> ${fmt(x.accuracy_pct)}% (${x.correct}/${x.closed}; ${x.distinct_closed_signal_dates} signal dates)`).join(' · ')||'No stocks met the declared consistency screen.';
+const select=document.getElementById('screen');data.screen_summaries.forEach(s=>{let o=document.createElement('option');o.value=s.screen_id;o.textContent=s.screen;select.appendChild(o)});
+document.getElementById('totals').innerHTML=data.screen_summaries.map(s=>`<tr><td>${esc(s.screen)}</td><td class="num">${s.closed}</td><td class="num">${fmt(s.accuracy_pct)}</td><td class="num">${s.open}</td></tr>`).join('');
+let key='wilson_low_pct',ascending=false;
+function render(){let rows=data.ranked_stocks.map(x=>select.value?{...x,...x.per_screen[select.value]}:x).filter(x=>x.symbol.toLowerCase().includes(document.getElementById('search').value.toLowerCase())&&x.closed>=Number(document.getElementById('minimum').value));rows.sort((a,b)=>{let av=a[key],bv=b[key];if(av==null)return 1;if(bv==null)return -1;let cmp=typeof av==='number'?av-bv:String(av).localeCompare(String(bv));return ascending?cmp:-cmp});document.getElementById('count').textContent=' · '+rows.length+' stocks';document.getElementById('body').innerHTML=rows.map(x=>`<tr data-symbol="${esc(x.symbol)}"><td><b>${esc(x.symbol)}</b></td><td class="num">${fmt(x.accuracy_pct)}</td><td class="num">${x.closed}</td><td class="num">${x.distinct_closed_signal_dates||0}</td><td class="num">${x.correct}</td><td class="num">${x.incorrect}</td><td class="num">${x.flat}</td><td class="num">${x.open}</td><td>${fmt(x.wilson_low_pct)} – ${fmt(x.wilson_high_pct)}</td><td>${esc(x.coverage_status)}</td></tr>`).join('')}
+['search','minimum','screen'].forEach(id=>document.getElementById(id).addEventListener('input',render));document.querySelectorAll('[data-key]').forEach(th=>th.addEventListener('click',()=>{ascending=key===th.dataset.key?!ascending:false;key=th.dataset.key;render()}));
+document.getElementById('body').addEventListener('click',e=>{let symbol=e.target.closest('tr')?.dataset.symbol;if(!symbol)return;let x=data.ranked_stocks.find(x=>x.symbol===symbol),stats=select.value?x.per_screen[select.value]:x;document.getElementById('detail').innerHTML=`<h2>${esc(symbol)}</h2><p>${esc(x.first||'No history')} through ${esc(x.last||'—')}, ${x.sessions} retained sessions.</p><div class="wrap"><table><thead><tr><th>Entry year</th><th>Correct / completed</th><th>Correct %</th></tr></thead><tbody>${Object.entries(stats.by_entry_year).map(([year,v])=>`<tr><td>${year}</td><td>${v.correct} / ${v.closed}</td><td>${fmt(v.accuracy_pct)}</td></tr>`).join('')}</tbody></table></div>`;document.getElementById('detail').scrollIntoView({behavior:'smooth'})});render();
+</script></html>'''
+    path.write_text(page.replace('__DATA__', payload), encoding='utf-8')
 
 
 def main():
@@ -140,7 +178,7 @@ def main():
     print('Coverage:', dict(Counter(c['status'] for c in coverage.values())), flush=True)
     strength = StrengthHistory(datasets, context=lambda symbol, day: datasets[symbol])
     cache, call_cache, all_calls, summaries, configs = {}, {}, [], [], []
-    per_symbol = {s: {} for s in coverage}
+    per_symbol = {s: {screen['id']: summarize([]) for screen in screens} for s in coverage}
     for screen in screens:
         cfg = TradingConfig(**(screen.get('trading_defaults') or {k:v for k,v in screen.items() if k in TradingConfig.model_fields}))
         cfg = cfg.model_copy(update=dict(skip_weak_markets=False, sector_filter='off', max_sector_positions=0,
@@ -185,8 +223,9 @@ def main():
         stats = summarize(pooled[symbol])
         years = stats['by_entry_year']
         # Explicit retrospective shortlist, without restricting evaluated calls.
-        consistent = (stats['closed'] >= 30 and (stats['wilson_low_pct'] or 0)>50
-                      and len(years)>=3 and all(y['accuracy_pct']>=50 for y in years.values() if y['closed']>=5))
+        consistent = (stats['distinct_closed_signal_dates'] >= 30 and (stats['wilson_low_pct'] or 0)>50
+                      and sum(y['closed']>=5 for y in years.values())>=3
+                      and all(y['accuracy_pct']>=50 for y in years.values()))
         rows.append(dict(symbol=symbol, isin=c['isin'], coverage_status=c['status'], first=c.get('first'),
                          last=c.get('last'), sessions=c.get('sessions',0), consistent_observed=consistent,
                          **stats, per_screen=per_symbol[symbol]))
@@ -202,7 +241,7 @@ def main():
                                 holding_limit=None, market_breadth=False, sector_breadth=False, sector_filter=False,
                                 costs=0, slippage=0, end_liquidation=False,
                                 pooled='Identical stock/signal-date/exit-rule calls across screens deduplicated; distinct exit rules retained.',
-                                shortlist='At least 30 closed calls, Wilson lower bound >50%, at least 3 entry years, and >=50% accuracy in each year with >=5 closed calls.',
+                                shortlist='At least 30 distinct closed signal dates, descriptive Wilson lower bound >50%, at least 3 entry years with >=5 closed calls, and >=50% accuracy in every observed entry year.',
                                 limitations=['Current constituent universe: survivorship bias.',
                                              'Historical observed frequency, not guaranteed future probability.',
                                              'Overlapping calls and different exits are correlated; Wilson intervals are descriptive, not independence-adjusted.',
@@ -218,6 +257,7 @@ def main():
     export_csv(output/'stock_by_screen.csv', pairs)
     export_csv(output/'all_calls.csv', all_calls)
     export_csv(output/'consistent_stocks.csv', [{k:v for k,v in r.items() if k!='per_screen'} for r in report['consistent_stocks']])
+    export_html(output/'results.html', report)
     print('UNIQUE',json.dumps(report['unique_summary']), flush=True)
     print('CONSISTENT',len(report['consistent_stocks']),flush=True)
     print('REPORT', output, flush=True)

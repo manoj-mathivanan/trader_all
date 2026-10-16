@@ -52,17 +52,16 @@ def untrack(isin,kind):
 def paper_holdings(settings):
     known={i['symbol']:i for i in company.instruments(settings)}
     rows=[]
-    paths=list((store.DATA/'portfolios').glob('*.json'))+list((store.DATA/'portfolio_scenarios').rglob('*.json'))
-    legacy=store.DATA/'paper_portfolio.json'
-    if legacy.exists():paths.append(legacy)
-    for path in paths:
-        portfolio=json.loads(path.read_text(encoding='utf-8'))
+    names=store.keys('portfolios/')+store.keys('portfolio_scenarios/',recursive=True)
+    if store.exists('paper_portfolio'):names.append('paper_portfolio')
+    for name in names:
+        portfolio=store.read(name)
         for symbol,position in portfolio.get('ledger',{}).get('positions',{}).items():
             item=known.get(symbol)
             if item:
                 rows.append(dict(isin=item['isin'],company=item,kind='holding',thesis='',
                                  entry_date=position.get('entry_date',position.get('date')),quantity=position.get('quantity'),
-                                 portfolio=portfolio.get('id',path.stem),source='local_paper'))
+                                 portfolio=portfolio.get('id',name.rsplit('/',1)[-1]),source='local_paper'))
     remote=store.read('investor/portfolio_snapshot',{})
     if 0<=intel.cache_age(remote,field='checked_at' if remote.get('checked_at') else 'as_of')<86400:
         for row in remote.get('holdings',[]):
@@ -72,7 +71,7 @@ def paper_holdings(settings):
 
 
 def news_digest(articles):
-    return hashlib.sha256(json.dumps([{k:a[k] for k in ('id','text','published_at')} for a in articles[:30]],sort_keys=True).encode()).hexdigest()
+    return hashlib.sha256(json.dumps([{k:a[k] for k in ('id','text','published_at')} for a in articles],sort_keys=True).encode()).hexdigest()
 
 
 def status(review, articles, *, holding=False):
@@ -82,7 +81,7 @@ def status(review, articles, *, holding=False):
     if all((company.utcnow()-datetime.fromisoformat(a['published_at'])).days>30 for a in articles):return 'historical_background_only'
     if holding and review.get('thesis_assessment',{}).get('status')=='challenged':return 'exit_review'
     if any(e['direction']=='negative' and e['materiality']=='high' for e in review['events']):return 'material_concern'
-    if any(c['status']!='available' for c in review.get('article_coverage',[])):return 'insufficient_coverage'
+    if review.get('failed_batches') or any(c['status']!='available' for c in review.get('article_coverage',[])):return 'insufficient_coverage'
     if any(e['direction'] in ('negative','mixed') for e in review['events']):return 'needs_investigation'
     return 'no_material_adverse_event_found'
 
@@ -91,6 +90,9 @@ def score_targets(settings):
     tracked=store.read('investor/watchlist',[])
     overrides={r['isin']:r for r in tracked if r['kind']=='holding'}
     holdings=paper_holdings(settings)
+    existing={r['isin'] for r in holdings}
+    for isin,pos in store.read('investor/assessments/composite-paper-state',{}).get('positions',{}).items():
+        if isin not in existing:holdings.append(dict(isin=isin,company=pos['company'],kind='holding',thesis=pos['thesis'],entry_date=pos['entry_date'],quantity=pos['quantity'],source='composite_paper',portfolio='composite-paper'))
     present={r['isin'] for r in holdings}
     holdings += [dict(r,source='manual',portfolio='manual') for r in overrides.values() if r['isin'] not in present]
     for row in holdings:
@@ -106,6 +108,8 @@ def score_targets(settings):
         if row['isin'] in candidate_theses:row['thesis']=candidate_theses[row['isin']]
         override=next((r for r in tracked if r['isin']==row['isin'] and r['kind']=='candidate'),{})
         row.update(kind='candidate',stop_price=override.get('stop_price'),target_price=override.get('target_price'))
+        from core.research import investor_paper
+        row.update(investor_paper.plan(row,store.read('investor/stock_details/'+row['isin'],{}).get('technical',{})))
     return holdings+candidates
 
 
@@ -143,8 +147,8 @@ def queues(settings):
                                   discovery_basis='interpreted_event' if material else 'headline_triage'))
     catalysts.sort(key=lambda r:(r['discovery_basis']!='interpreted_event',r['last_review'] or '',-r['news_count'],r['company']['symbol']))
     alerts=[]
-    for path in (store.DATA/'investor/alerts').glob('*.json'):
-        alerts.append(json.loads(path.read_text(encoding='utf-8')))
+    for _,value in store.records('investor/alerts/'):
+        alerts.append(value)
     alerts.sort(key=lambda x:x['as_of'],reverse=True)
     return dict(candidates=candidates,holdings=holdings,catalysts=catalysts[:30],alerts=alerts[:100],scan=scan,
                 monitoring=store.read('investor/settings',MonitorSettings().model_dump()),
@@ -217,7 +221,9 @@ def cycle(settings, *, holdings_only=False, log=lambda message:None):
         log('Reviewing '+row['company']['symbol']+' ('+row['queue']+').')
         try:
             context=dict(thesis=row.get('thesis','') if row['queue']=='holding' else '',entry_date=row.get('entry_date') if row['queue']=='holding' else None,holding=row['queue']=='holding')
-            result=intel.interpret(settings,row['isin'],full_text=True,context=context,log=log)
+            result=__import__('core.research.investor_reviews',fromlist=['interpret']).interpret(settings,row['isin'],context=context,log=log)
+            if result.get('status')=='unavailable':
+                completed.append(dict(result,status='unavailable'));continue
             review=store.read('investor/latest/'+row['isin'])
             negative=[e for e in review.get('events',[]) if e['direction']=='negative' and e['materiality']=='high']
             challenged=review['thesis_assessment']['status']=='challenged'
@@ -244,6 +250,7 @@ def cycle(settings, *, holdings_only=False, log=lambda message:None):
                 execution=execution,discovery=discovery,upstox=news['upstox'],details=details,holdings_only=holdings_only,reviews=completed,pending=max(0,len(work)-len(completed)),partial=news['partial'] or details['partial'] or any(r['status']=='unavailable' for r in completed))
     from core.research import investor_scores
     result['scores']=investor_scores.observe(settings,log=log,holdings_only=holdings_only)
+    result['paper']=__import__('core.research.investor_paper',fromlist=['run']).run(settings,log=log)
     store.write('investor/monitor_runs/'+result['id'],result)
     store.write('investor/monitor',result)
     return result

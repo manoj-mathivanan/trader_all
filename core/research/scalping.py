@@ -9,7 +9,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from core.execution.paper import PaperBrokerAdapter
-from core.research import corporate_actions, data_quality, intraday_data, momentum, provenance, store
+from core.research import corporate_actions, data_quality, intraday_data, momentum, provenance, store, scalping_selection
 
 
 class ScalpingParameters(BaseModel):
@@ -29,7 +29,9 @@ class ScalpingParameters(BaseModel):
     max_stop_pct: float = Field(0.5, gt=0, le=10, title='Maximum stop distance (%)')
     liquidity_days: int = Field(20, ge=5, le=50, title='Prior turnover history (sessions)')
     min_turnover: float = Field(50000000, ge=0, le=1e12, title='Minimum prior average turnover (₹)')
-    liquid_universe_size: int = Field(20, ge=1, le=100, title='Most liquid stocks to scan')
+    liquid_universe_size: int = Field(20, ge=1, le=100, title='Maximum stocks to scan')
+    stock_selection: Literal['turnover', 'score'] = Field('turnover', title='Stock ranking method')
+    min_stock_score: float = Field(0, ge=0, le=100, title='Minimum suitability score (score ranking only)')
     risk_pct: float = Field(0.1, gt=0, le=5, title='Risk per trade (%)')
     max_positions: int = Field(3, ge=1, le=20, title='Maximum concurrent positions')
     target_r: float = Field(1.5, gt=0, le=10, title='Profit target (R)')
@@ -108,7 +110,7 @@ def entry_plan(datasets, cfg, *, days=None, require_day_bar=True):
         candidates = []
         for symbol, rows in datasets.items():
             i = bisect_left([b['date'] for b in rows], day)
-            if i < max(cfg.liquidity_days, warmup_days) or (require_day_bar and (i == len(rows) or rows[i]['date'] != day)):
+            if i < max(cfg.liquidity_days, warmup_days, 20 if cfg.stock_selection == 'score' else 0) or (require_day_bar and (i == len(rows) or rows[i]['date'] != day)):
                 continue
             prior = corporate_actions.adjusted_bars(rows[:i], day)
             turnover = mean(b['close']*b['volume'] for b in prior[-cfg.liquidity_days:])
@@ -117,9 +119,15 @@ def entry_plan(datasets, cfg, *, days=None, require_day_bar=True):
                 continue
             if any(history[0] < a['ex_date'] <= day for a in corporate_actions.actions(rows)):
                 raise ValueError(f'Corporate action crosses minute EMA warmup for {symbol} on {day}; minute price basis requires verification.')
-            candidates.append(dict(symbol=symbol, turnover=turnover, history=history,
-                                   daily_open=rows[i]['open'] if i < len(rows) and rows[i]['date'] == day else None))
-        plan[day] = sorted(candidates, key=lambda c: (-c['turnover'], c['symbol']))[:cfg.liquid_universe_size]
+            candidate = dict(symbol=symbol, turnover=turnover, history=history,
+                             daily_open=rows[i]['open'] if i < len(rows) and rows[i]['date'] == day else None)
+            if cfg.stock_selection == 'score':
+                candidate['stock_score'] = scalping_selection.score(prior, turnover, cfg.min_turnover)
+                if candidate['stock_score']['total'] < cfg.min_stock_score:
+                    continue
+            candidates.append(candidate)
+        rank = (lambda c: (-c['stock_score']['total'], -c['turnover'], c['symbol'])) if cfg.stock_selection == 'score' else (lambda c: (-c['turnover'], c['symbol']))
+        plan[day] = sorted(candidates, key=rank)[:cfg.liquid_universe_size]
         for c in plan[day]:
             for d in [day, *c['history']]:
                 requests.setdefault(d, []).append({'symbol': c['symbol']})
@@ -197,7 +205,10 @@ def signal(bars, values, j, cfg):
     return None
 
 
-def simulate(datasets, cfg, sessions, plan):
+def simulate(datasets, cfg, sessions, plan, *, feature_provider=None, signal_provider=None,
+             target_provider=None, entry_gate=None):
+    make_features = feature_provider or features
+    make_signal = signal_provider or signal
     broker = PaperBrokerAdapter(cfg)
     cash, peak, max_dd = cfg.capital, cfg.capital, 0
     trades, curve = [], []
@@ -208,7 +219,7 @@ def simulate(datasets, cfg, sessions, plan):
         for c in candidates:
             symbol = c['symbol']
             try:
-                bars, values = features(sessions[symbol], c, day, cfg)
+                bars, values = make_features(sessions[symbol], c, day, cfg)
             except (KeyError, ValueError) as exc:
                 raise ValueError(f'Incomplete scalping inputs for {symbol} on {day}: {exc}') from None
             if abs(bars[0]['open']/c['daily_open']-1) >= .35:
@@ -268,7 +279,7 @@ def simulate(datasets, cfg, sessions, plan):
                 b = bars[i]
                 if i == 0 or not cfg.first_entry_time <= b['time'] <= cfg.last_entry_time or symbol in active or i < cooldown.get(symbol, 0) or counts.get(symbol, 0) >= cfg.max_trades_per_symbol:
                     continue
-                s = signal(bars, values, i-1, cfg)
+                s = make_signal(bars, values, i-1, cfg)
                 if not s:
                     continue
                 if halt or len(active) >= cfg.max_positions:
@@ -280,13 +291,16 @@ def simulate(datasets, cfg, sessions, plan):
                 if s['stop'] <= 0 or not cfg.min_stop_pct <= distance/fill*100 <= cfg.max_stop_pct:
                     skipped += 1
                     continue
-                target = fill+s['sign']*distance*cfg.target_r
+                target = target_provider(s, fill, distance, cfg) if target_provider else fill+s['sign']*distance*cfg.target_r
                 if target <= 0:
                     skipped += 1
                     continue
                 fee_rate = (cfg.buy_cost_bps if s['sign'] == 1 else cfg.sell_cost_bps)/10000
                 stop_fill = broker.fill(s['stop'], 1, 'sell' if s['sign'] == 1 else 'buy')
                 unit_risk = s['sign']*(fill-stop_fill['price'])+fill*fee_rate+stop_fill['fees']
+                if entry_gate and not entry_gate(s, b['open'], fill, target, unit_risk, cfg):
+                    skipped += 1
+                    continue
                 qty = max(0, min(math.floor(max(0, opening_equity)*cfg.risk_pct/100/unit_risk),
                                  math.floor(min(cash, max(0, opening_equity)/cfg.max_positions)/(fill*(1+fee_rate))),
                                  math.floor(bars[i-1]['volume']*cfg.participation_pct/100)))
@@ -376,7 +390,7 @@ def run(settings, cfg, log, job_id):
                   warnings=[
                       'Research hypothesis, not a proven scalping edge. Reserve untouched dates; stress costs and slippage.',
                       'Current constituent universe is survivorship biased; corporate-action minute adjustments are unverified. Warmup crossings halt.',
-                      'Prior turnover ranks stocks. Five-minute EMAs use SMA seeds and at least five slow-EMA periods of prior-session warmup.',
+                      'Stock selection uses configured prior-turnover or experimental prior-daily suitability score; it is not a calibrated win probability. Five-minute EMAs use SMA seeds and at least five slow-EMA periods of prior-session warmup.',
                       'Impulse, adverse pullback candles and completed close beyond their extreme trigger next-minute-open entry.',
                       'EMA mode requires trend alignment, rising/falling fast EMA and a pullback EMA touch. EMA + VWAP adds completed-bar typical-price VWAP.',
                       'Candle-only mode uses consecutive completed five-minute closes for direction and the same pullback pattern, without EMA or VWAP gates.',

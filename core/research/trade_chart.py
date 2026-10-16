@@ -25,11 +25,17 @@ def explain_trade(result, datasets, trade, bars, first, last):
         from core.research.short_trade_chart import explain_trade as explain_short
         return explain_short(result, datasets, trade, bars, first, last)
     cfg = SimpleNamespace(**{**TradingConfig().model_dump(), **result['config']})
+    investor = cfg.pattern == 'investor_early_breakout'
+    if investor:
+        from core.research.investor_rules import Rules
+        cfg.investor_rules = Rules(**cfg.investor_rules)
     signal_idx = first if cfg.entry_mode == 'close' and cfg.pattern != 'breakout' else first - 1
     signal = bars[signal_idx] if signal_idx >= 0 else None
     checks, series = [], []
     enriched = [dict(b, chart_values={}) for b in bars]
     lengths = sorted({cfg.sma_days, 50, 200} | ({150} if cfg.winner_exit == 'trail_30w' else set()))
+    if investor:
+        lengths = sorted(set(lengths) | {20, 100})
     averages = {}
     for length in lengths:
         total, values = 0, []
@@ -50,6 +56,8 @@ def explain_trade(result, datasets, trade, bars, first, last):
         checks.append({'label': label, 'actual': actual, 'required': required, 'passed': passed})
 
     lookback = cfg.vcp_window_days if cfg.pattern == 'vcp' else min(cfg.blue_sky_lookback_days, max(signal_idx, 0)) if cfg.pattern == 'blue_sky' else cfg.multiyear_base_days if cfg.pattern == 'multiyear' else cfg.base_days
+    if investor:
+        lookback = cfg.investor_rules.resistance_sessions
     prior = bars[max(0, signal_idx - lookback):signal_idx] if signal_idx > 0 else []
     pivot_days = lookback if cfg.pattern != 'vcp' else cfg.base_days
     pivot_bars = bars[max(0, signal_idx - pivot_days):signal_idx] if signal_idx > 0 else []
@@ -81,16 +89,33 @@ def explain_trade(result, datasets, trade, bars, first, last):
             check('Verified listing age (calendar days)', age, f'0–{cfg.ipo_max_age_days}',
                   0 <= age <= cfg.ipo_max_age_days if age is not None else False)
         sma = averages[cfg.sma_days][signal_idx]
-        check('Price above trend average', signal['close'], f'> SMA {cfg.sma_days}: {sma:.2f}' if sma is not None else 'More history required', signal['close'] > sma if sma is not None else None)
+        if not investor:
+            check('Price above trend average', signal['close'], f'> SMA {cfg.sma_days}: {sma:.2f}' if sma is not None else 'More history required', signal['close'] > sma if sma is not None else None)
         if ceiling is not None:
             check('Close above breakout level', signal['close'], f'> {ceiling:.2f}', signal['close'] > ceiling)
         preceding = bars[max(0, signal_idx - 50):signal_idx]
-        if len(preceding) == 50:
+        if len(preceding) == 50 and not investor:
             volume = sum(b['volume'] for b in preceding) / 50
             turnover = sum(b['close'] * b['volume'] for b in preceding) / 50
             check('Breakout volume / prior 50-session mean', signal['volume'] / volume if volume else None,
                   f'≥ {cfg.volume_multiple:g}×', signal['volume'] >= volume * cfg.volume_multiple)
             check('Average daily turnover (₹)', turnover, f'≥ {cfg.min_turnover:,.0f}', turnover >= cfg.min_turnover)
+        if investor:
+            from core.research.investor_breakouts import setup
+            rules = cfg.investor_rules
+            measured = setup(bars[:signal_idx + 1], rules)
+            check('Investor early-breakout qualification', measured.get('stage') if measured else None,
+                  'early_breakout', bool(measured and measured['stage'] == 'early_breakout'))
+            if measured:
+                for label, actual, limit, minimum in (
+                        ('Extension above resistance (%)', measured['distance_pct'], rules.max_extension_pct, False),
+                        ('Prior 20-session base range (%)', measured['base_range_pct'], rules.max_base_range_pct, False),
+                        ('Recent / earlier daily range', measured['contraction_ratio'], rules.max_contraction_ratio, False),
+                        ('Breakout volume / prior 20-session mean', measured['volume_ratio'], rules.min_breakout_volume_ratio, True),
+                        ('Average 20-session turnover (₹)', measured['average_turnover'], rules.min_turnover_rupees, True)):
+                    check(label, actual, f'{"≥" if minimum else "≤"} {limit:g}', actual >= limit if minimum else actual <= limit)
+                check('Trend alignment', ' / '.join(f'{measured[k]:.2f}' for k in ('close', 'ma20', 'ma50', 'ma100')),
+                      'Close ≥ SMA20 ≥ SMA50 ≥ SMA100; rising SMA50' if rules.strict_trend else 'Close ≥ SMA50 ≥ SMA100; rising SMA50', True)
         if cfg.require_long_trend or cfg.require_rising_long_trend:
             long = averages[200][signal_idx]
             check('Price above SMA 200', signal['close'], f'> {long:.2f}' if long is not None else 'More history required', signal['close'] > long if long is not None else None)
@@ -173,6 +198,8 @@ def explain_trade(result, datasets, trade, bars, first, last):
     notices = ['Indicators use the full saved history before the chart is cropped. Signal checks use only the completed signal session.',
                ('The active stop uses the recorded engine trace. BUY/SELL markers are the recorded ledger.' if trade.get('stop_trace') else
                 'The active stop is reconstructed from saved settings and fills; older engine versions may differ. BUY/SELL markers are the recorded ledger.')]
+    if investor:
+        notices.append('Technical investor baseline only. Approaching-breakout rows do not enter; financial assessments and news interpretations are excluded.')
     if any(x.get('symbol') == trade['symbol'] and trade['entry_date'] < x['date'] <= trade['exit_date']
            for x in result.get('corporate_actions', [])):
         for row in enriched:

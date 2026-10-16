@@ -23,6 +23,7 @@ assert.match(context.page,/Portfolio holdings/);
 assert.match(context.page,/New catalysts/);
 assert.match(context.page,/Dated review history/);
 assert.match(context.page,/Automatic profit exits are disabled/);
+assert.match(context.page,/Backtest technical rules/);
 vm.runInContext(`investorState.queues={candidates:[],holdings:[],catalysts:[],alerts:[{id:'a',review_id:'r',kind:'material_news_review',status:'open',company:{symbol:'<ALERT>'},reason:'<script>bad</script>'}]};globalThis.alertPage=investorView();`,context);
 assert.match(context.alertPage,/&lt;ALERT&gt;/);
 assert.doesNotMatch(context.alertPage,/<script>bad/);
@@ -37,6 +38,38 @@ assert.match(context.detailsPage,/&lt;script&gt;unsafe/);
 assert.doesNotMatch(context.detailsPage,/<script>unsafe/);
 assert.match(context.detailsPage,/Quote trade time Unknown/);
 console.log('Investor UI checks passed.');
+
+(async()=>{
+  context.structuredClone=structuredClone;
+  vm.runInContext(`
+    state.backtest_schema={properties:{
+      candidate_rank:{type:'string',title:'Priority',enum:['alphabetical','rs_126','fundamental_score'],default:'alphabetical'},
+      buy_cost_bps:{type:'number',title:'Buy costs',default:10},sell_cost_bps:{type:'number',title:'Sell costs',default:10},
+      slippage_bps:{type:'number',title:'Slippage',default:10},
+      name:{type:'string',title:'Name'},start:{type:'string',format:'date',title:'Start'},end:{type:'string',format:'date',title:'End'}
+    },$defs:{Rules:{properties:{
+      resistance_sessions:{type:'integer',title:'Resistance sessions',default:40},
+      max_extension_pct:{type:'number',title:'Maximum extension above pivot (%)',default:5},
+      strict_trend:{type:'boolean',title:'Strict trend',default:false}
+    }}}};
+    modal=(title,html)=>{globalThis.dialogTitle=title;globalThis.dialogHtml=html;};
+    document.querySelector=selector=>selector==='#modal'?{open:true}:null;
+    updateBacktestAvailability=()=>{};
+    api=async path=>{globalThis.requestPath=path;return {start:'2025-10-01',end:'2026-10-09',history_start:'2018-01-01',history_end:'2026-10-09',ready_symbols:600,total_symbols:750};};
+  `,context);
+  await vm.runInContext(`newBacktest({pattern:'investor_early_breakout',investor_rules:{resistance_sessions:60,max_extension_pct:3,strict_trend:true}})`,context);
+  assert.match(context.requestPath,/warmup=100/);
+  assert.match(context.dialogHtml,/name="investor_resistance_sessions"[^>]*value="60"/);
+  assert.match(context.dialogHtml,/name="investor_max_extension_pct"[^>]*value="3"/);
+  assert.match(context.dialogHtml,/name="investor_strict_trend"[^>]*checked/);
+  assert.match(context.dialogHtml,/name="buy_cost_bps"[^>]*value="10"/);
+  assert.doesNotMatch(context.dialogHtml,/value="fundamental_score"/);
+  assert.doesNotMatch(context.dialogHtml,/name="entry_mode"/);
+  assert.match(context.dialogHtml,/value="investor_early_breakout" selected/);
+  assert.match(context.dialogHtml,/Financial and news assessments are excluded/);
+  assert.equal(vm.runInContext(`state.backtest_schema.properties.candidate_rank.enum.includes('fundamental_score')`,context),true);
+  console.log('Investor backtest dialog preserves saved rules, warmup, cost defaults and the general schema.');
+})().catch(error=>{console.error(error);process.exitCode=1;});
 
 vm.runInContext(`investorEvidence.news_coverage={status:'full_article_unavailable',reason:'<unsafe>'};globalThis.coveragePage=investorView();`,context);
 assert.match(context.coveragePage,/full_article_unavailable/);

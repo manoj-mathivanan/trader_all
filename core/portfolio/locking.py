@@ -8,8 +8,13 @@ from core.research import store
 
 @contextmanager
 def mutex(name, timeout=5):
-    if name not in ('scalping_runner', 'scalping_portfolio', 'scalping_control'):
+    if name not in ('scalping_runner', 'scalping_portfolio', 'scalping_control', 'live_runner', 'live_control'):
         raise ValueError('Unknown process lock.')
+    if store.database_enabled():
+        from core.research import postgres_store
+        with postgres_store.mutex(name, timeout):
+            yield
+        return
     directory = store.DATA / 'locks'
     directory.mkdir(parents=True, exist_ok=True)
     with (directory/(name+'.lock')).open('a+b') as handle:
@@ -31,7 +36,7 @@ def mutex(name, timeout=5):
                 if exc.errno not in (errno.EACCES, errno.EAGAIN, errno.EDEADLK):
                     raise
                 if time.monotonic() >= deadline:
-                    raise ValueError('Scalping process lock is busy.') from None
+                    raise ValueError('Trading process lock is busy.') from None
                 time.sleep(.02)
         try:
             yield

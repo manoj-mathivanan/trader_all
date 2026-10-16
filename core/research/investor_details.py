@@ -89,6 +89,17 @@ def financial_summary(sections):
     operating = history(data('cash_flow', {}), 'cash_flow', 'operating')
     metrics['operating_cash_flow'] = operating[0] if operating else None
     ratios = {r['name']: dict(company=number(r.get('company_value')), sector=number(r.get('sector_value'))) for r in data('ratios', []) if isinstance(r, dict) and 'name' in r}
+    supplement=sections.get('financial_supplement',{})
+    extra=supplement.get('data',{}) if supplement.get('status')=='available' else {}
+    if extra.get('debt_equity') is not None:
+        official=extra.get('official_reconciliation') or {}
+        ratios['Debt/Equity']=dict(company=extra['debt_equity'],sector=None,source=official.get('url') or supplement.get('url'),source_pages=official.get('source_pages'),source_sha256=official.get('source_sha256'),period=extra['period'],statement_basis=extra['statement_basis'])
+    current_profit=metrics['net_profit']
+    cash=metrics.get('operating_cash_flow') or {}
+    if (cash.get('period')!=current_profit.get('period') or number(cash.get('value')) is None) and extra.get('operating_cash_flow') is not None and extra.get('period')==current_profit.get('period'):
+        metrics['operating_cash_flow']=dict(value=extra['operating_cash_flow'],period=extra['period'],source=supplement.get('url'))
+    equity_rows=[r for f in data('balance_sheet',{}).get('full_statement',[]) if f.get('particular')=='Equity Capital' for r in f.get('history',[]) if r.get('period')==current_profit.get('period')]
+    metrics['balance_equity']=dict(equity_rows[0]) if equity_rows else None
     shares = {r['category']: r.get('history', []) for r in data('shareholding', []) if isinstance(r, dict) and 'category' in r}
     profile = data('profile', {})
     basis=sections.get('annual_income',{}).get('statement_basis') or annual.get('type','consolidated')
@@ -142,7 +153,7 @@ def technical(item):
                 source='Derived from adjusted, audited Upstox daily candles', evidence_sha256=market_history.digest(bars[-101:]))
 
 
-def refresh(items, *, force=False, transport=None, log=lambda message: None):
+def refresh(items, *, force=False, transport=None, supplemental_transport=None, log=lambda message: None):
     items = list({i['isin']: i for i in items}.values())
     try:
         token = store.token()
@@ -204,6 +215,10 @@ def refresh(items, *, force=False, transport=None, log=lambda message: None):
                     except (httpx.HTTPError,ValueError):standalone[name]=dict(status='unavailable',as_of=store.now(),statement_basis='standalone')
                 if statement_usable(standalone,require_cash=require_cash):sections.update(standalone);basis='standalone'
             # Select the entire statement family; never mix consolidated and standalone growth.
+            if transport is None or supplemental_transport is not None:
+                from core.research import investor_financials
+                sections['financial_supplement']=investor_financials.fetch(item,basis,sections,force=force,transport=supplemental_transport)
+                if transport is None:time.sleep(.3)
             usable = {k: v for k, v in sections.items() if v['status'] == 'available'}
             value = dict(company=item, as_of=store.now(), sections=sections, fundamentals=financial_summary(usable),
                          statement_basis=basis,statement_alternatives=dict(consolidated=consolidated,standalone=standalone),

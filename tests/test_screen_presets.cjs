@@ -64,6 +64,21 @@ const form = context.form;
 function changeScreen(value) {
   listeners.change({target:{id:'screen-picker',value,closest:()=>form}});
 }
+
+const referencePrior=vm.runInContext('state.screens',context);
+const referenceHidden=vm.runInContext(`readForm({elements:{investor_news_exits:{type:"hidden",value:"false"},require_long_trend:{type:"hidden",value:"true"}}},{properties:{investor_news_exits:{type:"boolean"},require_long_trend:{type:"boolean"}}})`,context);
+assert.equal(referenceHidden.investor_news_exits,false);
+assert.equal(referenceHidden.require_long_trend,true);
+vm.runInContext(`state.screens=[{id:"reference_paper",pattern:"blue_sky",backtest_defaults:{slippage_bps:0},paper_defaults:{simulation_model:"banana_proxy_v1",slippage_bps:10,fundamental_mode:"required",investor_news_exits:false}}]`,context);
+assert.equal(vm.runInContext(`screenPreset("reference_paper",true).slippage_bps`,context),10);
+assert.equal(vm.runInContext(`screenPreset("reference_paper").slippage_bps`,context),0);
+
+context.priorScreens=referencePrior;vm.runInContext('state.screens=priorScreens',context);
+const opportunityPanel=vm.runInContext(`referenceAuditPanel({candidate_audit:[{symbol:'<unsafe>',date:'2026-01-02',decision_date:'2026-01-01',pivot:100,rs:75,rs_population:433,median_turnover:10000000,cash_before:1000000,positions_before:10,quantity:0,reason:'Book full'}],audit_summary:{'Book full':1}})`,context);
+assert.match(opportunityPanel,/Opportunity audit/);
+assert.match(opportunityPanel,/Book full/);
+assert.match(opportunityPanel,/&lt;unsafe&gt;/);
+assert.equal(vm.runInContext('referenceAuditPanel({})',context),'');
 (async () => {
   // Custom -> built-in must reset every filter, not just the pattern name.
   changeScreen('custom_test');
@@ -130,6 +145,10 @@ function changeScreen(value) {
     assert.throws(()=>vm.runInContext(`validateBacktestDates(${JSON.stringify(dates)},{history_start:'2019-01-01',end:'2025-12-31'})`,context));
   }
   assert.doesNotThrow(()=>vm.runInContext("validateBacktestDates({start:'2019-01-01',end:'2025-12-31'},{history_start:'2019-01-01',end:'2025-12-31'})",context));
+  assert.throws(()=>vm.runInContext("validateBacktestDates({start:'2024-09-30',end:'2025-12-31',fee_model:'zerodha_equity'},{history_start:'2019-01-01',end:'2025-12-31'})",context),/Custom buy\/sell bps for earlier tests/);
+  assert.doesNotThrow(()=>vm.runInContext("validateBacktestDates({start:'2024-10-01',end:'2025-12-31',fee_model:'zerodha_equity'},{history_start:'2019-01-01',end:'2025-12-31'})",context));
+  assert.doesNotThrow(()=>vm.runInContext("validateBacktestDates({start:'2019-01-01',end:'2025-12-31',fee_model:'custom_bps'},{history_start:'2019-01-01',end:'2025-12-31'})",context));
+  assert.throws(()=>vm.runInContext("validateBacktestDates({start:'2025-01-01',end:'2025-01-01'},null)",context),/End date must be after start date/);
   assert.doesNotThrow(()=>vm.runInContext("validateBacktestDates({start:'2020-01-01',end:'2026-10-08'},{history_start:'2019-01-01',end:'2025-12-31',history_end:'2026-10-09'})",context));
   assert.match(vm.runInContext("field('start',state.backtest_schema,'',backtestDateBounds({}))",context),/disabled/);
   assert.doesNotMatch(context.body, /<select name="pattern"/);
@@ -181,7 +200,7 @@ function changeScreen(value) {
   // An active job gets an explanation and polling can re-enable the existing form.
   vm.runInContext(`
     globalThis.submit={disabled:false};globalThis.availability={textContent:'',hidden:false};
-    globalThis.runtimeForm={dataset:{},querySelector:()=>submit};
+    globalThis.runtimeForm={dataset:{},elements:{fee_model:{value:'custom_bps'},start:{value:'2020-01-01'}},querySelector:()=>submit};
     document.querySelector=selector=>selector==='#backtest-form'?runtimeForm:selector==='#backtest-availability'?availability:null;
     backtestWindow={start:'2020-01-01',missing_symbols:[]};state.jobs=[{type:'Backtest',status:'running'}];
     updateBacktestAvailability();
@@ -189,6 +208,13 @@ function changeScreen(value) {
   assert.equal(context.submit.disabled,true);
   assert.match(context.availability.textContent,/Backtest is running/);
   vm.runInContext('state.jobs=[];updateBacktestAvailability()',context);
+  assert.equal(context.submit.disabled,false);
+  vm.runInContext("runtimeForm.elements.fee_model.value='zerodha_equity';updateBacktestAvailability()",context);
+  assert.equal(context.submit.disabled,true);
+  assert.match(context.availability.textContent,/Custom buy\/sell bps for earlier tests/);
+  vm.runInContext("runtimeForm.elements.start.value='2024-10-01';updateBacktestAvailability()",context);
+  assert.equal(context.submit.disabled,false);
+  vm.runInContext("runtimeForm.elements.start.value='2020-01-01';runtimeForm.elements.fee_model.value='custom_bps';updateBacktestAvailability()",context);
   assert.equal(context.submit.disabled,false);
   vm.runInContext("backtestWindow.missing_symbols=['IDEA'];updateBacktestAvailability()",context);
   assert.equal(context.submit.disabled,false);

@@ -1,5 +1,7 @@
 $ErrorActionPreference = 'Stop'
 Set-Location -LiteralPath $PSScriptRoot
+. "$PSScriptRoot/scripts/database_connection.ps1"
+Import-TraderDatabaseConnection
 . "$PSScriptRoot/scripts/research_connection.ps1"
 Import-TraderResearchConnection
 $env:TRADER_ENABLE_LOCAL_PAPER = '1'
