@@ -8,6 +8,9 @@ function Import-TraderDatabaseConnection {
         $databaseConfig.ssh_target -notmatch '^[a-zA-Z0-9_-]+@[a-zA-Z0-9.-]+$') {
         throw 'Invalid local database connection configuration.'
     }
+    $databaseShell = (Get-Process -Id $PID).Path
+    $databaseTunnelScript = Join-Path $PSScriptRoot 'database_tunnel.ps1'
+    Start-Process -FilePath $databaseShell -ArgumentList @('-NoProfile','-File',('"'+$databaseTunnelScript+'"')) -WindowStyle Hidden | Out-Null
     $databaseListener = Get-NetTCPConnection -State Listen -LocalPort 55440 -ErrorAction SilentlyContinue
     if ($databaseListener) {
         $databaseTunnelProcess = Get-CimInstance Win32_Process -Filter "ProcessId=$($databaseListener[0].OwningProcess)"
@@ -17,9 +20,6 @@ function Import-TraderDatabaseConnection {
         }
     } else {
         if (-not (Test-Path -LiteralPath $databaseConfig.ssh_key -PathType Leaf)) { throw 'Database SSH key is missing.' }
-        $databaseTunnelArguments = @('-N','-L','127.0.0.1:55440:127.0.0.1:5432','-i',('"'+$databaseConfig.ssh_key+'"'),
-            '-o','ExitOnForwardFailure=yes','-o','ServerAliveInterval=30','-o','ServerAliveCountMax=3','-o','BatchMode=yes',$databaseConfig.ssh_target)
-        Start-Process -FilePath ssh.exe -ArgumentList $databaseTunnelArguments -WindowStyle Hidden | Out-Null
         for ($databaseAttempt=0; $databaseAttempt -lt 40; $databaseAttempt++) {
             if (Get-NetTCPConnection -State Listen -LocalPort 55440 -ErrorAction SilentlyContinue) { break }
             Start-Sleep -Milliseconds 250
