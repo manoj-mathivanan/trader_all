@@ -10,6 +10,7 @@ from pydantic import ValidationError
 from core.portfolio import paper, manager
 from core.research import backtest, banana_reference as ref, fundamentals, store, strategy_presets
 from core.research.config import Settings
+from core.research.config import BacktestConfig
 
 
 class ReferencePaperTests(unittest.TestCase):
@@ -83,6 +84,18 @@ class ReferencePaperTests(unittest.TestCase):
         self.assertEqual(audit[1]['positions_before'],1)
         self.assertTrue(all(a['technical_eligible'] for a in audit))
         self.assertEqual(audit[0]['sizing_constraint'],'risk')
+
+    def test_research_run_persists_complete_audit_without_execution_state(self):
+        values={k:v for k,v in self.cfg.model_dump().items() if k in BacktestConfig.model_fields}
+        cfg=BacktestConfig(**values,start=self.rows[253]['date'],end=self.rows[255]['date'])
+        universe=dict(instruments=[dict(symbol='A',isin='TEST00000001')])
+        with tempfile.TemporaryDirectory() as folder,patch.object(store,'DATA',Path(folder)),\
+             patch.object(backtest,'prepare',return_value=(universe,{'A':self.rows},[],[])):
+            backtest.run(Settings(start='2025-01-01',end=self.rows[-1]['date']),cfg,lambda _:None,'audit-test')
+            result=store.read('runs/audit-test')
+            self.assertNotIn('state',result)
+            self.assertTrue(result['candidate_audit'])
+            self.assertIn('Filled',result['audit_summary'])
 
     def test_separate_rs_population_does_not_trade_additional_stocks_or_use_future_prices(self):
         cfg=SimpleNamespace(**self.cfg.model_dump(),start=self.rows[253]['date'],end=self.rows[253]['date'])
