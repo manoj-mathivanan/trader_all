@@ -240,6 +240,24 @@ for _ in range(12):
         self.assertEqual(store.token(),'destination-token')
         self.assertEqual(len(store.read('archived_runs_index')),1)
 
+    def test_intraday_reindex_retains_candles_and_can_resume(self):
+        from scripts.reindex_intraday import run
+        name='intraday/5m/TEST/2026-10-01'
+        value={'bars':[{'time':'09:15','close':11},{'time':'09:20','close':12}]}
+        store.write(name,value)
+        with pg.transaction() as conn:
+            conn.execute('DELETE FROM trader.intraday_sessions WHERE namespace=%s',(self.namespace,))
+        with patch.object(pg,'project_intraday',side_effect=RuntimeError('interrupted')):
+            with self.assertRaises(RuntimeError):run(log=lambda *a,**k:None)
+        self.assertIsNone(store.read('storage/intraday_projection'))
+        self.assertEqual(store.read(name),value)
+        receipt=run(log=lambda *a,**k:None)
+        self.assertEqual((receipt['sessions'],receipt['candles']),(1,2))
+        row=pg.connection().execute('SELECT bars,candle_count FROM trader.intraday_sessions WHERE namespace=%s',(self.namespace,)).fetchone()
+        self.assertEqual(row,(value['bars'],2))
+        self.assertEqual(run(log=lambda *a,**k:None)['candles'],2)
+        self.assertEqual(store.read(name),value)
+
     def test_interrupted_import_resumes_only_committed_batches(self):
         source=self.root/'resume-source';source.mkdir()
         (source/'state').mkdir()
