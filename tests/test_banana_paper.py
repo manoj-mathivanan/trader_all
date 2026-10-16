@@ -64,6 +64,38 @@ class ReferencePaperTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'legacy ledgers'):
             self.sim(255,{'cash':1000000,'positions':{}})
 
+    def test_reference_entry_day_cannot_skip_stop_when_close_is_below_stop(self):
+        self.cfg.reference_same_day='reference'
+        self.rows[253].update(open=90,high=110,low=80,close=91)
+        result=self.sim(255)
+        self.assertEqual(result['trades'][0]['exit_date'],self.rows[253]['date'])
+        self.assertEqual(result['trades'][0]['exit'],92)
+
+    def test_audit_records_opportunities_before_position_limits(self):
+        self.cfg.max_positions=1
+        cfg=SimpleNamespace(**self.cfg.model_dump(),start=self.rows[253]['date'],end=self.rows[255]['date'])
+        with patch.object(ref,'setup_proxy',side_effect=lambda bs,i,c,*a:(i==252,100)):
+            result=backtest.simulate({'A':self.rows,'B':deepcopy(self.rows)},cfg,liquidate=False)
+        audit=result['candidate_audit']
+        self.assertEqual([(a['symbol'],a['reason']) for a in audit],[('A','Filled'),('B','Book full')])
+        self.assertEqual(audit[0]['decision_date'],self.rows[252]['date'])
+        self.assertEqual(audit[0]['cash_before'],self.cfg.capital)
+        self.assertEqual(audit[1]['positions_before'],1)
+        self.assertTrue(all(a['technical_eligible'] for a in audit))
+        self.assertEqual(audit[0]['sizing_constraint'],'risk')
+
+    def test_separate_rs_population_does_not_trade_additional_stocks_or_use_future_prices(self):
+        cfg=SimpleNamespace(**self.cfg.model_dump(),start=self.rows[253]['date'],end=self.rows[253]['date'])
+        peer=deepcopy(self.rows)
+        for row in peer[253:]:row['close']=1000000
+        with patch.object(ref,'setup_proxy',side_effect=lambda bs,i,c,*a:(i==252,100)):
+            result=ref.simulate({'A':self.rows},cfg,rs_data={'A':self.rows,'B':peer})
+        self.assertEqual(result['candidate_audit'][0]['rs_population'],2)
+        self.assertEqual(result['candidate_audit'][0]['rs'],50)
+        self.assertEqual(set(result['state']['positions']),{'A'})
+        with self.assertRaisesRegex(ValueError,'exact traded-stock'):
+            ref.simulate({'A':self.rows},cfg,rs_data={'B':peer})
+
     def test_reference_configuration_rejects_midday_and_news_exits(self):
         for values in [dict(investor_news_exits=True),dict(execution_time='midday',run_hour=12),
                        dict(winner_exit='take_8'),dict(candidate_rank='fundamental_score')]:
@@ -105,6 +137,10 @@ class ReferencePaperTests(unittest.TestCase):
             self.assertEqual(len(saved['ledger']['orders']),2)
             self.assertFalse(saved['cycles'][0]['fundamental_checks'][0]['buy_allowed'])
             self.assertEqual(saved['cycles'][0]['fundamental_checks'][0]['policy'],'observe')
+            self.assertNotIn('candidate_audit',saved['ledger'])
+            archive=store.read(saved['cycles'][0]['candidate_audit_reference'])
+            self.assertEqual(archive['records'][0]['reason'],'Filled')
+            self.assertEqual(saved['cycles'][0]['candidate_audit_count'],len(archive['records']))
             self.assertEqual(manager.get('swing_patterns','observe'),saved)
             changed=paper.PaperConfig(**{**saved['config'],'stop_pct':9})
             with self.assertRaisesRegex(ValueError,'separate reference scenario'):

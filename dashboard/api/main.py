@@ -1,6 +1,7 @@
 """Loopback-only research and simulated paper trading. No live broker orders."""
 import os
 import secrets
+import re
 from pathlib import Path
 from contextlib import asynccontextmanager
 from urllib.parse import urlsplit
@@ -446,6 +447,25 @@ def paper_config(strategy_id, value):
 @app.get('/api/strategies/{strategy_id}/paper/portfolio')
 def get_strategy_portfolio(strategy_id: str, portfolio_id: str | None = None):
     return portfolios.get(strategy_id, portfolio_id)
+
+
+@app.get('/api/strategies/{strategy_id}/paper/opportunities')
+def get_strategy_opportunities(strategy_id: str, portfolio_id: str | None = None, cycle_id: str | None = None):
+    portfolio = portfolios.get(strategy_id, portfolio_id)
+    if not portfolio or strategy_id != 'swing_patterns':
+        raise HTTPException(404,'Swing paper portfolio not found.')
+    identity = portfolio_id or strategy_id
+    if portfolio['id'] != identity:
+        raise HTTPException(409,'Portfolio identity mismatch.')
+    cycles = portfolio.get('cycles',[])
+    cycle = next((c for c in reversed(cycles) if cycle_id is None or c['job_id']==cycle_id),None)
+    if not cycle or not cycle.get('candidate_audit_reference'):
+        return dict(records=[],summary={},notice='No recorded opportunity audit for this cycle; older decisions are not reconstructed.')
+    job = cycle['job_id']
+    if not re.fullmatch(r'[A-Za-z0-9_-]{1,80}',job):
+        raise HTTPException(409,'Invalid cycle identity.')
+    return store.read('paper_candidate_audits/'+identity+'/'+job,
+                      dict(records=[],summary={},notice='Audit archive unavailable.'))
 
 
 @app.post('/api/strategies/{strategy_id}/paper/portfolio')

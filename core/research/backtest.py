@@ -608,6 +608,7 @@ def run(settings, cfg, log, job_id, *, fundamental_evidence=None, sector_evidenc
                             'No volume participation cap, circuit-limit or non-fill simulation; stops may fill worse in real markets.',
                             'This run is exploratory/in-sample. Reserve a later untouched period before judging the strategy.'])
     if cfg.simulation_model == 'banana_proxy_v1':
+        result['state'].pop('candidate_audit', None)  # Root trace already contains the complete research audit.
         result['warnings'] = [w for w in result['warnings'] if not w.startswith('No volume participation')]
         result['warnings'].extend(result.get('execution_notices', []))
     result['warnings'].extend(quality['warnings'])

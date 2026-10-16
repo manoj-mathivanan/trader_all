@@ -74,6 +74,11 @@ assert.equal(vm.runInContext(`screenPreset("reference_paper",true).slippage_bps`
 assert.equal(vm.runInContext(`screenPreset("reference_paper").slippage_bps`,context),0);
 
 context.priorScreens=referencePrior;vm.runInContext('state.screens=priorScreens',context);
+const opportunityPanel=vm.runInContext(`referenceAuditPanel({candidate_audit:[{symbol:'<unsafe>',date:'2026-01-02',decision_date:'2026-01-01',pivot:100,rs:75,rs_population:433,median_turnover:10000000,cash_before:1000000,positions_before:10,quantity:0,reason:'Book full'}],audit_summary:{'Book full':1}})`,context);
+assert.match(opportunityPanel,/Opportunity audit/);
+assert.match(opportunityPanel,/Book full/);
+assert.match(opportunityPanel,/&lt;unsafe&gt;/);
+assert.equal(vm.runInContext('referenceAuditPanel({})',context),'');
 (async () => {
   // Custom -> built-in must reset every filter, not just the pattern name.
   changeScreen('custom_test');

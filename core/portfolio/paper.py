@@ -244,6 +244,7 @@ def cycle(log, job_id, *, ingest=True, portfolio_id=None):
                                sector_observe_only=cfg.sector_observe_only,
                                fundamental_scores=ranking_score if cfg.candidate_rank == 'fundamental_score' else None)
     new_ledger = result['state']
+    candidate_audit = new_ledger.pop('candidate_audit', [])
     new_orders = new_ledger['orders'][len(ledger.get('orders', [])):]
     for order in new_orders:
         order.update(portfolio_id=portfolio['id'], mode='paper', job_id=job_id)
@@ -259,6 +260,13 @@ def cycle(log, job_id, *, ingest=True, portfolio_id=None):
     portfolio['cycles'][-1]['data_quality'] = quality
     portfolio['cycles'][-1]['fundamental_checks']=fundamental_checks
     portfolio['cycles'][-1]['sector_checks'] = result['sector_checks']
+    if cfg.simulation_model == 'banana_proxy_v1':
+        # Keep the full trace outside the frequently polled portfolio response.
+        audit_key = 'paper_candidate_audits/'+portfolio['id']+'/'+job_id
+        store.write(audit_key,dict(records=candidate_audit,summary=result['audit_summary']))
+        portfolio['cycles'][-1].update(candidate_audit=candidate_audit[-100:],
+            audit_summary=result['audit_summary'],candidate_audit_count=len(candidate_audit),
+            candidate_audit_reference=audit_key)
     if sector_snapshot is not None:
         # Do not freeze an empty mapping after a failed first refresh.
         if sector_snapshot['mappings'] and portfolio.get('sector_mapping') is None:
