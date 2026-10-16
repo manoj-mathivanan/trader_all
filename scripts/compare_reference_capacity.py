@@ -12,6 +12,7 @@ def main():
     parser.add_argument('--risk',type=float,choices=[.5,1])
     parser.add_argument('--universe',choices=['frozen','expanded_rs_only','expanded_trading'])
     parser.add_argument('--capital',type=float,default=1000000)
+    parser.add_argument('--max-positions',type=int,default=10)
     parser.add_argument('--source-prefix',help='Prefix of previously captured visible Banana ledger JSON files.')
     args=parser.parse_args()
     base,expanded,coverage=reference_universe.cached_expansion('b4584ee01955')
@@ -28,7 +29,8 @@ def main():
             if args.universe and label!=args.universe:continue
             for risk in ([args.risk] if args.risk else [1,.5]):
                 cfg=BacktestConfig(**{**preset['backtest_defaults'],'risk_pct':risk,
-                    'capital':args.capital,'reference_same_day':'conservative','slippage_bps':10},
+                    'capital':args.capital,'max_positions':args.max_positions,
+                    'reference_same_day':'conservative','slippage_bps':10},
                     start='2020-01-01',end='2026-09-30',acknowledge_limitations=True)
                 result=banana_reference.simulate(trade_data,cfg,rs_data=ranking)
                 m=result['metrics'];m['xirr_pct']=((m['final_equity']/cfg.capital)**(365/(cfg.end-cfg.start).days)-1)*100
@@ -39,7 +41,7 @@ def main():
                     entries.update((s,t['entry_date']) for s,t in result['open_positions'].items())
                     matches=dict(source_trades=len(source),source_entries_in_trading_universe=sum(s in trade_data for s,d in source),
                                  exact_entry_matches=len(entries&source))
-                print(json.dumps(dict(pattern=cfg.pattern,universe=label,risk_pct=risk,stocks=len(trade_data),
+                print(json.dumps(dict(pattern=cfg.pattern,universe=label,risk_pct=risk,max_positions=cfg.max_positions,stocks=len(trade_data),
                     rs_population_max=max(a['rs_population'] for a in result['candidate_audit']),metrics=m,
                     opportunities=len(result['candidate_audit']),technical_eligible=sum(a['technical_eligible'] for a in result['candidate_audit']),
                     decisions=counts,source_comparison=matches)),flush=True)
