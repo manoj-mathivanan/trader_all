@@ -155,4 +155,7 @@ main{min-height:calc(100vh - 68px)}
   main{min-height:calc(100vh - 64px)}
 }
 @media(max-width:390px){.topbar .brand>span:last-child{display:none}}
+.run-metrics .positive{color:#187443}
+.run-metrics .negative{color:var(--red)}
+[data-theme=dark] .run-metrics .positive{color:#76d6a0}
 [hidden]{display:none!important}
