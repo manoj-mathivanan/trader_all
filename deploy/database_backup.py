@@ -21,14 +21,14 @@ def main():
     for environment in ('production','local'):
         path=directory/('trader-'+environment+'-'+stamp+'.dump')
         temporary=path.with_suffix('.partial')
-        command=['docker','run','--rm','--network','host','--memory','256m','--memory-swap','512m','--cpus','0.5',
+        command=['docker','run','--rm','--log-driver','none','--network','host','--memory','256m','--memory-swap','512m','--cpus','0.5',
                  '--mount','type=bind,src=/srv/market-data/private/admin_password,dst=/run/secrets/admin_password,readonly',
                  '-e','PGDATABASE=trader_'+environment,'postgres:17-alpine','sh','-c',
                  'export PGPASSWORD="$(cat /run/secrets/admin_password)"; exec pg_dump -h 127.0.0.1 -U market_admin -d "$PGDATABASE" -Fc -Z 1']
         try:
             with temporary.open('xb') as output:subprocess.run(command,stdout=output,check=True)
             with temporary.open('rb') as source:
-                subprocess.run(['docker','run','--rm','-i','--memory','128m','postgres:17-alpine','pg_restore','--list'],stdin=source,stdout=subprocess.DEVNULL,check=True)
+                subprocess.run(['docker','run','--rm','--log-driver','none','-i','--memory','128m','postgres:17-alpine','pg_restore','--list'],stdin=source,stdout=subprocess.DEVNULL,check=True)
             checksum=hashlib.sha256()
             with temporary.open('rb') as source:
                 while chunk:=source.read(1024*1024):checksum.update(chunk)
