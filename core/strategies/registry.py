@@ -23,6 +23,7 @@ class StrategyDefinition:
 
 
 REGISTRY = (
+    StrategyDefinition("four_indicator_swing", "Four-indicator daily swing", "Daily equity adaptation · Supertrend / RSI / R1 / Bollinger · backtests and paper", "active", "daily", "batch", "four_indicator_swing"),
     StrategyDefinition("swing_patterns", "Swing patterns", "End-of-day · Indian equities", "active", "daily", "batch", "daily_breakout"),
     StrategyDefinition("intraday_momentum", "Intraday momentum", "Opening range · relative volume · research", "active", "intraday_5m", "batch", "opening_range_momentum"),
     StrategyDefinition("scalping", "Scalping", "One-minute pullbacks · EMA / VWAP · research", "active", "intraday_1m", "batch", "scalping_pullback"),

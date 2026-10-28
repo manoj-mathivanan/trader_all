@@ -1,6 +1,8 @@
 """Explicitly armed, forward-only long swing execution with durable broker reconciliation."""
 import math
 import threading
+from contextvars import copy_context
+from core.research import identity
 from datetime import date, datetime, timedelta, timezone, time
 from typing import Literal
 from uuid import uuid4
@@ -50,6 +52,14 @@ class Connection(BaseModel):
 _thread = None
 _stop = threading.Event()
 _guard = threading.RLock()
+_runners = {}
+
+def stop_event():
+    if not identity.username():
+        return _stop
+    with _guard:
+        return _runners.setdefault(identity.username(), {'stop': threading.Event(), 'thread': None})['stop']
+
 TERMINAL = {'complete', 'cancelled', 'rejected', 'not_placed'}
 
 
@@ -112,7 +122,7 @@ def save_connection(value):
 
 def connection_change():
     if running():
-        raise ValueError('Stop the live runner before replacing the shared Upstox token.')
+        raise ValueError('Stop the live runner before replacing your trading token.')
     store.write('live/account', None)
 
 
@@ -255,7 +265,7 @@ def reconcile(broker, state, book):
 
 
 def submit(broker, state, item, side, quantity, price, signal_day, connection, reason, quote):
-    if _stop.is_set():
+    if stop_event().is_set():
         raise ValueError('Runner stop requested. No further order will be submitted.')
     current = clock()
     current_time = current.time().replace(tzinfo=None)
@@ -485,7 +495,7 @@ def preview():
 def _run():
     try:
         with mutex('live_runner', timeout=0):
-            while not _stop.is_set():
+            while not stop_event().is_set():
                 try:
                     with mutex('live_control', timeout=30), Broker() as broker:
                         result = cycle(broker, execute=True)
@@ -495,39 +505,50 @@ def _run():
                     status = {'status': 'attention', 'message': str(exc) if isinstance(exc, ValueError)
                               else 'Live cycle failed. Automatic orders are blocked until the next successful reconciliation.'}
                 store.write('live/runner', {**status, 'heartbeat_at': store.now()})
-                _stop.wait(15)
+                stop_event().wait(15)
     except ValueError:
         pass  # Another process already owns live execution.
     finally:
-        if _stop.is_set():
+        if stop_event().is_set():
             store.write('live/runner', {'status': 'stopped', 'message': 'Runner stopped. Open broker orders and exposure remain.', 'heartbeat_at': store.now()})
 
 
 def start():
     global _thread
     with _guard:
-        if running() or (_thread and _thread.is_alive()):
+        existing = _runners.get(identity.username(), {}).get('thread') if identity.username() else _thread
+        if running() or (existing and existing.is_alive()):
             return public_state()
         with mutex('live_control', timeout=30), Broker() as broker:
             verify_account(broker, require_setup=True)
             account = refresh_account(broker)
             state = ledger()
             reconcile(broker, state, account['orders'])
-        _stop.clear()
-        _thread = threading.Thread(target=_run, name='upstox-live', daemon=True)
-        _thread.start()
+        stop_event().clear()
+        context = copy_context()
+        thread = threading.Thread(target=lambda: context.run(_run), name='upstox-live', daemon=True)
+        if identity.username():
+            _runners[identity.username()]['thread'] = thread
+        else:
+            _thread = thread
+        thread.start()
     return public_state()
 
 
 def stop():
-    _stop.set()
+    stop_event().set()
     return {'stopping': True, 'message': 'Stopping after the current cycle. Pending broker orders and holdings remain; monitoring will stop.'}
 
 
 def shutdown():
     _stop.set()
-    if _thread:
-        _thread.join(timeout=2)
+    with _guard:
+        runners = list(_runners.values())
+    for runner in runners:
+        runner['stop'].set()
+    for thread in [_thread, *[r['thread'] for r in runners]]:
+        if thread:
+            thread.join(timeout=2)
 
 
 def pause(paused):

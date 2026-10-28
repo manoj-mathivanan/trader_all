@@ -67,6 +67,8 @@ def match_constituents(rows, master):
 
 
 def refresh_universe(settings, log):
+    from core.research.identity import require_data_admin
+    require_data_admin()
     # The public NSE download stalls with the default httpx user agent.
     with httpx.Client(timeout=20, follow_redirects=True, headers={"User-Agent": "Mozilla/5.0", "Accept": "text/csv,application/json,*/*"}) as client:
         log(f"Downloading official {settings.universe} current constituent list.")
@@ -91,6 +93,8 @@ def refresh_universe(settings, log):
 
 
 def ingest_expansion(settings, log):
+    from core.research.identity import require_data_admin
+    require_data_admin()
     """Pull Total Market members without cached candles; paper stays frozen."""
     if settings.universe != "niftytotalmarket":
         raise ValueError("Universe expansion requires Nifty Total Market.")
@@ -124,6 +128,8 @@ def validate_candles(candles, start, end):
 
 
 def fetch_range(client, instrument, access_token, start, end):
+    from core.research.identity import require_data_admin
+    require_data_admin()
     """Fetch one inclusive boundary range from Upstox and normalize it."""
     if start > end:
         return []
@@ -160,6 +166,8 @@ def merge_candles(existing, additions):
 
 
 def ingest(settings, log, *, universe=None, extend_history=True):
+    from core.research.identity import require_data_admin
+    require_data_admin()
     access_token = store.token()
     universe = universe or store.read("universes/" + settings.universe)
     if not universe:

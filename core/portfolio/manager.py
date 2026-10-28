@@ -9,7 +9,7 @@ def key(strategy_id, portfolio_id=None):
     if not get_strategy(strategy_id):
         raise ValueError('Unknown strategy.')
     if portfolio_id is not None and portfolio_id != strategy_id:
-        if strategy_id != 'swing_patterns' or not re.fullmatch(r'[a-z][a-z0-9_-]{0,63}', portfolio_id):
+        if strategy_id not in ('swing_patterns','four_indicator_swing') or not re.fullmatch(r'[a-z][a-z0-9_-]{0,63}', portfolio_id):
             raise ValueError('Invalid swing scenario identity.')
         return 'portfolio_scenarios/' + strategy_id + '/' + portfolio_id
     return 'portfolios/' + strategy_id
@@ -21,7 +21,7 @@ def get(strategy_id, portfolio_id=None):
 
 def list_portfolios(strategy_id):
     result = [get(strategy_id)] if get(strategy_id) else []
-    if strategy_id == 'swing_patterns':
+    if strategy_id in ('swing_patterns','four_indicator_swing'):
         result.extend(value for _,value in store.records('portfolio_scenarios/'+strategy_id+'/'))
     return [p for p in result if p]
 
@@ -29,7 +29,7 @@ def list_portfolios(strategy_id):
 def schedule_key(strategy_id, portfolio_id=None):
     key(strategy_id, portfolio_id)  # Registry validation also prevents path traversal.
     if portfolio_id and portfolio_id != strategy_id:
-        return 'paper_scenario_schedules/' + portfolio_id
+        return 'paper_scenario_schedules/' + (strategy_id+'/' if strategy_id != 'swing_patterns' else '') + portfolio_id
     # Preserve the existing Swing checkpoint and portfolio paths.
     return 'paper_schedule' if strategy_id == 'swing_patterns' else 'paper_schedules/' + strategy_id
 

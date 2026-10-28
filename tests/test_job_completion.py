@@ -2,6 +2,8 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
+from concurrent.futures import ThreadPoolExecutor
+from threading import Event
 from core.research import jobs, store
 
 
@@ -25,6 +27,34 @@ class JobCompletionTests(unittest.TestCase):
         job = self.run_job(lambda log, job_id:result)
         self.assertEqual(job['status'], 'warning')
         self.assertEqual(job['result'], result)
+
+    def test_backtests_queue_behind_running_work_and_continue_after_failure(self):
+        started, release = Event(), Event()
+        order = []
+        def paper(log, job_id):
+            order.append('paper')
+            started.set()
+            if not release.wait(5):
+                raise ValueError('Test worker timed out.')
+            raise ValueError('Paper refresh failed.')
+        def backtest(log, job_id):
+            order.append('backtest')
+            return {'saved': True}
+        with ThreadPoolExecutor(max_workers=1) as pool, patch.object(jobs, 'POOL', pool):
+            try:
+                first = jobs.submit('Paper daily cycle', paper)
+                self.assertTrue(started.wait(2))
+                second = jobs.submit('Backtest', backtest, allow_queue=True)
+                self.assertEqual(order, ['paper'])
+                self.assertEqual(store.read('jobs')[0]['status'], 'queued')
+                with self.assertRaisesRegex(ValueError, 'Another job is active'):
+                    jobs.submit('Fetch market history', backtest)
+            finally:
+                release.set()
+        records = {job['id']: job for job in store.read('jobs')}
+        self.assertEqual(order, ['paper', 'backtest'])
+        self.assertEqual(records[first['id']]['status'], 'failed')
+        self.assertEqual(records[second['id']]['status'], 'success')
 
     def test_provider_rejection_and_empty_coverage_remain_failed(self):
         def rejected(log, job_id):

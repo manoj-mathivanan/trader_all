@@ -1,4 +1,5 @@
 """Review every accessible body in bounded batches; retain incomplete coverage."""
+from core.research import service_credentials
 import hashlib,json
 from concurrent.futures import ThreadPoolExecutor
 from core.research import store,investor_intelligence as intel,investor_articles as articles
@@ -14,7 +15,7 @@ def interpret(settings,isin,*,context=None,force=False,transport=None,article_tr
         elif status=='available':status='pending_analysis';reason='Full body exceeds an individual review budget; no truncated text supplied.'
         coverage.append(dict(article_id=a['id'],title=a['title'],status=status,reason=reason))
     store.write('investor/article_coverage/'+isin,dict(as_of=store.now(),articles=coverage))
-    identity=hashlib.sha256(json.dumps(dict(context=context or {},model=intel.os.environ.get('TRADER_NEWS_MODEL'),prompt=intel.FULL_PROMPT,
+    identity=hashlib.sha256(json.dumps(dict(context=context or {},model=service_credentials.model(),prompt=intel.FULL_PROMPT,
         articles=[(a['id'],a['sha256'],d.get('response_sha256'),d['status']) for a,d in zip(value['articles'],docs)]),sort_keys=True).encode()).hexdigest()
     cached=store.read('investor/latest/'+isin,{})
     if not force and not cached.get('failed_batches') and cached.get('batch_cache_key')==identity and 0<=intel.cache_age(cached)<86400:
@@ -58,7 +59,7 @@ def interpret(settings,isin,*,context=None,force=False,transport=None,article_tr
         events=events,article_summaries=[a for r in reviews for a in r['article_summaries']],thesis_assessment=thesis,
         unknowns=list(dict.fromkeys(x for r in reviews for x in r['unknowns']))+['Unreadable articles are not evidence.'] if any(c['status']!='available' for c in coverage) else list(dict.fromkeys(x for r in reviews for x in r['unknowns'])),
         outlook='insufficient_evidence' if not events else 'neutral' if not directions else next(iter(directions)) if len(directions)==1 else 'mixed',
-        model=intel.os.environ.get('TRADER_NEWS_MODEL'),coverage=value['coverage'],news_as_of=value['as_of'],
+        model=service_credentials.model(),coverage=value['coverage'],news_as_of=value['as_of'],
         notice='All accessible bodies reviewed in bounded batches. Citations validated in each batch. Aggregation uses no new inferred facts; unreadable/failed coverage remains explicit.')
     store.write('investor/reviews/'+review['id'],review);store.write('investor/latest/'+isin,review)
     store.write('investor/article_coverage/'+isin,dict(as_of=store.now(),articles=coverage))

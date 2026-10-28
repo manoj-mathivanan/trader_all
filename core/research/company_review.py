@@ -1,4 +1,5 @@
 """Current financial evidence, deterministic buy-screen scores and advisory news research."""
+from core.research import service_credentials, accounts
 import hashlib
 import json
 import os
@@ -216,10 +217,10 @@ def recent_articles(evidence, isin, at):
 
 def llm_status():
     # Authentication is the default; an owner can explicitly enable public research.
-    if os.environ.get('TRADER_ENV', 'local') == 'production' and not (
+    if os.environ.get('TRADER_ENV', 'local') == 'production' and not accounts.enabled() and not (
             os.environ.get('DASHBOARD_ADMIN_USER') and os.environ.get('DASHBOARD_ADMIN_PASSWORD')) and os.environ.get('TRADER_ALLOW_UNAUTHENTICATED_RESEARCH') != '1':
         return dict(enabled=False, reason='Automatic web research requires authentication in production.')
-    enabled = bool(os.environ.get('OPENAI_API_KEY') and os.environ.get('TRADER_NEWS_MODEL'))
+    enabled = bool(service_credentials.key() and service_credentials.model())
     return dict(enabled=enabled, reason='' if enabled else 'Connect an LLM API on the server to enable automatic web research.')
 
 
@@ -333,7 +334,7 @@ def provider_response(payload, *, transport=None):
     try:
         with httpx.Client(timeout=180, transport=transport) as client:
             response = client.post('https://api.openai.com/v1/responses', json=payload,
-                                   headers={'Authorization': 'Bearer ' + os.environ['OPENAI_API_KEY']})
+                                   headers={'Authorization': 'Bearer ' + service_credentials.key()})
             response.raise_for_status()
             result = response.json()
         if result.get('status') != 'completed':
@@ -373,7 +374,7 @@ def discovered_sources(result):
 def research_web(item, *, transport=None, log=lambda message: None):
     if not llm_status()['enabled']:
         raise ValueError(llm_status()['reason'])
-    at, model = utcnow(), os.environ['TRADER_NEWS_MODEL']
+    at, model = utcnow(), service_credentials.model()
     log('Searching company filings and recent news on the web.')
     # Separate retrieval from extraction so structured output never suppresses search.
     search = provider_response(dict(model=model, store=False, max_output_tokens=8000,
@@ -502,7 +503,7 @@ def analyze_news(item, articles, *, transport=None):
         raise ValueError(llm_status()['reason'])
     if not articles:
         raise ValueError('Import recent article text before requesting an LLM review.')
-    model = os.environ['TRADER_NEWS_MODEL']
+    model = service_credentials.model()
     payload = dict(model=model, store=False, max_output_tokens=5000,
                    instructions=PROMPT,
                    input=json.dumps(dict(company=item, articles=articles)),
@@ -510,7 +511,7 @@ def analyze_news(item, articles, *, transport=None):
     try:
         with httpx.Client(timeout=60, transport=transport) as client:
             response = client.post('https://api.openai.com/v1/responses', json=payload,
-                                   headers={'Authorization': 'Bearer ' + os.environ['OPENAI_API_KEY']})
+                                   headers={'Authorization': 'Bearer ' + service_credentials.key()})
             response.raise_for_status()
             result = response.json()
         if result.get('status') != 'completed':

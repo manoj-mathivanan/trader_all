@@ -18,7 +18,7 @@ class BrokerError(ValueError):
 class Broker:
     def __init__(self, *, transport=None):
         self.client = httpx.Client(timeout=15, follow_redirects=False, transport=transport,
-                                  headers={'Authorization': 'Bearer ' + store.token(), 'Accept': 'application/json'})
+                                  headers={'Authorization': 'Bearer ' + store.token(trading=True), 'Accept': 'application/json'})
 
     def __enter__(self):
         return self

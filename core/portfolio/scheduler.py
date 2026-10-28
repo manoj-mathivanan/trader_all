@@ -53,7 +53,7 @@ def tick():
                 continue
             if any(j['status'] in ('queued', 'running') for j in store.read('jobs', [])):
                 return
-            runner = partial(paper.cycle, portfolio_id=portfolio['id']) if strategy_id == 'swing_patterns' else plugin.run_cycle
+            runner = partial(plugin.run_cycle, portfolio_id=portfolio['id']) if strategy_id in ('swing_patterns','four_indicator_swing') else plugin.run_cycle
             job = jobs.submit('Paper daily cycle', runner,
                               {'portfolio_id': portfolio['id'], 'strategy_id': strategy_id, 'trigger': 'schedule'})
             store.write(checkpoint_key, {'attempt_day': day, 'at': store.now(), 'job_id': job['id']})

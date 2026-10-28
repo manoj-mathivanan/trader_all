@@ -6,21 +6,136 @@ from core.research.config import TradingConfig
 from core.research import store
 
 
+def reference_trade_explanation(result, trade, bars, first, last):
+    from statistics import median
+    from core.research import corporate_actions
+    from core.research.banana_reference import NOTICES, setup_proxy
+
+    cfg = SimpleNamespace(**result['config'])
+    audit = next((a for a in result.get('candidate_audit', [])
+                  if a.get('symbol') == trade['symbol'] and a.get('date') == trade['entry_date']
+                  and a.get('reason') == 'Filled'), None)
+    decision_index = first - (1 if cfg.entry_mode == 'pivot' else 2)
+    decision_day = audit.get('decision_date') if audit else None
+    if decision_day:
+        decision_index = next((i for i, b in enumerate(bars) if b['date'] == decision_day), -1)
+    decision = bars[decision_index] if decision_index >= 0 else None
+    checks = []
+
+    def check(label, actual, required, passed=None):
+        checks.append(dict(label=label, actual=actual, required=required, passed=passed))
+
+    setup_pivot = None
+    if decision:
+        prior = corporate_actions.adjusted_bars(bars, decision['date'])
+        qualified, setup_pivot = setup_proxy(prior, decision_index, cfg)
+        check('Completed pattern setup', 'Qualified' if qualified else 'Did not qualify',
+              'Saved fixed-rule '+cfg.pattern.replace('_', ' ')+' setup', qualified)
+        if cfg.pattern == 'blue_sky' and setup_pivot:
+            proximity = prior[decision_index]['close'] / setup_pivot * 100
+            check('Close / highest historical close (%)', proximity, '80–100%', 80 <= proximity <= 100)
+    else:
+        check('Completed pattern setup', None, 'Completed setup-session candles required')
+
+    # The audit pivot is in the entry session's price units. Older reports can
+    # reconstruct it only from frozen setup candles and verified share actions.
+    pivot = audit.get('pivot') if audit else setup_pivot
+    if not audit and pivot is not None:
+        for action in corporate_actions.actions(bars):
+            if action['ex_date'] == trade['entry_date'] and action['price_basis'] == 'raw':
+                pivot /= action['share_factor']
+    trigger = bars[first] if cfg.entry_mode == 'pivot' else bars[first-1] if first else None
+    actual = trigger['high' if cfg.entry_mode == 'pivot' else 'close'] if trigger else None
+    check('Entry-session high above pivot' if cfg.entry_mode == 'pivot' else 'Completed breakout close above pivot',
+          actual, f'> {pivot:.2f}' if pivot is not None else 'Saved pivot unavailable',
+          actual > pivot if actual is not None and pivot is not None else None)
+    strength = audit.get('rs') if audit else None
+    floor = {'vcp': 70, 'blue_sky': 70, 'multiyear': 60, 'ipo': 0}[cfg.pattern]
+    population = audit.get('rs_population') if audit else None
+    check('Weighted relative strength', strength, f'≥ {floor}; '+(f'{population} eligible stocks' if population is not None else 'Saved rank unavailable'),
+          strength >= floor if strength is not None else None)
+    liquidity = audit.get('median_turnover') if audit else None
+    if liquidity is None and decision:
+        liquidity = median(b['close'] * b['volume'] for b in prior[max(0, decision_index-19):decision_index+1])
+    check('Median 20-session turnover (₹)', liquidity, '≥ 10,000,000',
+          liquidity >= 10000000 if liquidity is not None else None)
+    if audit:
+        positions = audit.get('positions_before')
+        check('Open positions before entry', positions, f'< {cfg.max_positions}',
+              positions < cfg.max_positions if positions is not None else None)
+        check('Entry priority', audit.get('priority'), 'Higher weighted RS first, then turnover')
+        check('Position sizing constraint', audit.get('sizing_constraint'), 'Recorded limiting factor')
+        if audit.get('eligibility_checked'):
+            passed = audit.get('eligibility_passed')
+            check('Additional entry eligibility', 'Allowed' if passed else 'Blocked', 'Allowed', passed)
+    notices = [*NOTICES,
+               'Setup checks are reconstructed from frozen candles at the completed decision session. Breakout checks use the entry or completed breakout session.']
+    notices.append('RS, turnover, priority and portfolio context come from this trade’s recorded Filled audit.' if audit else
+                   'This older trade has no saved Filled audit. Its historical RS rank and portfolio context are unavailable; no current data is substituted.')
+    if any(c['passed'] is False for c in checks):
+        notices.append('A reconstructed check differs from the saved fill. Historical engine rules may differ; the recorded trade is unchanged.')
+    enriched = [dict(b, chart_values={}) for b in bars]
+    for i, row in enumerate(enriched):
+        if i >= 49:
+            row['chart_values']['sma_50'] = sum(b['close'] for b in bars[i-49:i+1])/50
+        if first <= i <= last:
+            row['chart_values']['initial_stop'] = trade['entry']*(1-cfg.stop_pct/100)
+        if pivot is not None and max(0, decision_index) <= i <= last:
+            row['chart_values']['trigger'] = pivot
+    series = [dict(id='sma_50', label='SMA50 closing exit line', color='#d18b26'),
+              dict(id='initial_stop', label='Initial entry-relative stop', color='#bd5869')]
+    if pivot is not None:
+        series.append(dict(id='trigger', label='Recorded entry pivot' if audit else 'Reconstructed entry pivot', color='#2596a2'))
+    return dict(bars=enriched, pattern=cfg.pattern, entry_mode=cfg.entry_mode,
+                winner_exit=cfg.winner_exit, candidate_rank='weighted_rs',
+                signal={'date': decision['date']} if decision else None,
+                checks=checks, series=series, notices=notices)
+
+
+def indicator_trade_explanation(result, trade, bars):
+    from core.strategies.four_indicator import indicators, decision
+    from core.research.four_indicator_swing import RULES, stored_parameters
+    params = stored_parameters(result['config'])
+    values = indicators(bars, bollinger_multiplier=params['bollinger_multiplier'])
+    rule = next(r for r in RULES if r[0] == result['config']['rule_set'])
+    series = [dict(id=key, label=label, color=color, pane=pane) for key, label, color, pane in (
+        ('supertrend', 'Supertrend (10, 3)', '#2596a2', 'price'),
+        ('r1', 'Prior-day R1', '#d18b26', 'price'),
+        ('upper_band', f"Bollinger upper (20, {params['bollinger_multiplier']:g})", '#5879c6', 'price'),
+        ('rsi', 'RSI (14)', '#9766c5', 'rsi'),
+        ('rsi_threshold', f"RSI threshold {params['rsi_threshold']:g}", '#8c998c', 'rsi'))]
+    enriched = []
+    signal = None
+    checks = []
+    for i, (bar, value) in enumerate(zip(bars, values)):
+        levels = {k: value[k] for k in ('supertrend', 'upper_band', 'rsi') if value[k] is not None}
+        levels['rsi_threshold'] = params['rsi_threshold']
+        if i:
+            prior = bars[i-1]
+            levels['r1'] = 2 * (prior['high'] + prior['low'] + prior['close']) / 3 - prior['low']
+        enriched.append(dict(bar, chart_values=levels))
+        if bar['date'] == trade['signal_date'] and i:
+            signal = dict(date=bar['date'], timestamp=bar['timestamp'], price=bar['close'])
+            conditions = decision(dict(bar, time='close'), value, bars[i-1], **params)['checks']
+            for n in rule[2]:
+                c = conditions[n]
+                checks.append(dict(label=c['name'], actual=c['value'], required='Required entry condition', passed=c['passed']))
+            if rule[3]:
+                checks.append(dict(label='Close below prior-day R1', actual=bar['close'],
+                                   required=f"< {levels['r1']}", passed=bar['close'] < levels['r1']))
+    return dict(bars=enriched, series=series, signal=signal, checks=checks,
+                pattern=result.get('rule_label', rule[1]), entry_mode='next_open',
+                winner_exit='Supertrend reversal at next open; final liquidation at test end',
+                candidate_rank='prior_turnover',
+                notices=['Indicators use this run’s complete frozen candle history before cropping. Only the selected variant’s conditions qualify entries; the other plotted lines provide context.',
+                         'BUY and SELL markers use recorded fills, including modeled slippage. RSI has its own panel.'])
+
+
 def explain_trade(result, datasets, trade, bars, first, last):
+    if result.get('strategy_id') == 'four_indicator_swing':
+        return indicator_trade_explanation(result, trade, bars)
     if result['config'].get('simulation_model') == 'banana_proxy_v1':
-        from core.research.banana_reference import NOTICES
-        cfg = result['config']
-        enriched = [dict(b, chart_values={}) for b in bars]
-        for i, row in enumerate(enriched):
-            if i >= 49:
-                row['chart_values']['sma_50'] = sum(b['close'] for b in bars[i-49:i+1])/50
-            row['chart_values']['initial_stop'] = trade['entry']*(1-cfg['stop_pct']/100)
-        return dict(bars=enriched, pattern=cfg['pattern'], entry_mode=cfg['entry_mode'],
-                    winner_exit=cfg['winner_exit'], candidate_rank='weighted_rs',
-                    signal={'date': bars[first-1]['date'] if first else None}, checks=[],
-                    series=[dict(id='sma_50',label='SMA50 closing exit line',color='#d18b26'),
-                            dict(id='initial_stop',label='Initial entry-relative stop',color='#bd5869')],
-                    notices=NOTICES + ['Legacy three-contraction and intraday SMA-stop explanations do not apply to this saved proxy run.'])
+        return reference_trade_explanation(result, trade, bars, first, last)
     if trade.get('direction') == 'short':
         from core.research.short_trade_chart import explain_trade as explain_short
         return explain_short(result, datasets, trade, bars, first, last)

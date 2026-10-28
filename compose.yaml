@@ -3,9 +3,12 @@ services:
     build: .
     restart: unless-stopped
     network_mode: host
+    env_file:
+      - path: /srv/trader/private/investor-openai.env
+        required: false
     environment:
       TRADER_ENV: production
-      TRADER_STORAGE: ${TRADER_STORAGE:-json}
+      TRADER_STORAGE: ${TRADER_STORAGE:-postgres}
       TRADER_DB_DSN_FILE: /state/private/database.dsn
       TRADER_DB_NAMESPACE: production
       TRADER_KEY_FILE: /state/private/database-token.key

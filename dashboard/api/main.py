@@ -14,16 +14,19 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Discriminator, Field, SecretStr, Tag
 from core.research import store, jobs, upstox, backtest, data_quality, market_data, sector, price_backfill
 from core.research.config import Settings, DataPreferences, BacktestConfig, BearishBacktestConfig, current_settings
-from core.research import bearish, momentum, scalping, strategy_presets
+from core.research import bearish, momentum, scalping, strategy_presets, four_indicator_swing
 from core.research.strategy_presets import ScreenInput
 from core.portfolio import paper, scheduler, manager as portfolios, registry as paper_plugins
-from core.portfolio import scalping_paper, scalping_control
+from core.portfolio import scalping_paper, scalping_control, four_indicator_paper
 from core.strategies.registry import all_strategies
 from strategies.swing_patterns.patterns.registry import definitions as pattern_definitions
 from dashboard.api.company_review import router as company_review_router
 from dashboard.api.investor_intelligence import router as investor_intelligence_router
 from dashboard.api.live_trading import router as live_trading_router
 from core.portfolio import live
+from core.research import accounts, identity
+from dashboard.api.accounts import router as accounts_router, PUBLIC as AUTH_PUBLIC, admin_request
+from starlette.concurrency import run_in_threadpool
 
 WEB = Path(__file__).resolve().parents[1] / 'web'
 USER = os.environ.get('DASHBOARD_ADMIN_USER', '')
@@ -37,12 +40,16 @@ if PUBLIC_ORIGIN:
     public_url = urlsplit(PUBLIC_ORIGIN)
     if public_url.scheme != 'https' or not public_url.hostname or public_url.path or public_url.query or public_url.fragment or public_url.username:
         raise RuntimeError('TRADER_PUBLIC_ORIGIN must be an HTTPS origin without a path or credentials.')
-if bool(USER) != bool(PASSWORD):
+if not accounts.enabled() and bool(USER) != bool(PASSWORD):
     raise RuntimeError('Configure both DASHBOARD_ADMIN_USER and DASHBOARD_ADMIN_PASSWORD.')
 security = HTTPBasic(auto_error=False)
 
 
-def authenticate(credentials: Annotated[HTTPBasicCredentials | None, Depends(security)]):
+def authenticate(request: Request, credentials: Annotated[HTTPBasicCredentials | None, Depends(security)]):
+    if accounts.enabled():
+        if request.url.path in AUTH_PUBLIC or getattr(request.state, 'user', None):
+            return
+        raise HTTPException(401, 'Sign in to continue.')
     if not USER:
         return  # Development only; loopback, host and origin checks are mandatory below.
     if credentials:
@@ -57,6 +64,7 @@ def authenticate(credentials: Annotated[HTTPBasicCredentials | None, Depends(sec
 async def lifespan(app):
     with store.application_lock():
         store.ensure_ready()
+        accounts.ensure_admin()
         jobs.recover()
         scalping_control.autostart()
         stop, thread = None, None
@@ -84,12 +92,13 @@ app = FastAPI(title='Trader research', docs_url=None, redoc_url=None, openapi_ur
 app.include_router(company_review_router)
 app.include_router(investor_intelligence_router)
 app.include_router(live_trading_router)
+app.include_router(accounts_router)
 
 
 @app.middleware('http')
 async def local_boundary(request: Request, call_next):
     path = request.url.path
-    if path.startswith('/api/live') and PUBLIC_ORIGIN and not USER:
+    if path.startswith('/api/live') and PUBLIC_ORIGIN and not USER and not accounts.enabled():
         return JSONResponse({'detail': 'Configure dashboard administrator authentication before exposing live trading.'}, status_code=403)
     if not PAPER_ENABLED and (path.startswith('/api/paper/') or path == '/api/jobs/paper' or
                               (path.startswith('/api/strategies/') and '/paper/' in path)):
@@ -104,7 +113,16 @@ async def local_boundary(request: Request, call_next):
         expected_origin = PUBLIC_ORIGIN if PUBLIC_ORIGIN and request.url.hostname == urlsplit(PUBLIC_ORIGIN).hostname else str(request.base_url).rstrip('/')
         if request.headers.get('x-trader-request') != 'local-ui' or (origin and origin != expected_origin):
             return JSONResponse({'detail': 'Use the local dashboard for this action.'}, status_code=403)
-    response = await call_next(request)
+    user = None
+    if accounts.enabled():
+        user = await run_in_threadpool(accounts.session, request.cookies.get(accounts.COOKIE))
+        request.state.user = user
+        if path.startswith('/api/') and path not in AUTH_PUBLIC and not user:
+            return JSONResponse({'detail': 'Sign in to continue.'}, status_code=401)
+        if admin_request(path, request.method) and (not user or not user['is_admin']):
+            return JSONResponse({'detail': 'Only manoj can manage users, shared data and service credentials.'}, status_code=403)
+    with identity.scope(user):
+        response = await call_next(request)
     response.headers['X-Content-Type-Options'] = 'nosniff'
     response.headers['X-Frame-Options'] = 'DENY'
     response.headers['Referrer-Policy'] = 'no-referrer'
@@ -141,7 +159,8 @@ def bootstrap():
     for item in universe.get('instruments', []):
         summary = catalog.get(item['isin'], {'count': 0, 'first': None, 'last': None, 'close': None, 'change': None})
         instruments.append({**item, **summary})
-    return {'storage': {'backend': 'postgres' if store.database_enabled() else 'json',
+    return {'four_indicator_schema': four_indicator_swing.SwingConfig.model_json_schema(),
+            'storage': {'backend': 'postgres' if store.database_enabled() else 'json',
                         'namespace': os.environ.get('TRADER_DB_NAMESPACE',ENVIRONMENT)},
             'settings': cfg.model_dump(mode='json'), 'settings_schema': DataPreferences.model_json_schema(),
             'market_fetch': store.read('market_fetch'),
@@ -159,14 +178,17 @@ def bootstrap():
             'paper_schema': paper.PaperConfig.model_json_schema(), 'paper_portfolio': store.read(paper.KEY) if PAPER_ENABLED else None,
             'paper_portfolios': {s['id']: scalping_paper.public_portfolio() if s['id']=='scalping' else portfolios.get(s['id']) for s in all_strategies()} if PAPER_ENABLED else {},
             'paper_scenarios': portfolios.list_portfolios('swing_patterns') if PAPER_ENABLED else [],
+            'four_indicator_paper_scenarios': portfolios.list_portfolios('four_indicator_swing') if PAPER_ENABLED else [],
             'paper_schemas': {strategy_id: plugin.config_model.model_json_schema()
                               for strategy_id, plugin in paper_plugins.PLUGINS.items()},
             'screens': strategy_presets.selectable(), 'reference_only': strategy_presets.reference_only(),
             'retired_strategy_choices': strategy_presets.RETIRED_STRATEGY_CHOICES,
-            'token_saved': store.token_saved(), 'remote_enabled': bool(PUBLIC_ORIGIN),
+            'token_saved': store.token_saved(trading=accounts.enabled()),
+            'market_token_saved': store.token_saved(), 'user': identity.current(),
+            'remote_enabled': bool(PUBLIC_ORIGIN),
             'instruments': instruments, 'universe_updated': universe.get('fetched_at'),
             'jobs': store.read('jobs', [])[:100], 'runs': store.read('runs_index', []),
-            'strategies': [s for s in all_strategies() if not strategy_presets.reference_only() or s['id']=='swing_patterns'], 'auth_enabled': bool(USER)}
+            'strategies': [s for s in all_strategies() if not strategy_presets.reference_only() or s['id'] in ('swing_patterns','four_indicator_swing')], 'auth_enabled': accounts.enabled() or bool(USER)}
 
 
 @app.put('/api/settings')
@@ -195,8 +217,8 @@ def save_connection(value: TokenInput):
         raise ValueError('Enter a valid access token, not whitespace.')
     with live.mutex('live_control', timeout=30):
         live.connection_change()
-        store.save_token(cleaned)
-    return {'saved': True, 'message': 'Token saved on the server. It will be validated on the next data fetch.'}
+        store.save_token(cleaned, trading=accounts.enabled())
+    return {'saved': True, 'message': 'Your personal trading token was saved.' if accounts.enabled() else 'Token saved on the server. It will be validated on the next data fetch.'}
 
 
 @app.post('/api/screens')
@@ -243,27 +265,35 @@ def universe_expansion_job(value: Settings):
 
 
 def backtest_config_kind(value):
+    if (isinstance(value, dict) and value.get('strategy_id') == 'four_indicator_swing') or isinstance(value, four_indicator_swing.SwingConfig):
+        return 'four_indicator'
     # Missing pattern retains the legacy long configuration default.
     pattern = value.get('pattern') if isinstance(value, dict) else value.pattern
     return 'bearish' if pattern in get_args(BearishBacktestConfig.model_fields['pattern'].annotation) else 'long'
 
 
 BacktestRequest = Annotated[
-    Annotated[BacktestConfig, Tag('long')] | Annotated[BearishBacktestConfig, Tag('bearish')],
+    Annotated[BacktestConfig, Tag('long')] | Annotated[BearishBacktestConfig, Tag('bearish')] | Annotated[four_indicator_swing.SwingConfig, Tag('four_indicator')],
     Discriminator(backtest_config_kind),
 ]
 
 
 @app.post('/api/jobs/backtest')
 def backtest_job(value: BacktestRequest):
+    if isinstance(value, four_indicator_swing.SwingConfig):
+        cfg = settings(value.comparison_run_id)
+        return jobs.submit('Daily four-indicator swing backtest',
+                           lambda log, job_id: four_indicator_swing.run(cfg,value,log,job_id),value.model_dump(mode='json'), allow_queue=True)
     strategy_presets.require_reference(value)
     cfg = settings(value.comparison_run_id)
     backtest.prepare(cfg, value)  # Return actionable validation before creating a job.
-    return jobs.submit('Backtest', lambda log, job_id: backtest.run(cfg, value, log, job_id), value.model_dump(mode='json'))
+    return jobs.submit('Backtest', lambda log, job_id: backtest.run(cfg, value, log, job_id), value.model_dump(mode='json'), allow_queue=True)
 
 
 @app.post('/api/jobs/backtest-history')
 def backtest_history_job(value: BacktestRequest):
+    if isinstance(value,four_indicator_swing.SwingConfig):
+        raise ValueError('Refresh daily stock history in Market data, then run the four-indicator strategy again.')
     strategy_presets.require_reference(value)
     if value.comparison_run_id:
         raise ValueError('Comparison inputs are frozen. Use a fresh backtest for backfilling.')
@@ -322,7 +352,7 @@ def momentum_job(value: momentum.MomentumConfig):
     strategy_presets.require_reference(value,'intraday_momentum')
     cfg = settings(value.comparison_run_id)
     momentum.prepare(cfg, value)
-    return jobs.submit('Momentum backtest', lambda log, job_id: momentum.run(cfg, value, log, job_id), value.model_dump(mode='json'))
+    return jobs.submit('Momentum backtest', lambda log, job_id: momentum.run(cfg, value, log, job_id), value.model_dump(mode='json'), allow_queue=True)
 
 
 class MomentumComparisonInput(BaseModel):
@@ -362,7 +392,7 @@ def scalping_job(value: scalping.ScalpingConfig):
     strategy_presets.require_reference(value,'scalping')
     cfg = settings(value.comparison_run_id)
     scalping.prepare(cfg, value)
-    return jobs.submit('Scalping backtest', lambda log, job_id: scalping.run(cfg, value, log, job_id), value.model_dump(mode='json'))
+    return jobs.submit('Scalping backtest', lambda log, job_id: scalping.run(cfg, value, log, job_id), value.model_dump(mode='json'), allow_queue=True)
 
 
 @app.post('/api/scalping/coverage')
@@ -512,6 +542,8 @@ def create_strategy_portfolio(strategy_id: str, value: dict, portfolio_id: str |
     config = paper_config(strategy_id, value)
     if strategy_id=='scalping':
         return create_scalping_paper(config)
+    if strategy_id=='four_indicator_swing':
+        return four_indicator_paper.save(config,settings(),create=True,portfolio_id=portfolio_id)
     return portfolios.save(strategy_id, config, settings(), create=True, clock=paper.local_now(), portfolio_id=portfolio_id)
 
 
@@ -521,6 +553,8 @@ def update_strategy_portfolio(strategy_id: str, value: dict, portfolio_id: str |
     config = paper_config(strategy_id, value)
     if strategy_id=='scalping':
         return update_scalping_paper(config)
+    if strategy_id=='four_indicator_swing':
+        return four_indicator_paper.save(config,settings(),portfolio_id=portfolio_id)
     return portfolios.save(strategy_id, config, settings(), clock=paper.local_now(), portfolio_id=portfolio_id)
 
 
@@ -540,7 +574,7 @@ def strategy_paper_job(strategy_id: str, portfolio_id: str | None = None):
         raise ValueError('Create a paper portfolio for this strategy first.')
     store.token()
     from functools import partial
-    runner = partial(paper.cycle, portfolio_id=portfolio_id) if strategy_id == 'swing_patterns' else plugin.run_cycle
+    runner = partial(plugin.run_cycle, portfolio_id=portfolio_id) if strategy_id in ('swing_patterns','four_indicator_swing') else plugin.run_cycle
     return jobs.submit('Paper daily cycle', runner,
                        {'portfolio_id': portfolio_id or strategy_id, 'strategy_id': strategy_id, 'trigger': 'manual'})
 
@@ -600,6 +634,10 @@ def trade_chart(run_id: str, trade_index: int):
     stock_trades = [dict(t, trade_index=i) for i, t in enumerate(trades)
                     if t['symbol'] == trade['symbol']]
     datasets = store.read('run_data/' + run_id, {})
+    if result.get('strategy_id') == 'four_indicator_swing':
+        if not datasets or four_indicator_swing.digest(datasets) != result.get('input_sha256'):
+            raise HTTPException(404, 'Frozen indicator candles are unavailable or changed.')
+        datasets = datasets['datasets']
     bars = [b for b in datasets.get(trade['symbol'], [])
             if b['date'] <= result['config']['end']]
     dates = {b['date']: i for i, b in enumerate(bars)}

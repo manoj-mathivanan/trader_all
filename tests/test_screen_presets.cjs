@@ -197,7 +197,7 @@ assert.equal(vm.runInContext('referenceAuditPanel({})',context),'');
   context.resolveDates({start:'2020-01-01',end:'2025-12-31'});
   await opening;
   assert.match(context.body,/Checking downloaded history/);
-  // An active job gets an explanation and polling can re-enable the existing form.
+  // Backtests can queue behind an active job while date and fee checks still apply.
   vm.runInContext(`
     globalThis.submit={disabled:false};globalThis.availability={textContent:'',hidden:false};
     globalThis.runtimeForm={dataset:{},elements:{fee_model:{value:'custom_bps'},start:{value:'2020-01-01'}},querySelector:()=>submit};
@@ -205,8 +205,9 @@ assert.equal(vm.runInContext('referenceAuditPanel({})',context),'');
     backtestWindow={start:'2020-01-01',missing_symbols:[]};state.jobs=[{type:'Backtest',status:'running'}];
     updateBacktestAvailability();
   `,context);
-  assert.equal(context.submit.disabled,true);
-  assert.match(context.availability.textContent,/Backtest is running/);
+  assert.equal(context.submit.disabled,false);
+  assert.equal(context.submit.textContent,'Queue backtest →');
+  assert.match(context.availability.textContent,/start automatically/);
   vm.runInContext('state.jobs=[];updateBacktestAvailability()',context);
   assert.equal(context.submit.disabled,false);
   vm.runInContext("runtimeForm.elements.fee_model.value='zerodha_equity';updateBacktestAvailability()",context);

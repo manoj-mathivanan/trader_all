@@ -19,7 +19,7 @@ function liveButton(action,label,primary=false,extra='') {return `<button type="
 function liveScheduleLoad(){if(typeof setTimeout!=='undefined')setTimeout(()=>loadLive(false),0);}
 function liveConnectionView(){
   liveScheduleLoad();
-  return `<section class="panel"><div class="panel-head"><div><h2>Upstox live execution</h2><p>The saved access token is shared by market data and this broker connection.</p></div><a class="button" href="#live">Open Live trade ↗</a></div><div class="panel-body" id="live-connection-fields">${liveConnectionFields()}</div></section>`;
+  return `<section class="panel"><div class="panel-head"><div><h2>Upstox live execution</h2><p>These credentials belong only to your trading account. Shared market data uses the admin connection.</p></div><a class="button" href="#live">Open Live trade ↗</a></div><div class="panel-body" id="live-connection-fields">${liveConnectionFields()}</div></section>`;
 }
 function liveConnectionFields(){
   if(!liveState)return '<p>Loading broker settings…</p>';

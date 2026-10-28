@@ -10,6 +10,10 @@ from core.research import store
 def mutex(name, timeout=5):
     if name not in ('scalping_runner', 'scalping_portfolio', 'scalping_control', 'live_runner', 'live_control'):
         raise ValueError('Unknown process lock.')
+    if name.startswith('live_'):
+        from core.research import identity
+        if identity.username():
+            name += '__'+identity.username()
     if store.database_enabled():
         from core.research import postgres_store
         with postgres_store.mutex(name, timeout):

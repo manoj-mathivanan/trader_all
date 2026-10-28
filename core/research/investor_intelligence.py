@@ -1,4 +1,5 @@
 """Personal news evidence and cited interpretation, independent of trading gates."""
+from core.research import service_credentials
 import hashlib
 import html
 import json
@@ -348,7 +349,7 @@ def interpret(settings, isin, *, force=False, full_text=False, context=None, tra
         if not articles:
             store.write('investor/article_coverage/'+isin,dict(as_of=store.now(),articles=article_coverage))
             raise ValueError('No complete accessible articles available. Coverage saved; no RSS-only interpretation substituted.')
-    model = os.environ.get('TRADER_NEWS_MODEL')
+    model = service_credentials.model()
     key = interpretation_key(value['company'], articles, model,full_text=full_text,context=context)
     cached = value['review']
     if not force and cached and cached.get('cache_key') == key and 0 <= cache_age(cached) < 86400:
@@ -378,7 +379,7 @@ def interpret(settings, isin, *, force=False, full_text=False, context=None, tra
     try:
         with httpx.Client(timeout=180, transport=transport) as client:
             response = client.post('https://api.openai.com/v1/responses', json=payload,
-                                   headers={'Authorization':'Bearer '+os.environ['OPENAI_API_KEY']})
+                                   headers={'Authorization':'Bearer '+service_credentials.key()})
             attempt['http_status'] = response.status_code
             result = response.json()
             attempt['response'] = result
@@ -435,7 +436,7 @@ def interpret(settings, isin, *, force=False, full_text=False, context=None, tra
                   full_text=full_text, article_coverage=article_coverage,
                   news_input_sha256=news_input_sha256,context=context or {},
                   outlook=outlook, **parsed.model_dump(mode='json'), articles=articles,
-                  coverage=value['coverage'], news_as_of=value['as_of'], model=os.environ['TRADER_NEWS_MODEL'],
+                  coverage=value['coverage'], news_as_of=value['as_of'], model=service_credentials.model(),
                   usage=result.get('usage'), response_id=result.get('id'),
                   notice=('Whole accessible article bodies were supplied and individual summaries preserved. ' if full_text else 'Interpretation of RSS summaries only. ')+
                          'Matching is preliminary; source agreement is not a return probability.')

@@ -1,0 +1,27 @@
+const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
+const context=vm.createContext({document:{querySelector:()=>null,addEventListener(){}},location:{hash:'#overview'}});
+const app=fs.readFileSync('dashboard/web/app.js','utf8');
+vm.runInContext(app.slice(0,app.indexOf("$('#modal').addEventListener('close'")),context);
+vm.runInContext(fs.readFileSync('dashboard/web/accounts.js','utf8'),context);
+const run=code=>vm.runInContext(code,context);
+run("state={user:{username:'alice',is_admin:false}};");
+assert.match(run('adminView()'),/Admin access required/);
+run("state.user={username:'manoj',is_admin:true};adminData={users:[{username:'alice',is_admin:false,enabled:true}],market_token_saved:true,research_key_saved:true,research_model:'test-model'};");
+const admin=run('adminView()');
+assert.match(admin,/Create user/);
+assert.match(admin,/Shared market data and research credentials/);
+assert.match(admin,/name="research_key" type="password"/);
+assert.doesNotMatch(admin,/value=".*secret/);
+run("accountHeader=()=>{};state.user={username:'alice',is_admin:false};");
+const button={hidden:false,disabled:false};
+context.controls={querySelectorAll:selector=>{assert.match(selector,/refresh-stocks/);return[button];}};
+run('permissionControls(controls)');
+assert.equal(button.hidden,true);assert.equal(button.disabled,true);
+button.hidden=false;button.disabled=false;
+run("state.user={username:'manoj',is_admin:true};permissionControls(controls)");
+assert.equal(button.hidden,false);assert.equal(button.disabled,false);
+context.fetch=async()=>{run('accountGeneration++');return{ok:true,json:async()=>({private:'previous-user'})};};
+(async()=>{
+  await assert.rejects(run("api('live')"),/signed-in account changed/);
+  console.log('Admin-only controls and account-switch protection passed.');
+})().catch(error=>{console.error(error);process.exitCode=1;});

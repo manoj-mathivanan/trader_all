@@ -21,7 +21,7 @@ globalThis.companyFields=companyFinancialFields('non_financial');
 `,context);
 assert.match(context.page,/&lt;TEST&gt;/);
 assert.doesNotMatch(context.page,/<TEST>/);
-assert.match(context.page,/Not connected/);
+assert.doesNotMatch(context.page,/Web researcher|Historical financial coverage|Fundamental buy screens|Find candidates from your strategy/);
 assert.match(context.page,/No financial evidence/);
 assert.match(context.filtered,/No matching companies/);
 assert.match(context.complete,/No matching companies/);

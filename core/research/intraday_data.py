@@ -55,6 +55,8 @@ def fetch(item, day, token, interval_minutes=5):
     cached = store.read(key)
     if cached:
         return cached_bars(cached, day, interval_minutes)
+    from core.research.identity import require_data_admin
+    require_data_admin()
     url = f"https://api.upstox.com/v3/historical-candle/{quote(item['key'],safe='')}/minutes/{interval_minutes}/{day}/{day}"
     with httpx.Client(timeout=30) as client:
         payload = upstox.get(client,url,headers={'Authorization':'Bearer '+token,'Accept':'application/json'}).json()
@@ -74,6 +76,9 @@ def load_sessions(plan, universe, log):
     sessions = {}
     missing = [(symbol,day) for symbol,day in sorted(requests)
                if not store.read(cache_key(instruments[symbol]['isin'],day))]
+    if missing:
+        from core.research.identity import require_data_admin
+        require_data_admin()
     token = store.token() if missing else None
     log(f'Intraday input: {len(requests)} stock-sessions; {len(missing)} require five-minute downloads.')
     with ThreadPoolExecutor(max_workers=6) as pool:
@@ -103,6 +108,9 @@ def load_ranges(plan, universe, log, interval_minutes=5):
         if count % 5000 == 0:
             log(f'Minute cache checked: {count}/{len(requests)} stock-sessions.')
     log(f'{interval_minutes}-minute input: {len(requests)} stock-sessions; {sum(map(len, missing.values()))} missing; others reused.')
+    if missing:
+        from core.research.identity import require_data_admin
+        require_data_admin()
     token = store.token() if missing else None
     chunks = []
     for symbol, days in missing.items():

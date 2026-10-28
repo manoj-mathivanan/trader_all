@@ -86,7 +86,8 @@ class ExecutionTests(unittest.TestCase):
 class DataAndSecurityTests(unittest.TestCase):
     def test_strategy_registry_exposes_active_and_planned_plugins(self):
         definitions = all_strategies()
-        self.assertEqual([x['id'] for x in definitions], ['swing_patterns', 'intraday_momentum', 'scalping'])
+        self.assertEqual([x['id'] for x in definitions], ['four_indicator_swing', 'swing_patterns', 'intraday_momentum', 'scalping'])
+        self.assertEqual(get_strategy('four_indicator_swing').backtest_engine, 'four_indicator_swing')
         self.assertEqual(get_strategy('swing_patterns').backtest_engine, 'daily_breakout')
         self.assertEqual(get_strategy('intraday_momentum').status, 'active')
         self.assertEqual(get_strategy('intraday_momentum').backtest_engine, 'opening_range_momentum')

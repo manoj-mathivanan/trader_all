@@ -101,6 +101,8 @@ def validate(snapshot, documents, item, at):
 
 
 def pull_stock(item, *, at=None, retry_failed=False, log=lambda _:None, client=None):
+    from core.research.identity import require_data_admin
+    require_data_admin()
     from core.research import company_review as cr
     at = at or datetime.now(timezone.utc)
     today = at.astimezone(official_filings.IST).date()
@@ -193,6 +195,8 @@ def pull_lock():
 
 
 def pull(items, log=lambda _:None, job_id=None, *, retry_failed=False, at=None):
+    from core.research.identity import require_data_admin
+    require_data_admin()
     with pull_lock():
         return _pull(items,log,job_id,retry_failed=retry_failed,at=at)
 

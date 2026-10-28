@@ -122,6 +122,8 @@ def annual_ranges(start, end):
 
 
 def fetch(settings, log, job_id=None, *, universe=None, start=None, end=None):
+    from core.research.identity import require_data_admin
+    require_data_admin()
     """Explicit tracked fetch; failures retain old data but never mark it fresh."""
     universe = universe or store.read('universes/'+settings.universe, {})
     instruments = universe.get('instruments', [])

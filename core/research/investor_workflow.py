@@ -157,6 +157,8 @@ def queues(settings):
 
 
 def refresh_news(settings, *, force=False, isin=None, holdings_only=False, log=lambda message:None):
+    from core.research.identity import require_data_admin
+    require_data_admin()
     from core.research import investor_upstox, investor_discovery
     tracked=store.read('investor/watchlist',[])
     targets=paper_holdings(settings)+[r for r in tracked if not holdings_only or r['kind']=='holding']

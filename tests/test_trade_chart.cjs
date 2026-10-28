@@ -43,3 +43,8 @@ const stockList=vm.runInContext("stockTradeList({symbol:'TEST',run_id:'run',trad
 assert.match(stockList,/data-trade="2"/);
 assert.match(stockList,/data-trade="5" aria-current="true"/);
 console.log('All stock fills receive matching trade numbers, including short and cover fills.');
+const qualification=vm.runInContext(`tradeSignalDetails({explanation:{pattern:'blue_sky',entry_mode:'pivot',winner_exit:'trail_50d',candidate_rank:'weighted_rs',signal:{date:'2026-09-15'},checks:[{label:'Weighted relative strength',actual:94.236,required:'≥ 70; 433 eligible stocks',passed:true}],notices:[]}})`,context);
+assert.match(qualification,/Priority Weighted relative strength/);
+assert.match(qualification,/94.24/);
+assert.match(qualification,/433 eligible stocks/);
+assert.match(qualification,/Passed/);

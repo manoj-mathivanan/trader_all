@@ -3,6 +3,8 @@ from uuid import uuid4
 from pathlib import Path
 import traceback
 from core.research import store
+from core.research import identity
+from contextvars import copy_context
 
 POOL = ThreadPoolExecutor(max_workers=1, thread_name_prefix="research")
 
@@ -48,13 +50,15 @@ def update(job_id, *, status=None, message=None, result=None):
         store.write("jobs", jobs)
 
 
-def submit(kind, function, payload=None, *, after_complete=None):
+def submit(kind, function, payload=None, *, after_complete=None, allow_queue=False):
     with store.LOCK:
         jobs = store.read("jobs", [])
-        if any(j["status"] in ("queued", "running") for j in jobs):
+        if not allow_queue and any(j["status"] in ("queued", "running") for j in jobs):
             raise ValueError("Another job is active. Wait for it to finish before starting a new one.")
         job = {"id": uuid4().hex[:12], "type": kind, "status": "queued", "created_at": store.now(),
                "logs": [], "payload": payload or {}}
+        if identity.username():
+            job['created_by'] = identity.username()
         jobs.insert(0, job)
         store.write("jobs", jobs)
 
@@ -78,5 +82,6 @@ def submit(kind, function, payload=None, *, after_complete=None):
             except Exception:
                 update(job['id'],status='warning',message='Analysis retained locally; shared database sync needs retry.')
 
-    POOL.submit(execute)
+    context = copy_context()
+    POOL.submit(lambda: context.run(execute))
     return job

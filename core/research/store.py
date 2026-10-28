@@ -2,12 +2,14 @@
 import json
 import os
 import time
+from copy import deepcopy
 from uuid import uuid4
 from pathlib import Path
 from threading import RLock, local
 from datetime import datetime, timezone
 from cryptography.fernet import Fernet
 from contextlib import contextmanager
+from core.research import identity
 
 ROOT = Path(__file__).resolve().parents[2]
 DATA = Path(os.environ.get("TRADER_DATA_DIR", ROOT / "data"))
@@ -88,6 +90,7 @@ def now():
 
 
 def read(name, default=None):
+    name = identity.private_name(name)
     validate_name(name)
     if database_enabled():
         from core.research import postgres_store
@@ -98,8 +101,22 @@ def read(name, default=None):
 
 
 def write(name, value):
+    name = identity.private_name(name)
     validate_name(name)
     with LOCK:
+        if identity.username():
+            def attributed(record, previous=None):
+                record = deepcopy(record)
+                owner = (previous or {}).get('created_by') or identity.username()
+                record['created_by'] = owner
+                if isinstance(record.get('config'), dict) and 'name' in record['config']:
+                    record['config']['name'] = identity.label(record['config']['name'], owner)
+                return record
+            if (name.startswith(('runs/', 'portfolios/', 'portfolio_scenarios/')) or name=='paper_portfolio') and isinstance(value, dict):
+                value = attributed(value, read(name))
+            elif name == 'runs_index' and isinstance(value, list):
+                previous = {r['id']: r for r in read(name, [])}
+                value = [attributed(r) if r['id'] not in previous else r for r in value]
         if database_enabled():
             from core.research import postgres_store
             return postgres_store.write(name, value)
@@ -142,11 +159,17 @@ def cipher():
         return Fernet(path.read_bytes())
 
 
-def save_token(value):
+def credential_owner(trading=False):
+    return 'user:'+identity.username() if trading and identity.username() else os.environ.get('TRADER_USER_ID', 'owner')
+
+
+def save_token(value, *, trading=False):
     with LOCK:
         if database_enabled():
             from core.research import postgres_store
-            return postgres_store.save_token(os.environ.get('TRADER_USER_ID', 'owner'), cipher().encrypt(value.encode()))
+            return postgres_store.save_token(credential_owner(trading), cipher().encrypt(value.encode()))
+        if trading and identity.username():
+            return write('private/user_tokens/'+identity.username(), {'encrypted_token': cipher().encrypt(value.encode()).decode()})
         private_dir().mkdir(parents=True, exist_ok=True)
         path = private_dir() / 'upstox.json'
         temp = path.with_suffix('.tmp')
@@ -158,20 +181,27 @@ def save_token(value):
         temp.replace(path)
 
 
-def token_saved():
+def token_saved(*, trading=False):
     if database_enabled():
         from core.research import postgres_store
-        return postgres_store.token_saved(os.environ.get('TRADER_USER_ID', 'owner'))
+        return postgres_store.token_saved(credential_owner(trading))
+    if trading and identity.username():
+        return bool(read('private/user_tokens/'+identity.username()))
     return (private_dir() / 'upstox.json').exists() or bool(read('private/upstox'))
 
 
-def token():
+def token(*, trading=False):
     if database_enabled():
         from core.research import postgres_store
-        value = postgres_store.token(os.environ.get('TRADER_USER_ID', 'owner'))
+        value = postgres_store.token(credential_owner(trading))
         if not value:
             raise ValueError('Save your Upstox access token in Settings first.')
         return cipher().decrypt(value).decode()
+    if trading and identity.username():
+        record = read('private/user_tokens/'+identity.username())
+        if not record:
+            raise ValueError('Save your personal trading token in Settings first.')
+        return cipher().decrypt(record['encrypted_token'].encode()).decode()
     path = private_dir() / 'upstox.json'
     record = json.loads(path.read_text(encoding='utf-8')) if path.exists() else read('private/upstox')
     if not record:
@@ -199,6 +229,7 @@ def keys(prefix='', *, recursive=False):
 
 
 def version(name):
+    name = identity.private_name(name)
     validate_name(name)
     if database_enabled():
         from core.research import postgres_store
