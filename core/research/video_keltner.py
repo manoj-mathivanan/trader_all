@@ -5,7 +5,7 @@ RVOL vs20 preceding3m bars, next1m market open. Exit percentage, midline buffer,
 stop bounds and45m cap are declared adaptations, not exact source rules.
 """
 from statistics import mean
-from core.execution.zerodha import equity_charges
+from core.execution.upstox import equity_charges
 from core.research.video_methods import aggregate_minutes,mirror_bars
 
 

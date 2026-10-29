@@ -55,6 +55,8 @@ def simulate(data, signals, levels, cfg, plan):
     days = sorted(events)
     cash, peak, drawdown = cfg.capital, cfg.capital, 0
     positions, marks, trades, curve, orders = {}, {}, [], [], []
+    from core.execution.upstox import equity_charges, size_order
+    dp_charged = set()
     fees = slippage = skipped = 0
     slip, buyfee, sellfee = cfg.slippage_bps/10000,cfg.buy_cost_bps/10000,cfg.sell_cost_bps/10000
 
@@ -63,7 +65,8 @@ def simulate(data, signals, levels, cfg, plan):
         p = positions[symbol]
         q = p['quantity'] if quantity is None else quantity
         price = raw*(1-slip)
-        fee = price*q*sellfee
+        fee = equity_charges(price,q,'sell',day,dp=(symbol,day) not in dp_charged)['total']
+        dp_charged.add((symbol,day))
         allocated_fee = p['remaining_entry_fee']*q/p['quantity']
         pnl = (price-p['entry'])*q-allocated_fee-fee
         cash += price*q-fee
@@ -121,10 +124,10 @@ def simulate(data, signals, levels, cfg, plan):
             if len(positions) >= cfg.max_positions:
                 skipped += 1; continue
             raw = data[symbol][i]['open']; price = raw*(1+slip)
-            q = math.floor(min(budget,cash)/(price*(1+buyfee)))
+            q = size_order(equity_open,min(budget,cash),price,price,100,day)
             if q <= 0:
                 skipped += 1; continue
-            fee = price*q*buyfee
+            fee = equity_charges(price,q,'buy',day)['total']
             cash -= price*q+fee; fees += fee; slippage += (price-raw)*q
             positions[symbol] = dict(entry=price,entry_date=day,quantity=q,original_quantity=q,
                 entry_fee=fee,remaining_entry_fee=fee,entry_cost=price*q+fee,realized_pnl=0,exit_fees=0,
@@ -205,7 +208,7 @@ def main():
                   'All exits retain the original Supertrend reversal as an additional exit. Risk exits take priority over partial profits.',
                   'Newly freed capital can change subsequent entries. These are portfolio reruns, not fixed-entry trade comparisons.',
                   'Time splits are retrospective and already-inspected history; not untouched validation. Later cash-start runs liquidate and reset the portfolio. Continuous later return includes holdings carried from May.',
-                  'Current universe, data exclusions, omitted dividends, daily-close drawdowns and proportional fee/slippage assumptions carry over from the original snapshot.'])
+                  'Current universe, data exclusions, omitted dividends, daily-close drawdowns and Upstox Plus fee and slippage assumptions carry over from the original snapshot.'])
     (out/'research.json').write_text(json.dumps(result,indent=2),encoding='utf-8')
     flat=[dict(name=r['plan']['name'],**{k:v for k,v in r.items() if k!='plan'}) for r in results]
     with (out/'comparison.csv').open('w',newline='',encoding='utf-8') as f:
@@ -218,7 +221,7 @@ def main():
     page='<html><head><meta charset="utf-8"><title>Earlier exit study</title><style>body{font:16px/1.6 system-ui;max-width:1250px;margin:40px auto;padding:20px;color:#17283f}table{border-collapse:collapse;width:100%}td,th{padding:10px;text-align:right;border-bottom:1px solid #ddd}td:first-child,th:first-child{text-align:left}th{background:#edf2fa}</style></head><body>'
     page+='<h1>Earlier exits on the current all-four configuration</h1><p>9 October 2025–9 October 2026. INR 10 lakh, ten positions, RSI14 >65, Bollinger20/2.5, Supertrend10/3, prior-day R1. Same 737 frozen stocks. All decisions use completed daily closes; fills occur at the next session open.</p>'
     page+='<p>Training-only return/drawdown selection through 29 May: <b>'+html.escape(selected)+'</b>. The later cash-start period is 1 June–9 October. It is a retrospective comparison, not untouched prospective evidence.</p>'
-    page+=table(flat,cols)+'<h2>Execution stress: 20 bps fees plus 20 bps slippage on each side</h2>'+table(stress,[('name','Exit'),('return_pct','Return %'),('max_drawdown_pct','Drawdown %'),('trade_count','Positions')])
+    page+=table(flat,cols)+'<h2>Execution stress: Upstox Plus fees plus 20 bps slippage on each side</h2>'+table(stress,[('name','Exit'),('return_pct','Return %'),('max_drawdown_pct','Drawdown %'),('trade_count','Positions')])
     page+='<h2>Methods and limits</h2><ul>'+''.join('<li>'+html.escape(s)+'</li>' for s in result['methodology'])+'</ul><p>Production baseline and every equity observation matched exactly. Daily and final accounting, allocated fees and sell fill totals reconcile. This script makes no database, paper portfolio or trading setting changes. Per-rule JSON files retain every fill, position trade and equity observation.</p></body></html>'
     (out/'report.html').write_text(page,encoding='utf-8')
     print('Training-selected:',selected,'; saved',out,flush=True)

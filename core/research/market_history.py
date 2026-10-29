@@ -54,6 +54,8 @@ def prepare(item, record, *, reference=None, fingerprint=True):
     raw = record['bars']
     bars = raw
     details = {'version': VERSION, 'removed_prelisting_bars': 0}
+    if record.get('provisional_daily'):
+        details['provisional_daily'] = record['provisional_daily']
     if fingerprint:
         details['source_sha256'] = digest(raw)
     quarantine = ref.get('quarantine', {}).get(item['isin'])

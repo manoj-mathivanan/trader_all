@@ -87,12 +87,12 @@ class VideoMethodsTest(unittest.TestCase):
                     entry=100,exit_raw=103,market_exit=True,stop=99.95,volume=100000,
                     reason='time',ambiguity=False)
         self.assertEqual(portfolio_replay([narrow],max_friction_r=.25),[])
-        wide=dict(narrow,stop=99)
+        wide=dict(narrow,stop=98)
         self.assertEqual(len(portfolio_replay([wide],max_friction_r=.25)),1)
         self.assertEqual(len(portfolio_replay([dict(wide,exit_raw=90)],max_friction_r=.25)),1)
 
     def test_short_gap_execution_and_ledger_use_actual_fee_sides(self):
-        from core.execution.zerodha import equity_charges
+        from core.execution.upstox import equity_charges
         rows=bars([100,100,102,102])
         setup=dict(signal_index=0,entry=100,stop=101,expires=3,volume=10000,direction=-1)
         trade=replay_limit(setup,rows)

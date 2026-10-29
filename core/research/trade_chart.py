@@ -287,7 +287,17 @@ def explain_trade(result, datasets, trade, bars, first, last):
     # This trace is reconstructed from recorded fills, not asserted to be a saved engine trace.
     stop, best = trade['entry'] * (1 - cfg.stop_pct / 100), trade['entry']
     slip, buy_fee, sell_fee = cfg.slippage_bps / 10000, cfg.buy_cost_bps / 10000, cfg.sell_cost_bps / 10000
-    breakeven = trade['entry'] * (1 + buy_fee) / ((1 - sell_fee) * (1 - slip))
+    recorded_model = result.get('config', {}).get('fee_model', 'custom_bps')
+    if recorded_model in ('upstox_plus', 'zerodha_equity'):
+        if recorded_model == 'upstox_plus':
+            from core.execution.upstox import breakeven_price, equity_charges
+        else:
+            from core.execution.zerodha import breakeven_price, equity_charges
+        quantity = trade['quantity']
+        entry_fee = equity_charges(trade['entry'], quantity, 'buy', trade['entry_date'])['total']
+        breakeven = breakeven_price(trade['entry']*quantity+entry_fee, quantity, trade['entry_date'], cfg.slippage_bps)
+    else:
+        breakeven = trade['entry'] * (1 + buy_fee) / ((1 - sell_fee) * (1 - slip))
     early_stop = None
     for i in range(first, last + 1):
         enriched[i]['chart_values']['protective_stop'] = stop

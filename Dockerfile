@@ -6,7 +6,7 @@ COPY core core
 COPY strategies strategies
 COPY dashboard dashboard
 COPY reference_data reference_data
-COPY scripts/sync_investor_data.py scripts/sync_market_refresh.py scripts/market_data_bundle.py scripts/migrate_storage.py scripts/cleanup_workspace.py scripts/reindex_intraday.py scripts/
+COPY scripts scripts
 COPY deploy/market-data/import_investor_data.py deploy/market-data/export_investor_data.py deploy/market-data/investor_schema.sql deploy/market-data/
 RUN useradd --uid 10001 --create-home trader
 USER trader

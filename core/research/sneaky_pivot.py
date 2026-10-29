@@ -197,7 +197,7 @@ def replay_long_setup(setup, current_session, *, slippage_bps=2,
     stop-first. Gap fills are adverse. No favorable target slippage is assumed.
     Tick rounding, queues, historical spreads and shared capital are unmodeled.
     """
-    from core.execution.zerodha import equity_charges
+    from core.execution.upstox import equity_charges
     for value in (cash_cap,risk_cash,fee_multiplier):
         if not isfinite(value) or value <= 0:
             raise ValueError('Cash, risk and fee multiplier must be positive.')
@@ -291,7 +291,7 @@ def reprice_diagnostic_trade(trade, *, slippage_bps, fee_multiplier=1):
     This isolates cost sensitivity. It deliberately does not resize, drop a
     trade, or change the portfolio when stressed costs exceed base risk limits.
     """
-    from core.execution.zerodha import equity_charges
+    from core.execution.upstox import equity_charges
     if (not isfinite(slippage_bps) or not 0<=slippage_bps<10_000 or
             not isfinite(fee_multiplier) or fee_multiplier<=0):
         raise ValueError('Invalid diagnostic cost assumptions.')

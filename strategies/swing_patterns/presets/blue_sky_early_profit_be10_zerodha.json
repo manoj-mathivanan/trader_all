@@ -55,7 +55,7 @@
     "failed_breakout_sessions": 0,
     "market_risk_scale": 1.0,
     "market_breadth_trend_sessions": 0,
-    "fee_model": "zerodha_equity",
+    "fee_model": "upstox_plus",
     "slippage_bps": 10.0,
     "buy_cost_bps": 0.0,
     "sell_cost_bps": 0.0

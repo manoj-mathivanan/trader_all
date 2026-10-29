@@ -8,7 +8,7 @@ class FeeScheduleTests(unittest.TestCase):
         buy = upstox_cash_fees(1000,100,'buy','2026-03-01')
         sell = upstox_cash_fees(1000,100,'sell','2026-03-01')
         self.assertAlmostEqual(sell-buy,22)
-        self.assertAlmostEqual(buy+sell,82.681436)
+        self.assertAlmostEqual(buy+sell,106.245436)
         # Twice the notional does not double the capped brokerage.
         self.assertLess(upstox_cash_fees(1000,200,'buy','2026-03-01'),2*buy)
 

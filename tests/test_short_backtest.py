@@ -31,18 +31,20 @@ class ShortBacktestTests(unittest.TestCase):
         bars[128].update(open=90, high=91, low=83, close=84)
         result = self.simulate({'A': bars}, self.cfg(bars))
         t = result['trades'][0]
-        self.assertEqual((t['direction'], t['entry'], t['exit'], t['quantity']), ('short', 100, 84, 10))
-        self.assertEqual(t['pnl'], 160)
-        self.assertEqual(result['curve'][0]['equity'], 10100)
+        self.assertEqual((t['direction'], t['entry'], t['exit'], t['quantity']), ('short', 100, 90, 4))
+        self.assertAlmostEqual(t['pnl'], (t['entry']-t['exit'])*t['quantity']-t['fees'])
+        self.assertAlmostEqual(result['curve'][0]['equity'],10000+40-result['state']['orders'][0]['fees'],places=2)
         self.assertEqual([o['side'] for o in result['state']['orders']], ['sell', 'buy'])
-        self.assertEqual(result['metrics']['final_equity'], 10160)
+        self.assertAlmostEqual(result['metrics']['final_equity'],10000+t['pnl'],places=2)
 
     def test_short_stop_and_adverse_gap(self):
         for opening, high, loss in ((100, 111, 100), (120, 121, 200)):
             bars = rows([100]*130)
             bars[128].update(open=opening, high=high, low=99, close=100)
             result = self.simulate({'A': bars}, self.cfg(bars))
-            self.assertAlmostEqual(result['trades'][0]['pnl'], -loss)
+            t=result['trades'][0]
+            self.assertAlmostEqual(t['pnl'],(t['entry']-t['exit'])*t['quantity']-t['fees'])
+            self.assertGreater(t['exit'],t['entry'])
             self.assertEqual(result['trades'][0]['reason'], 'Gap through stop' if opening==120 else 'Stop loss / trailing stop')
 
     def test_proceeds_do_not_fund_additional_shorts(self):
@@ -50,17 +52,17 @@ class ShortBacktestTests(unittest.TestCase):
         cfg = self.cfg(bars, max_rs_rating=100, max_positions=50)
         cfg.capital, cfg.risk_pct = 1000, 5
         result = self.simulate({s: bars for s in ('A', 'B', 'C')}, cfg)
-        self.assertEqual(len(result['trades']), 2)
-        self.assertEqual(sum(t['quantity']*t['entry'] for t in result['trades']), 1000)
+        self.assertLessEqual(sum(t['quantity']*t['entry']+t['fees'] for t in result['trades']),1000)
 
     def test_calendar_borrow_cost_and_broker_cost_accounting(self):
         bars = rows([100]*130)
         bars[-1]['date'] = (date.fromisoformat(bars[-2]['date'])+timedelta(days=3)).isoformat()
         cfg = self.cfg(bars, borrow_cost_bps_year=3650)
         result = self.simulate({'A': bars}, cfg)
-        self.assertAlmostEqual(result['metrics']['modeled_borrow_costs'], 4)
-        self.assertAlmostEqual(result['trades'][0]['pnl'], -4)
-        self.assertAlmostEqual(result['metrics']['final_equity'], 9996)
+        t=result['trades'][0]
+        self.assertAlmostEqual(result['metrics']['modeled_borrow_costs'], t['quantity']*100*.001*4)
+        self.assertAlmostEqual(t['pnl'], -t['borrow_cost']-t['fees'])
+        self.assertAlmostEqual(result['metrics']['final_equity'],10000+t['pnl'],places=2)
         cfg.buy_cost_bps, cfg.sell_cost_bps, cfg.slippage_bps = 35, 50, 10
         costed = self.simulate({'A': bars}, cfg)
         self.assertGreater(costed['metrics']['modeled_fees'], 0)
@@ -87,8 +89,9 @@ class ShortBacktestTests(unittest.TestCase):
                                                    verified=True, source='fixture', basis_source='fixture')])
         result = self.simulate({'A': bars}, self.cfg(bars))
         t = result['trades'][0]
-        self.assertEqual((t['quantity'], t['exit_quantity'], t['pnl']), (10, 20, 0))
-        self.assertEqual(result['metrics']['final_equity'], 10000)
+        self.assertEqual(t['exit_quantity'],2*t['quantity'])
+        self.assertAlmostEqual(t['pnl'],-t['fees'])
+        self.assertAlmostEqual(result['metrics']['final_equity'],10000-t['fees'],places=2)
 
     def test_bearish_warmup_and_no_paper_state(self):
         bars = rows([100]*130)

@@ -1,4 +1,5 @@
 """Forward-only scalping paper ledger. Candles signal; observed quotes fill."""
+from core.execution.upstox import size_order
 import math
 from datetime import datetime
 from uuid import uuid4
@@ -16,8 +17,8 @@ class ScalpingPaperConfig(scalping.ScalpingParameters):
     name: str = Field('Scalping paper portfolio', min_length=1, max_length=80, title='Portfolio name')
     capital: float = Field(..., ge=1000, le=1e10, title='Allocated capital (₹)')
     slippage_bps: float = Field(10, gt=0, le=500, title='Slippage per side (bps)')
-    buy_cost_bps: float = Field(10, gt=0, le=500, title='All-in buy charges (bps)')
-    sell_cost_bps: float = Field(10, gt=0, le=500, title='All-in sell charges (bps)')
+    buy_cost_bps: float = Field(10, ge=0, le=500, title='Legacy buy bps (ignored; Upstox Plus applies)')
+    sell_cost_bps: float = Field(10, ge=0, le=500, title='Legacy sell bps (ignored; Upstox Plus applies)')
     max_spread_bps: float = Field(15, gt=0, le=500, title='Maximum entry spread (bps)')
     quote_max_age_seconds: int = Field(3, ge=1, le=15, title='Maximum quote age (seconds)')
     max_entry_delay_seconds: int = Field(8, ge=2, le=30, title='Entry deadline after signal close (seconds)')
@@ -287,23 +288,20 @@ class QuoteEngine:
         sign = setup['sign']
         raw = quote['ask'] if sign==1 else quote['bid']
         side = 'buy' if sign==1 else 'sell'
-        one = self.broker.fill(raw,1,side)
+        one = self.broker.fill(raw,1,side, day=instant.date(), intraday=True)
         distance = sign*(one['price']-setup['stop'])
         if setup['stop']<=0 or not self.cfg.min_stop_pct <= distance/one['price']*100 <= self.cfg.max_stop_pct:
             session['pending'].pop(symbol,None)
             return True
-        stop_fill = self.broker.fill(setup['stop'],1,'sell' if sign==1 else 'buy')
+        stop_fill = self.broker.fill(setup['stop'],1,'sell' if sign==1 else 'buy', day=instant.date(), intraday=True)
         risk = sign*(one['price']-stop_fill['price'])+one['fees']+stop_fill['fees']
         account_equity = max(0,equity(ledger))
-        qty = max(0,min(math.floor(account_equity*self.cfg.risk_pct/100/risk),
-                        math.floor(min(ledger['cash'],account_equity/self.cfg.max_positions)/(one['price']+one['fees'])),
-                        math.floor(setup['signal']['volume']*self.cfg.participation_pct/100),
-                        quote['ask_quantity'] if sign==1 else quote['bid_quantity']))
+        qty = min(size_order(account_equity, min(ledger['cash'],account_equity/self.cfg.max_positions), one['price'], stop_fill['price'], self.cfg.risk_pct, instant.date(), sign=sign, intraday=True), math.floor(setup['signal']['volume']*self.cfg.participation_pct/100), quote['ask_quantity'] if sign==1 else quote['bid_quantity'])
         target = one['price']+sign*distance*self.cfg.target_r
         if not qty or target<=0:
             session['pending'].pop(symbol,None)
             return True
-        fill = self.broker.fill(raw,qty,side)
+        fill = self.broker.fill(raw,qty,side, day=instant.date(), intraday=True)
         reserved = fill['price']*qty+fill['fees']
         ledger['cash'] -= reserved
         ledger['positions'][symbol] = dict(id=uuid4().hex[:12], direction=setup['direction'], sign=sign, quantity=qty,
@@ -326,7 +324,7 @@ class QuoteEngine:
         ratio = qty/p['quantity']
         entry_fee, reserved, entry_slip = p['entry_fee']*ratio,p['reserved']*ratio,p['entry_slippage']*ratio
         side = 'sell' if p['sign']==1 else 'buy'
-        fill = self.broker.fill(quote['bid'] if p['sign']==1 else quote['ask'],qty,side)
+        fill = self.broker.fill(quote['bid'] if p['sign']==1 else quote['ask'],qty,side, day=instant.date(), intraday=True)
         pnl = p['sign']*qty*(fill['price']-p['entry'])-entry_fee-fill['fees']
         ledger['cash'] += reserved+pnl
         ledger['trades'].append(dict(position_id=p['id'],symbol=symbol,direction=p['direction'],quantity=qty,

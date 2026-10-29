@@ -1,3 +1,4 @@
+from core.execution.upstox import equity_charges
 import unittest
 from copy import deepcopy
 from datetime import datetime, timedelta
@@ -62,7 +63,7 @@ class MomentumTests(unittest.TestCase):
         self.assertAlmostEqual(trade['entry'], 98 * 1.001)
         self.assertLess(trade['initial_stop'], trade['entry'])
         self.assertGreater(trade['target'], trade['entry'])
-        self.assertAlmostEqual(trade['fees'], trade['quantity'] * (trade['entry'] * .0015 + trade['exit'] * .0025))
+        self.assertAlmostEqual(trade['fees'], sum(equity_charges(trade[k],trade['quantity'],side,trade['entry_date'],intraday=True)['total'] for k,side in [('entry','buy'),('exit','sell')]))
         self.assertAlmostEqual(result['metrics']['final_equity'], self.cfg.capital + trade['pnl'])
         checked = []
         def reject(symbol, day, clock):
@@ -133,7 +134,7 @@ class MomentumTests(unittest.TestCase):
         t = self.simulate()['trades'][0]
         self.assertEqual((t['entry_time'],t['entry'],t['exit_time'],t['exit']),('09:25',102,'15:00',105))
         self.assertEqual(t['signal_time'],'09:20')
-        self.assertEqual(t['pnl'],3*t['quantity'])
+        self.assertAlmostEqual(t['pnl'],3*t['quantity']-t['fees'])
         # Opening-bar high alone cannot trigger an entry during the opening range.
         bars[1].update(close=100)
         for b in bars[2:]:
@@ -300,11 +301,12 @@ class MomentumTests(unittest.TestCase):
         bars[3].update(open=103,high=104,low=101,close=103)
         result=self.simulate();t=result['trades'][0]
         self.assertEqual(t['initial_stop'],100)
-        self.assertEqual(t['exit'],102)
-        self.assertEqual([x['stop'] for x in t['stop_trace']],[100,102])
+        self.assertGreater(t['exit'],102)
+        self.assertAlmostEqual(t['pnl'],0,places=7)
+        self.assertEqual([x['stop'] for x in t['stop_trace']],[100,t['exit']])
         chart=momentum.trade_chart({'config':self.cfg.model_dump(mode='json')},t,bars)
         self.assertEqual(chart['bars'][2]['chart_values']['protective_stop'],100)
-        self.assertEqual(chart['bars'][3]['chart_values']['protective_stop'],102)
+        self.assertEqual(chart['bars'][3]['chart_values']['protective_stop'],t['exit'])
 
     def test_diagnostics_reconcile_and_chronological_segments(self):
         result=self.simulate()

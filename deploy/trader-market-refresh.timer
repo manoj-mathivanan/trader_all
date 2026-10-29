@@ -1,0 +1,10 @@
+[Unit]
+Description=Refresh completed market candles at 16:30 India time
+
+[Timer]
+OnCalendar=*-*-* 16:30:00 Asia/Kolkata
+Persistent=true
+Unit=trader-market-refresh.service
+
+[Install]
+WantedBy=timers.target

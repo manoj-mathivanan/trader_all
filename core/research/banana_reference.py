@@ -3,6 +3,7 @@
 The licensed source prices, historical market-wide ranks, market caps and
 proprietary nested-base lifecycle are unavailable. No detector parity claim.
 """
+from core.execution.upstox import equity_charges, size_order, breakeven_price
 import math
 from copy import deepcopy
 from bisect import bisect_left, bisect_right
@@ -103,7 +104,6 @@ def _simulate(data, cfg, *, exits='reference', setup='confirmed', entry='next_op
     exposure = state.get('exposure', [])
     action_log = state.get('corporate_actions', [])
     audit = state.get('candidate_audit', [])
-    cost = cost_bps / 10000
     slip = getattr(cfg,'slippage_bps',0) / 10000
     total_slippage = state.get('total_slippage',0)
     rs_cache = {}
@@ -139,7 +139,15 @@ def _simulate(data, cfg, *, exits='reference', setup='confirmed', entry='next_op
         p = positions.pop(s)
         total_slippage += p['quantity'] * price * slip
         price *= 1-slip
-        charge = p['quantity'] * price * cost
+        if p['entry_date'] == day:
+            actual = equity_charges(p['entry'],p['quantity'],'buy',day,intraday=True)['total']
+            correction = actual-p['entry_fee']
+            unsettled -= correction
+            fees += correction
+            p['entry_fee'] = actual
+            p['entry_cost'] += correction
+            next(o for o in reversed(orders) if o['symbol']==s and o['side']=='buy' and o['date']==day)['fees'] = actual
+        charge = equity_charges(price, p['quantity'], 'sell', day, intraday=p['entry_date'] == day)['total']
         proceeds = p['quantity'] * price - charge
         unsettled += proceeds
         fees += charge
@@ -288,15 +296,15 @@ def _simulate(data, cfg, *, exits='reference', setup='confirmed', entry='next_op
             stop = price*(1-cfg.stop_pct/100)
             limits = dict(risk=equity_open*cfg.risk_pct/100/(price-stop),
                           position_cap=equity_open*cap_pct/100/price,
-                          turnover=liquidity*turnover_pct/100/price,cash=cash/(price*(1+cost)))
-            qty = max(0, math.floor(min(limits.values())))
+                          turnover=liquidity*turnover_pct/100/price,cash=cash/price)
+            qty = min(max(0, math.floor(min(limits.values()))), size_order(equity_open, cash, price, stop*(1-slip), cfg.risk_pct, day))
             item.update(entry_price=price,stop=stop,size_limits=limits,
                         sizing_constraint=min(limits,key=limits.get))
             if not qty:
                 item['reason'] = 'Cash / size'
                 rejected['Cash / size'] += 1
                 continue
-            charge = qty*price*cost
+            charge = equity_charges(price, qty, 'buy', day)['total']
             item.update(reason='Filled',quantity=qty,fees=charge)
             cash -= qty*price+charge
             fees += charge
@@ -331,7 +339,7 @@ def _simulate(data, cfg, *, exits='reference', setup='confirmed', entry='next_op
                     p['pending'] = 'Close below SMA50; next open'
             else:
                 if b['close'] >= p['entry']*(1+cfg.stop_pct/100*cfg.breakeven_r):
-                    breakeven = p['entry_cost']/p['quantity']/(1-cost)
+                    breakeven = breakeven_price(p['entry_cost'], p['quantity'], day, cfg.slippage_bps)
                     p['stop'] = max(p['stop'],breakeven,average)
             marks[s] = b['close']
             if not mark_end and not locked and (i==len(data[s])-1 or data[s][i+1]['date']>str(cfg.end)):

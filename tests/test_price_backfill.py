@@ -50,6 +50,20 @@ class PriceBackfillTests(unittest.TestCase):
         self.assertEqual(len(store.read('bars/TEST')['bars']),3)
         self.assertEqual(unavailable,[{'start':'2026-06-02','end':'2026-06-02'}])
 
+    def test_partial_response_preserves_valid_candles_and_reports_the_hole(self):
+        store.write('bars/TEST', dict(bars=[candle('2026-06-01')],
+                                    requested_start='2026-06-01',requested_end='2026-06-01'))
+        sessions=['2026-06-01','2026-06-02','2026-06-03']
+        with patch.object(market_data.upstox,'fetch_range',return_value=[candle('2026-06-03')]), \
+             patch.object(market_data.time,'sleep'):
+            with self.assertRaisesRegex(ValueError,'Missing daily candles'):
+                market_data.save_daily(Mock(),self.item,'test',date(2026,6,1),date(2026,6,3),sessions=sessions)
+            unavailable=[]
+            self.assertEqual(market_data.save_daily(Mock(),self.item,'test',date(2026,6,1),date(2026,6,3),
+                sessions=sessions,unavailable_ranges=unavailable),1)
+        self.assertEqual(unavailable,[{'start':'2026-06-02','end':'2026-06-02'}])
+        self.assertEqual([b['date'] for b in store.read('bars/TEST')['bars']],['2026-06-01','2026-06-03'])
+
     def test_backfill_uses_calendar_warmup_and_skips_sufficient_history(self):
         other = dict(symbol='OLD', isin='OLD', key='old')
         store.write('universes/niftytotalmarket', {'instruments':[self.item, other]})

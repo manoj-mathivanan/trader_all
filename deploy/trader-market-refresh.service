@@ -1,0 +1,11 @@
+[Unit]
+Description=Refresh shared daily and five-minute market history
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/trader
+ExecStart=/usr/bin/docker exec trader-trader-1 python scripts/refresh_market_history.py --scheduled
+TimeoutStartSec=4h
+Nice=10

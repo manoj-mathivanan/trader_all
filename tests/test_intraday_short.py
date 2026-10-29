@@ -34,7 +34,7 @@ class IntradayShortTests(unittest.TestCase):
         self.assertEqual((t['entry_time'],t['exit_time'],t['exit']),('09:15','15:00',95))
         self.assertEqual(t['entry_date'],t['exit_date'])
         self.assertEqual(t['reason'],'Mandatory intraday square-off')
-        self.assertEqual(t['pnl'],5*t['quantity'])
+        self.assertAlmostEqual(t['pnl'],5*t['quantity']-t['fees'])
         self.assertEqual(result['state']['positions'],{})
         self.assertEqual(result['metrics']['overnight_positions'],0)
         self.assertEqual(result['metrics']['modeled_borrow_costs'],0)

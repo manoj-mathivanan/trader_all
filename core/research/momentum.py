@@ -1,4 +1,5 @@
 """Research-only opening-range momentum; completed-bar signals, next-bar fills."""
+from core.execution.upstox import breakeven_price
 import hashlib
 import json
 import math
@@ -71,8 +72,8 @@ class MomentumConfig(BaseModel):
     fundamental_max_age_days: int = Field(180, ge=1, le=730, title='Maximum financial period age (days)')
     comparison_run_id: str | None = Field(None, pattern=r'^[0-9a-f]{12}$', title='Frozen input reference')
     slippage_bps: float = Field(10, ge=0, le=500, title='Slippage per side (bps)')
-    buy_cost_bps: float = Field(10, ge=0, le=500, title='All-in buy charges (bps)')
-    sell_cost_bps: float = Field(10, ge=0, le=500, title='All-in sell charges (bps)')
+    buy_cost_bps: float = Field(10, ge=0, le=500, title='Legacy buy bps (ignored; Upstox Plus applies)')
+    sell_cost_bps: float = Field(10, ge=0, le=500, title='Legacy sell bps (ignored; Upstox Plus applies)')
     acknowledge_limitations: bool = Field(False, title='I understand this is an exploratory backtest')
 
     @model_validator(mode='after')
@@ -281,7 +282,7 @@ def simulate(datasets, cfg, sessions, plan=None, *, entry_check=None, fundamenta
     plan = entry_plan(datasets, cfg)[0] if plan is None else plan
     broker = PaperBrokerAdapter(cfg)
     def fill_order(price, quantity, side):
-        order = broker.fill(price, quantity, side)
+        order = broker.fill(price, quantity, side, day=day, intraday=True)
         if fee_model is not None:
             fee = fee_model(order['price'], quantity, side, day)
             if not math.isfinite(fee) or fee < 0:
@@ -378,7 +379,7 @@ def simulate(datasets, cfg, sessions, plan=None, *, entry_check=None, fundamenta
                 skipped += 1
                 continue
             raw_entry = bars[idx]['open']
-            fill = broker.fill(raw_entry, 1, 'buy' if sign==1 else 'sell')['price']
+            fill = broker.fill(raw_entry, 1, 'buy' if sign==1 else 'sell', day=day, intraday=True)['price']
             # Reverse execution preserves signal detection, then mirrors the
             # protective distance onto the adverse side of the actual position.
             stop = (fill-sign*signal_sign*(fill-pattern['pullback_extreme'])
@@ -387,30 +388,24 @@ def simulate(datasets, cfg, sessions, plan=None, *, entry_check=None, fundamenta
             if stop <= 0 or distance <= 0:
                 skipped += 1
                 continue
-            fee_rate = (cfg.buy_cost_bps if sign==1 else cfg.sell_cost_bps)/10000
-            exit_rate = (cfg.sell_cost_bps if sign==1 else cfg.buy_cost_bps)/10000
-            unit_risk = distance+fill*fee_rate+stop*(exit_rate+cfg.slippage_bps/10000)
-            qty = max(0, min(math.floor(max(0,equity)*cfg.risk_pct/100/unit_risk),
-                             math.floor(max(0,equity)/cfg.max_positions/(fill*(1+fee_rate)))))
-            if fee_model is not None:
-                # Capped brokerage is nonlinear in quantity. Search the largest
-                # quantity satisfying both exact stop risk and reserved notional.
-                # The supplied fee schedule must be nondecreasing in quantity.
-                entry_side, exit_side = ('buy','sell') if sign == 1 else ('sell','buy')
-                budget = max(0,equity)/cfg.max_positions
-                risk_budget = max(0,equity)*cfg.risk_pct/100
-                stop_fill = stop*(1-sign*cfg.slippage_bps/10000)
-                lo, hi = 0, math.floor(budget/fill)
-                while lo < hi:
-                    trial = (lo+hi+1)//2
-                    entry_fee = fill_order(raw_entry,trial,entry_side)['fees']
-                    exit_fee = fill_order(stop,trial,exit_side)['fees']
-                    risk = sign*(fill-stop_fill)*trial+entry_fee+exit_fee
-                    if fill*trial+entry_fee <= budget and risk <= risk_budget:
-                        lo = trial
-                    else:
-                        hi = trial-1
-                qty = lo
+            # Capped brokerage is nonlinear in quantity. Search the largest
+            # quantity satisfying both exact stop risk and reserved notional.
+            # The supplied fee schedule must be nondecreasing in quantity.
+            entry_side, exit_side = ('buy','sell') if sign == 1 else ('sell','buy')
+            budget = max(0,equity)/cfg.max_positions
+            risk_budget = max(0,equity)*cfg.risk_pct/100
+            stop_fill = stop*(1-sign*cfg.slippage_bps/10000)
+            lo, hi = 0, math.floor(budget/fill)
+            while lo < hi:
+                trial = (lo+hi+1)//2
+                entry_fee = fill_order(raw_entry,trial,entry_side)['fees']
+                exit_fee = fill_order(stop,trial,exit_side)['fees']
+                risk = sign*(fill-stop_fill)*trial+entry_fee+exit_fee
+                if fill*trial+entry_fee <= budget and risk <= risk_budget:
+                    lo = trial
+                else:
+                    hi = trial-1
+            qty = lo
             if not qty:
                 skipped += 1
                 no_quantity += 1
@@ -442,7 +437,7 @@ def simulate(datasets, cfg, sessions, plan=None, *, entry_check=None, fundamenta
                     break
                 if cfg.breakeven_after_r and sign*(b['close']-fill)>=distance*cfg.breakeven_after_r:
                     slip = cfg.slippage_bps/10000
-                    breakeven = fill*(1+fee_rate)/(1-exit_rate)/(1-slip) if sign==1 else fill*(1-fee_rate)/(1+exit_rate)/(1+slip)
+                    breakeven = breakeven_price(fill*qty+sign*entry['fees'], qty, day, cfg.slippage_bps, intraday=True, sign=sign)
                     stop = max(stop, breakeven) if sign==1 else min(stop, breakeven)
             exit_fill = fill_order(raw_exit, qty, 'sell' if sign==1 else 'buy')
             fees = entry['fees']+exit_fill['fees']

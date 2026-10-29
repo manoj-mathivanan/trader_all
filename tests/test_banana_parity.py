@@ -51,7 +51,10 @@ class BananaParityTests(unittest.TestCase):
         # A uses 62.5% of cash; after its gap exit only the prior remaining
         # cash can buy B. Same-day A proceeds stay unsettled.
         btrade=next(t for t in result['trades'] if t['symbol']=='B')
-        self.assertLessEqual(btrade['quantity']*btrade['entry'],3800)
+        atrade=next(t for t in result['trades'] if t['symbol']=='A')
+        from core.execution.upstox import equity_charges
+        def entry_cost(t):return t['quantity']*t['entry']+equity_charges(t['entry'],t['quantity'],'buy',t['entry_date'])['total']
+        self.assertLessEqual(entry_cost(btrade),10000-entry_cost(atrade))
 
     def test_locked_day_defers_stop_to_next_tradable_open(self):
         rows=self.rows([dict(open=100,high=102,low=99,close=101),

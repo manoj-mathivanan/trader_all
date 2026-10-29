@@ -1,4 +1,5 @@
 """Hypothetical short-only research with fully reserved entry-notional collateral."""
+from core.execution.upstox import size_order, breakeven_price, equity_charges
 import math
 from datetime import date
 from core.execution.paper import PaperBrokerAdapter
@@ -19,7 +20,7 @@ def simulate(datasets, cfg, *, entry_warmup=0):
     actions, applied = [], set()
     total_fees = total_slippage = total_borrow = skipped = 0
     broker = PaperBrokerAdapter(cfg)
-    slip, buy_fee, sell_fee = cfg.slippage_bps/10000, cfg.buy_cost_bps/10000, cfg.sell_cost_bps/10000
+    slip = cfg.slippage_bps/10000
     context_cache, statistics_cache = {}, {}
 
     def context(symbol, day):
@@ -58,7 +59,15 @@ def simulate(datasets, cfg, *, entry_warmup=0):
     def close(symbol, raw_price, day, reason):
         nonlocal cash, total_fees, total_slippage
         p = positions.pop(symbol)
-        execution = broker.fill(raw_price, p['quantity'], 'buy')
+        intraday = p['entry_date'] == day
+        if intraday:
+            actual = equity_charges(p['entry'],p['quantity'],'sell',day,intraday=True)['total']
+            correction = actual-p['entry_fee']
+            cash -= correction
+            total_fees += correction
+            p['entry_fee'] = actual
+            next(o for o in reversed(orders) if o['symbol']==symbol and o['side']=='sell' and o['date']==day)['fees'] = actual
+        execution = broker.fill(raw_price, p['quantity'], 'buy', day=day, intraday=intraday)
         fill, fee = execution['price'], execution['fees']
         cash += p['collateral'] + p['entry_notional'] - p['quantity']*fill - fee
         total_fees += fee
@@ -135,12 +144,11 @@ def simulate(datasets, cfg, *, entry_warmup=0):
             fill = raw_fill*(1-slip)
             distance = fill*cfg.stop_pct/100
             stop = fill+distance
-            unit_risk = distance + fill*sell_fee + stop*(buy_fee+slip)
-            qty = max(0, min(math.floor(equity_at_open*cfg.risk_pct/100/unit_risk), math.floor(cash/(fill*(1+sell_fee)))))
+            qty = size_order(max(0,equity_at_open), cash, fill, stop*(1+-1*-cfg.slippage_bps/10000), cfg.risk_pct, day, sign=-1, intraday=False)
             if not qty:
                 skipped += 1
                 continue
-            execution = broker.fill(raw_fill, qty, 'sell')
+            execution = broker.fill(raw_fill, qty, 'sell', day=day)
             fee = execution['fees']
             notional = qty*fill
             cash -= notional+fee
@@ -171,7 +179,7 @@ def simulate(datasets, cfg, *, entry_warmup=0):
                     if target_pct is not None and b['close'] <= p['entry']*(1-target_pct/100):
                         close(symbol, b['close'], day, f'Take profit {target_pct}% on short')
                         continue
-                    breakeven = (p['entry_notional']-p['entry_fee']-p['borrow_cost'])/p['quantity']/(1+buy_fee)/(1+slip)
+                    breakeven = breakeven_price(p['entry_notional']-p['entry_fee']-p['borrow_cost'], p['quantity'], day, cfg.slippage_bps, sign=-1)
                     length = 150 if cfg.winner_exit == 'trail_30w' else 50
                     bars = context(symbol, day)
                     trail = sum(x['close'] for x in bars[idx-length+1:idx+1])/length if target_pct is None and idx+1 >= length else None

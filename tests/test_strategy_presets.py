@@ -65,7 +65,7 @@ class StrategyPresetTests(unittest.TestCase):
     def test_zerodha_candidate_has_causal_exit_and_valid_tariff_defaults(self):
         preset=next(p for p in strategy_presets.available() if p['name']=='Blue Sky Stalled Exit - Zerodha')
         values=preset['trading_defaults']
-        self.assertEqual(values['fee_model'],'zerodha_equity')
+        self.assertEqual(values['fee_model'],'upstox_plus')
         self.assertEqual(values['winner_exit'],'trail_50d')
         self.assertEqual(values['stalled_exit_sessions'],10)
         self.assertEqual(values['stalled_min_r'],.5)

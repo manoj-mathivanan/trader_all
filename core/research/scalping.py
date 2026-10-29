@@ -1,4 +1,5 @@
 """One-minute pullback research. Completed signals, chronological cash accounting."""
+from core.execution.upstox import size_order
 import hashlib
 import json
 import math
@@ -44,8 +45,8 @@ class ScalpingParameters(BaseModel):
     last_entry_time: str = Field('14:30', pattern=r'^\d{2}:\d{2}$', title='Last entry open (IST)')
     square_off_time: str = Field('15:15', pattern=r'^\d{2}:\d{2}$', title='Mandatory exit open (IST)')
     slippage_bps: float = Field(10, ge=0, le=500, title='Slippage per side (bps)')
-    buy_cost_bps: float = Field(10, ge=0, le=500, title='All-in buy charges (bps)')
-    sell_cost_bps: float = Field(10, ge=0, le=500, title='All-in sell charges (bps)')
+    buy_cost_bps: float = Field(10, ge=0, le=500, title='Legacy buy bps (ignored; Upstox Plus applies)')
+    sell_cost_bps: float = Field(10, ge=0, le=500, title='Legacy sell bps (ignored; Upstox Plus applies)')
     acknowledge_limitations: bool = Field(False, title='I understand this is exploratory candle-based research')
 
     @model_validator(mode='after')
@@ -237,7 +238,7 @@ def simulate(datasets, cfg, sessions, plan, *, feature_provider=None, signal_pro
             nonlocal cash, fees_total, slip_total
             p = active.pop(symbol)
             b = prepared[symbol][0][index]
-            fill = broker.fill(raw, p['quantity'], 'sell' if p['sign'] == 1 else 'buy')
+            fill = broker.fill(raw, p['quantity'], 'sell' if p['sign'] == 1 else 'buy', day=day, intraday=True)
             fees = p['entry_fee']+fill['fees']
             pnl = p['sign']*p['quantity']*(fill['price']-p['entry'])-fees
             cash += p['reserved']+pnl
@@ -286,7 +287,7 @@ def simulate(datasets, cfg, sessions, plan, *, feature_provider=None, signal_pro
                     skipped += 1
                     continue
                 side = 'buy' if s['sign'] == 1 else 'sell'
-                fill = broker.fill(b['open'], 1, side)['price']
+                fill = broker.fill(b['open'], 1, side, day=day, intraday=True)['price']
                 distance = s['sign']*(fill-s['stop'])
                 if s['stop'] <= 0 or not cfg.min_stop_pct <= distance/fill*100 <= cfg.max_stop_pct:
                     skipped += 1
@@ -295,19 +296,17 @@ def simulate(datasets, cfg, sessions, plan, *, feature_provider=None, signal_pro
                 if target <= 0:
                     skipped += 1
                     continue
-                fee_rate = (cfg.buy_cost_bps if s['sign'] == 1 else cfg.sell_cost_bps)/10000
-                stop_fill = broker.fill(s['stop'], 1, 'sell' if s['sign'] == 1 else 'buy')
-                unit_risk = s['sign']*(fill-stop_fill['price'])+fill*fee_rate+stop_fill['fees']
+                stop_fill = broker.fill(s['stop'], 1, 'sell' if s['sign'] == 1 else 'buy', day=day, intraday=True)
+                unit_risk = s['sign']*(fill-stop_fill['price'])+broker.fill(b['open'], 1, side, day=day, intraday=True)['fees']+stop_fill['fees']
+                s['fee_day'] = day
                 if entry_gate and not entry_gate(s, b['open'], fill, target, unit_risk, cfg):
                     skipped += 1
                     continue
-                qty = max(0, min(math.floor(max(0, opening_equity)*cfg.risk_pct/100/unit_risk),
-                                 math.floor(min(cash, max(0, opening_equity)/cfg.max_positions)/(fill*(1+fee_rate))),
-                                 math.floor(bars[i-1]['volume']*cfg.participation_pct/100)))
+                qty = min(size_order(max(0,opening_equity), min(cash,max(0,opening_equity)/cfg.max_positions), fill, stop_fill['price'], cfg.risk_pct, day, sign=s['sign'], intraday=True), math.floor(bars[i-1]['volume']*cfg.participation_pct/100))
                 if not qty:
                     skipped += 1
                     continue
-                entry = broker.fill(b['open'], qty, side)
+                entry = broker.fill(b['open'], qty, side, day=day, intraday=True)
                 reserved = fill*qty+entry['fees']
                 cash -= reserved
                 active[symbol] = dict(**s, entry=fill, quantity=qty, reserved=reserved, distance=distance,

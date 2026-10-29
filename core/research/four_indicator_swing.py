@@ -1,4 +1,5 @@
 """Daily equity adaptation of the video's four indicators; normal saved backtests."""
+from core.execution.upstox import equity_charges, size_order
 from bisect import bisect_left, bisect_right
 from datetime import date, datetime
 import hashlib
@@ -37,8 +38,8 @@ class SwingConfig(BaseModel):
     rsi_threshold: float = Field(65, ge=0, le=100, title='RSI (14) must be above')
     bollinger_multiplier: float = Field(2.5, gt=0, le=10, title='Bollinger (20) standard deviations')
     slippage_bps: float = Field(10, ge=0, le=500, title='Slippage per side (bps)')
-    buy_cost_bps: float = Field(10, ge=0, le=500, title='All-in buy charges (bps)')
-    sell_cost_bps: float = Field(10, ge=0, le=500, title='All-in sell charges (bps)')
+    buy_cost_bps: float = Field(10, ge=0, le=500, title='Legacy buy bps (ignored; Upstox Plus applies)')
+    sell_cost_bps: float = Field(10, ge=0, le=500, title='Legacy sell bps (ignored; Upstox Plus applies)')
     comparison_run_id: str | None = Field(None, pattern=r'^[a-f0-9]{12}$', title='Frozen input reference')
 
     @model_validator(mode='before')
@@ -197,14 +198,14 @@ def simulate(datasets, signals, cfg, rule, *, state=None, liquidate=True, entry_
     fees, slippage, skipped = state.get('total_fees',0), state.get('total_slippage',0), state.get('skipped_entries',0)
     peak = max([cfg.capital]+[c['equity'] for c in curve])
     drawdown = state.get('max_drawdown_pct',0)
-    slip, buy_fee, sell_fee = cfg.slippage_bps/10000, cfg.buy_cost_bps/10000, cfg.sell_cost_bps/10000
+    slip = cfg.slippage_bps/10000
     days = sorted(events)
 
     def close(symbol, bar, raw, reason):
         nonlocal cash, fees, slippage
         p = positions.pop(symbol)
         price = raw*(1-slip)
-        charge = price*p['quantity']*sell_fee
+        charge = equity_charges(price, p['quantity'], 'sell', bar['date'])['total']
         cash += price*p['quantity']-charge
         fees += charge
         slippage += (raw-price)*p['quantity']
@@ -245,11 +246,11 @@ def simulate(datasets, signals, cfg, rule, *, state=None, liquidate=True, entry_
                 continue
             bar = datasets[symbol][i]
             price = bar['open']*(1+slip)
-            quantity = math.floor(min(budget,cash)/(price*(1+buy_fee)))
+            quantity = size_order(equity_open, min(budget,cash), price, price, 100, day)
             if quantity <= 0:
                 skipped += 1
                 continue
-            charge = price*quantity*buy_fee
+            charge = equity_charges(price, quantity, 'buy', day)['total']
             cash -= price*quantity+charge
             fees += charge
             slippage += (price-bar['open'])*quantity
@@ -314,6 +315,8 @@ def run(settings, cfg, log, job_id):
                                 'Equal capital slots; no leverage. Simultaneous signals rank by completed signal-day turnover. Prices mark at daily closes; final holdings liquidate at the final observed close.',
                                 'Current universe membership causes survivorship bias. Known in-window splits/bonuses and unresolved data gaps are excluded and listed. Dividends and historical taxes are not reconstructed.',
                                 'Fees and slippage are explicit assumptions. This is exploratory research, not evidence of a deployable edge.'])
+        if any(h.get('provisional_daily') for h in frozen.get('history', {}).values()):
+            result['warnings'].append('Inputs include provisional daily aggregates from complete current-session minute candles. Final minute-bar closes can differ from published daily closes; inspect frozen history provenance.')
         if cfg.coverage_mode == 'available_history':
             result['warnings'].append('Full available history: each stock becomes eligible after 100 observed warmup candles in its latest continuous cached history ending at the test cutoff. Earlier isolated fragments are listed and ignored; index and valid stock candles define observed exchange sessions. Stocks without enough continuous warmup are excluded. No prelisting or missing prices are invented.')
         log(f'{rule[1]}: calculation finished; saving frozen inputs and trade report.')

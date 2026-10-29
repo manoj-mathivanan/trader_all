@@ -5,7 +5,7 @@ from unittest.mock import patch
 from pydantic import ValidationError
 from core.research.config import BacktestConfig, BearishBacktestConfig
 from core.research.backtest import simulate
-from core.execution.zerodha import equity_charges, breakeven_price
+from core.execution.upstox import equity_charges, breakeven_price
 from core.risk.position_sizer import percent_risk_size
 from core.portfolio.paper import PaperConfig
 
@@ -27,19 +27,19 @@ class ChargesTests(unittest.TestCase):
         for day in ['2025-01-01', '2026-03-02']:
             buy = equity_charges(1000,100,'buy',day)
             sell = equity_charges(1000,100,'sell',day)
-            self.assertEqual(buy['brokerage'],0)
-            self.assertAlmostEqual(buy['exchange']+buy['ipft'],3.07)
+            self.assertEqual(buy['brokerage'],30)
+            self.assertAlmostEqual(buy['exchange']+buy['ipft'],3.0701 if day >= '2026-03-01' else 3.07)
             self.assertAlmostEqual(buy['stt'],100)
             self.assertAlmostEqual(buy['stamp'],15)
-            self.assertAlmostEqual(buy['total'],118.7406)
-            self.assertAlmostEqual(sell['total'],119.0806)
-            self.assertEqual(sell['dp'],13)
-        self.assertRaises(ValueError,equity_charges,100,10,'buy','2024-09-30')
+            self.assertAlmostEqual(buy['total'],154.1226+(0.000118 if day >= '2026-03-01' else 0))
+            self.assertAlmostEqual(sell['total'],162.7226+(0.000118 if day >= '2026-03-01' else 0))
+            self.assertEqual(sell['dp'],20)
+        self.assertGreater(equity_charges(100,10,'buy','2024-09-30')['total'],0)
 
     def test_intraday_cap_and_no_delivery_dp_or_buy_stt(self):
         buy=equity_charges(1000,100,'buy','2025-01-01',intraday=True)
         sell=equity_charges(1000,100,'sell','2025-01-01',intraday=True)
-        self.assertEqual(buy['brokerage'],20)
+        self.assertEqual(buy['brokerage'],30)
         self.assertEqual(buy['stt'],0)
         self.assertEqual(sell['stt'],25)
         self.assertEqual(sell['dp'],0)
@@ -123,13 +123,12 @@ class RefinementTests(unittest.TestCase):
         expected=percent_risk_size(100000,100000,100,92,SimpleNamespace(**{**vars(c),'risk_pct':.75}),day='2025-01-02')
         self.assertEqual(r['trades'][0]['quantity'],expected)
 
-    def test_unsupported_fee_modes_rejected_and_paper_accepts_tariff(self):
+    def test_legacy_fee_selections_migrate_for_all_execution_modes(self):
         for changes in [{'entry_mode':'pivot'},{'execution_horizon':'intraday'},{'start':'2024-01-01'}]:
-            values={**cfg().model_dump(),**changes}
-            self.assertRaises(ValidationError,BacktestConfig,**values)
-        self.assertRaises(ValidationError,BearishBacktestConfig,start='2025-01-01',end='2025-02-01',acknowledge_limitations=True,fee_model='zerodha_equity',entry_mode='next_open')
-        PaperConfig(capital=100000,acknowledge_limitations=True,fee_model='zerodha_equity',buy_cost_bps=0,sell_cost_bps=0)
-        self.assertRaises(ValidationError,PaperConfig,capital=100000,acknowledge_limitations=True,buy_cost_bps=0)
+            self.assertEqual(BacktestConfig(**{**cfg().model_dump(),**changes}).fee_model,'upstox_plus')
+        self.assertEqual(BearishBacktestConfig(start='2025-01-01',end='2025-02-01',acknowledge_limitations=True,fee_model='zerodha_equity',entry_mode='next_open').fee_model,'upstox_plus')
+        self.assertEqual(PaperConfig(capital=100000,acknowledge_limitations=True,buy_cost_bps=0,sell_cost_bps=0).fee_model,'upstox_plus')
+
 
 
 if __name__=='__main__':

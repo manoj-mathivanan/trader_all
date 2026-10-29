@@ -39,7 +39,7 @@ def simulate(data, cfg, *, exits='reference', setup='confirmed', entry='next_ope
     positions, marks, trades, curve = {}, {}, [], []
     rejected = Counter()
     peak, drawdown, fees, exposure = cash, 0.0, 0.0, []
-    cost = cost_bps / 10000
+    from core.execution.upstox import equity_charges, size_order, breakeven_price
     rs_cache = {}
 
     def context(s, day):
@@ -65,7 +65,7 @@ def simulate(data, cfg, *, exits='reference', setup='confirmed', entry='next_ope
     def close(s, price, day, reason):
         nonlocal unsettled, fees
         p = positions.pop(s)
-        charge = p['quantity'] * price * cost
+        charge = equity_charges(price,p['quantity'],'sell',day,intraday=p['entry_date']==day)['total']
         proceeds = p['quantity'] * price - charge
         unsettled += proceeds
         fees += charge
@@ -166,11 +166,12 @@ def simulate(data, cfg, *, exits='reference', setup='confirmed', entry='next_ope
             stop = price*(1-cfg.stop_pct/100)
             qty = max(0, math.floor(min(equity_open*cfg.risk_pct/100/(price-stop),
                       equity_open*cap_pct/100/price, liquidity*turnover_pct/100/price,
-                      cash/(price*(1+cost)))))
+                      cash/price)))
+            qty = min(qty,size_order(equity_open,cash,price,stop,cfg.risk_pct,day))
             if not qty:
                 rejected['Cash / size'] += 1
                 continue
-            charge = qty*price*cost
+            charge = equity_charges(price,qty,'buy',day)['total']
             cash -= qty*price+charge
             fees += charge
             positions[s] = dict(entry=price, quantity=qty, stop=stop, best_close=price,
@@ -199,7 +200,7 @@ def simulate(data, cfg, *, exits='reference', setup='confirmed', entry='next_ope
                     p['pending'] = 'Close below SMA50; next open'
             else:
                 if b['close'] >= p['entry']*(1+cfg.stop_pct/100*cfg.breakeven_r):
-                    breakeven = p['entry_cost']/p['quantity']/(1-cost)
+                    breakeven = breakeven_price(p['entry_cost'],p['quantity'],day,0)
                     p['stop'] = max(p['stop'],breakeven,average)
             marks[s] = b['close']
             if not locked and (i==len(data[s])-1 or data[s][i+1]['date']>str(cfg.end)):

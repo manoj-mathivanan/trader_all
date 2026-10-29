@@ -25,7 +25,7 @@ class IntradayLongTests(unittest.TestCase):
         t = result['trades'][0]
         self.assertEqual((t['direction'],t['entry_time'],t['exit_time'],t['exit']),('long','09:15','15:00',105))
         self.assertEqual(t['entry_date'],t['exit_date'])
-        self.assertEqual(t['pnl'],5*t['quantity'])
+        self.assertAlmostEqual(t['pnl'],5*t['quantity']-t['fees'])
         self.assertEqual([o['side'] for o in result['state']['orders']],['buy','sell'])
         self.assertEqual(result['metrics']['overnight_positions'],0)
 

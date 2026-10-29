@@ -111,9 +111,8 @@ def target(setup, fill, distance, cfg):
 def entry_allowed(setup, raw, fill, target_price, unit_risk, cfg):
     sign = setup['sign']
     broker = PaperBrokerAdapter(cfg)
-    exit_fill = broker.fill(target_price, 1, 'sell' if sign == 1 else 'buy')
-    fee_rate = (cfg.buy_cost_bps if sign == 1 else cfg.sell_cost_bps)/10000
-    entry_fee = fill*fee_rate
+    exit_fill = broker.fill(target_price, 1, 'sell' if sign == 1 else 'buy', day=setup.get('fee_day', cfg.start), intraday=True)
+    entry_fee = broker.fill(raw, 1, 'buy' if sign == 1 else 'sell', day=setup.get('fee_day', cfg.start), intraday=True)['fees']
     gross_reward = sign*(target_price-raw)
     net_reward = sign*(exit_fill['price']-fill)-entry_fee-exit_fill['fees']
     costs = sign*(fill-raw)+exit_fill['slippage']+entry_fee+exit_fill['fees']

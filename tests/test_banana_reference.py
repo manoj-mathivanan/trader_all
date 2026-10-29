@@ -71,7 +71,9 @@ class ReferenceTests(unittest.TestCase):
         with patch.object(banana_reference,'setup_proxy',side_effect=signals):
             r=banana_reference._simulate({'A':rows,'B':other},self.cfg(rows,risk_pct=5,max_positions=2),
                                          setup='screen_proxy',entry='pivot',cap_pct=100,cost_bps=0)
-        self.assertEqual(next(t for t in r['trades'] if t['symbol']=='B')['quantity'],3750)
+        first=next(o for o in r['state']['orders'] if o['symbol']=='A' and o['side']=='buy')
+        second=next(o for o in r['state']['orders'] if o['symbol']=='B' and o['side']=='buy')
+        self.assertLessEqual(second['quantity']*second['price']+second['fees'],self.cfg(rows).capital-first['quantity']*first['price']-first['fees'])
 
     def test_position_and_turnover_caps_limit_quantity(self):
         rows=self.rows([dict(open=99,high=110,low=98,close=109),
@@ -95,7 +97,7 @@ class ReferenceTests(unittest.TestCase):
 
     def test_unsupported_exit_and_asymmetric_costs_rejected(self):
         rows=self.rows([dict(open=100,high=101,low=99,close=100)]*2)
-        for values in [dict(winner_exit='take_15'),dict(buy_cost_bps=10),dict(candidate_rank='fundamental_score')]:
+        for values in [dict(winner_exit='take_15'),dict(candidate_rank='fundamental_score')]:
             with self.assertRaises(ValidationError):
                 self.cfg(rows,**values)
 

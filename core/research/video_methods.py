@@ -9,7 +9,7 @@ from collections import Counter
 from math import floor
 from statistics import mean, median
 
-from core.execution.zerodha import equity_charges
+from core.execution.upstox import equity_charges
 
 
 def aggregate_minutes(bars, size):

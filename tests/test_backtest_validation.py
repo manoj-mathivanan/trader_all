@@ -15,17 +15,9 @@ class BacktestValidationTests(unittest.TestCase):
                            fee_model='zerodha_equity', entry_mode='next_open',
                            acknowledge_limitations=True)
 
-    def test_tariff_error_only_validates_selected_strategy(self):
-        for path in ('backtest', 'backtest-history'):
-            with self.subTest(path=path), patch('dashboard.api.main.jobs.submit') as submit:
-                response = self.client.post('/api/jobs/' + path, json=self.values, headers=self.headers)
-                self.assertEqual(response.status_code, 422)
-                errors = response.json()['detail']
-                self.assertEqual(len(errors), 1)
-                self.assertIn('Custom buy/sell bps for earlier tests', errors[0]['msg'])
-                self.assertNotIn('function-after', str(errors))
-                self.assertNotIn('breakdown', str(errors))
-                submit.assert_not_called()
+    def test_legacy_tariff_selection_uses_plus_for_earlier_dates(self):
+        config = BacktestConfig(**self.values)
+        self.assertEqual(config.fee_model,'upstox_plus')
 
     def test_supported_dates_and_custom_costs_queue_long_backtests(self):
         for changes in ({'start': '2024-10-01'}, {'fee_model': 'custom_bps'},

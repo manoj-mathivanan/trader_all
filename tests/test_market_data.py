@@ -34,11 +34,30 @@ class MarketFetchTests(unittest.TestCase):
             patched.start()
             self.addCleanup(patched.stop)
         self.item = {'symbol': 'TEST', 'isin': 'TESTISIN', 'key': 'synthetic'}
+        # Historical fixtures must not depend on the wall-clock current session.
+        completed = patch.object(market.current_session, 'completed_day', return_value=None)
+        completed.start()
+        self.addCleanup(completed.stop)
 
     def test_windows_calendar_year_and_ten_inclusive_days(self):
         self.assertEqual(market.windows(date(2026, 10, 7)),
                          {'daily_start': '2025-10-07', 'minute_start': '2026-09-28', 'end': '2026-10-07'})
         self.assertEqual(market.windows(date(2024, 2, 29))['daily_start'], '2023-02-28')
+
+    def test_refresh_catches_up_after_downtime_and_keeps_unresolved_minute_gaps_visible(self):
+        store.write('market_fetch', {'completed_at':'2026-09-10T12:00:00Z','end':'2026-09-10',
+            'minute_start':'2026-09-01','failures':[{'interval':'minute'}]})
+        with patch.object(market, 'last_traded_day', return_value=date(2026,10,28)), \
+             patch.object(market.upstox, 'refresh_universe', return_value={'instruments':[self.item]}), \
+             patch.object(market.upstox, 'fetch_range', return_value=[candle('2026-10-28')]), \
+             patch.object(market, 'save_daily', return_value=0), \
+             patch.object(market, 'save_minutes', return_value={'bars':75,'missing_sessions':['2026-09-03']}) as minute, \
+             patch.object(market.data_quality,'audit_cached_universe',return_value={'warnings':[],'excluded_symbols':[]}):
+            result = market.fetch(Mock(),include_fundamentals=False)
+        self.assertEqual(minute.call_args.args[-2],date(2026,9,1))
+        self.assertTrue(result['partial'])
+        self.assertEqual(result['stocks'][0]['minute']['status'],'warning')
+        self.assertEqual(result['failures'][0]['sessions'],['2026-09-03'])
 
     def test_settings_schema_and_save_offer_only_universe_preserving_internal_ranges(self):
         from fastapi.testclient import TestClient

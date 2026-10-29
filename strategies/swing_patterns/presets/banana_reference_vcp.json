@@ -17,7 +17,7 @@
     "candidate_rank": "rs_126",
     "skip_weak_markets": false,
     "sector_filter": "off",
-    "fee_model": "custom_bps",
+    "fee_model": "upstox_plus",
     "buy_cost_bps": 25,
     "sell_cost_bps": 25,
     "slippage_bps": 0
@@ -57,7 +57,7 @@
     "candidate_rank": "rs_126",
     "skip_weak_markets": false,
     "sector_filter": "off",
-    "fee_model": "custom_bps",
+    "fee_model": "upstox_plus",
     "buy_cost_bps": 25,
     "sell_cost_bps": 25,
     "slippage_bps": 10,

@@ -72,7 +72,7 @@ class CorporateActionTests(unittest.TestCase):
         trade=r['trades'][0]
         self.assertEqual(trade['entry'],100)
         self.assertEqual(trade['exit_quantity'],trade['quantity']*2)
-        self.assertAlmostEqual(trade['pnl'],trade['quantity']*(-20))
+        self.assertAlmostEqual(trade['pnl'],trade['quantity']*(-20)-trade['fees'])
 
 
 if __name__ == '__main__':

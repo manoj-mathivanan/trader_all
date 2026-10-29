@@ -26,12 +26,12 @@ class ExitResearchTests(unittest.TestCase):
         self.bars[-1].update(close=140,high=141)
         r=self.simulate(study.ExitPlan('Partial',partial_profit_pct=20))
         sells=[o for o in r['orders'] if o['side']=='SELL']
-        self.assertEqual([(o['quantity'],o['price']) for o in sells],[(50,80),(50,140)])
+        self.assertEqual([(o['quantity'],o['price']) for o in sells],[(49,80),(50,140)])
         self.assertEqual(sells[0]['date'],self.bars[102]['date'])
         self.assertEqual(r['metrics']['trade_count'],1)
         self.assertEqual(r['metrics']['sell_fill_count'],2)
         self.assertEqual(r['metrics']['partial_positions'],1)
-        self.assertAlmostEqual(r['metrics']['net_pnl'],1000)
+        self.assertAlmostEqual(r['metrics']['net_pnl'],1020-r['metrics']['modeled_fees'])
 
     def test_partial_fees_and_production_baseline_parity(self):
         self.cfg.slippage_bps=self.cfg.buy_cost_bps=self.cfg.sell_cost_bps=10

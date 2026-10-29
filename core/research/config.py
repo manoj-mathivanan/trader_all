@@ -89,16 +89,17 @@ class TradingConfig(BaseModel):
     failed_breakout_sessions: int = Field(0, ge=0, le=20, title='Early breakout-failure window (sessions, 0 disables)')
     market_risk_scale: float = Field(1, gt=0, le=1, title='Risk multiplier in weak markets (gate off)')
     market_breadth_trend_sessions: int = Field(0, ge=0, le=60, title='Breadth improvement lookback (sessions, 0 disables)')
-    fee_model: Literal['custom_bps', 'zerodha_equity'] = Field('custom_bps', title='Execution fee model')
-    # Legacy API defaults stay costed for old saved experiments; the new UI
-    # seeds Banana-style comparison runs with zero costs explicitly.
+    fee_model: Literal['upstox_plus', 'custom_bps', 'zerodha_equity'] = Field('upstox_plus', title='Execution fee model')
+    # Legacy bps inputs are accepted for saved payload compatibility only.
+    # New executions always use the shared Upstox Plus tariff.
     slippage_bps: float = Field(10, ge=0, le=500, title="Slippage per side (bps)")
-    buy_cost_bps: float = Field(10, ge=0, le=500, title="All-in buy charges (bps)")
-    sell_cost_bps: float = Field(10, ge=0, le=500, title="All-in sell charges (bps)")
+    buy_cost_bps: float = Field(10, ge=0, le=500, title="Legacy buy bps (ignored; Upstox Plus applies)")
+    sell_cost_bps: float = Field(10, ge=0, le=500, title="Legacy sell bps (ignored; Upstox Plus applies)")
 
 
     @model_validator(mode='after')
     def sector_breadth_rules(self):
+        self.fee_model = 'upstox_plus'
         if self.skip_weak_markets and self.market_breadth_scope == 'sector':
             if self.entry_mode != 'next_open':
                 raise ValueError('Sector breadth requires next-session-open entries.')
@@ -147,14 +148,13 @@ class BacktestConfig(TradingConfig):
                     raise ValueError('Banana proxy does not use legacy control: '+key)
             if (self.pattern not in ('vcp', 'blue_sky', 'multiyear', 'ipo') or self.execution_horizon != 'swing'
                     or self.entry_mode not in ('pivot', 'next_open') or self.winner_exit != 'trail_50d'
-                    or self.candidate_rank != 'rs_126' or self.fee_model != 'custom_bps'
-                    or self.buy_cost_bps != self.sell_cost_bps
+                    or self.candidate_rank != 'rs_126'
                     or self.sector_filter != 'off' or self.skip_weak_markets or self.max_sector_positions
                     or self.min_short_rs_rating or self.min_rs_improvement
                     or self.max_open_gap_pct or self.require_open_above_pivot or self.max_extension_pct
                     or self.reentry_cooldown_sessions or self.stalled_exit_sessions or self.failed_breakout_sessions
                     or self.market_risk_scale != 1 or self.market_breadth_trend_sessions):
-                raise ValueError('Banana proxy requires long swing pivot/next-open, RS priority, SMA50 close exit, equal custom buy/sell costs and no legacy refinements.')
+                raise ValueError('Banana proxy requires long swing pivot/next-open, RS priority, SMA50 close exit, Upstox Plus fees and no legacy refinements.')
         hour, minute = map(int, self.square_off_time.split(':'))
         if not 9*60+20 <= hour*60+minute <= 15*60+20 or minute%5:
             raise ValueError('Choose a five-minute square-off boundary between 09:20 and 15:20 IST.')
@@ -169,12 +169,10 @@ class BacktestConfig(TradingConfig):
         refinements = (self.max_open_gap_pct or self.require_open_above_pivot or self.max_extension_pct
                        or self.reentry_cooldown_sessions or self.stalled_exit_sessions
                        or self.failed_breakout_sessions or self.market_risk_scale != 1 or self.market_breadth_trend_sessions
-                       or self.fee_model != 'custom_bps' or self.winner_exit == 'trail_pct')
+                       or self.winner_exit == 'trail_pct')
         if refinements and (self.pattern not in ('vcp', 'blue_sky', 'multiyear', 'ipo', 'breakout', 'investor_early_breakout')
                             or self.execution_horizon != 'swing' or self.entry_mode != 'next_open'):
-            raise ValueError('Swing refinements and Zerodha fees require long swing next-open entries.')
-        if self.fee_model == 'zerodha_equity' and self.start < date(2024, 10, 1):
-            raise ValueError('Zerodha tariff supports tests from 2024-10-01. Choose a start date on or after 2024-10-01, or select Custom buy/sell bps for earlier tests.')
+            raise ValueError('Swing refinements require long swing next-open entries.')
         return self
 
 

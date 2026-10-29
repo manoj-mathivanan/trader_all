@@ -467,8 +467,7 @@ class PortfolioTests(unittest.TestCase):
 
 class ConfigurationTests(unittest.TestCase):
     def test_paper_requires_capital_acknowledgement_and_positive_costs(self):
-        for changes in ({'capital': None}, {'acknowledge_limitations': False}, {'buy_cost_bps': 0},
-                        {'sell_cost_bps': 0}, {'slippage_bps': 0}, {'entry_mode': 'close'}):
+        for changes in ({'capital': None}, {'acknowledge_limitations': False}, {'slippage_bps': 0}, {'entry_mode': 'close'}):
             with self.assertRaises(ValidationError):
                 config(**changes)
 

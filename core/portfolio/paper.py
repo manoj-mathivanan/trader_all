@@ -40,8 +40,8 @@ class PaperConfig(TradingConfig):
     investor_news_exits: bool = Field(True, title='Allow investor news paper exits')
     entry_mode: Literal['next_open','pivot'] = Field('next_open', title='Entry price')
     slippage_bps: float = Field(10, ge=0, le=500, title='Slippage per side (bps)')
-    buy_cost_bps: float = Field(10, ge=0, le=500, title='All-in buy charges (bps; custom model)')
-    sell_cost_bps: float = Field(10, ge=0, le=500, title='All-in sell charges (bps; custom model)')
+    buy_cost_bps: float = Field(10, ge=0, le=500, title='Legacy buy bps (ignored; Upstox Plus applies)')
+    sell_cost_bps: float = Field(10, ge=0, le=500, title='Legacy sell bps (ignored; Upstox Plus applies)')
     auto_run: bool = Field(False, title='Run automatically on weekdays')
     execution_time: Literal['next_open', 'midday'] = Field('next_open', title='Paper execution timing')
     run_hour: int = Field(16, ge=9, le=23, title='Daily cycle hour (IST)')
@@ -70,7 +70,7 @@ class PaperConfig(TradingConfig):
             if any(getattr(self, k) for k in refinements) or self.market_risk_scale != 1:
                 raise ValueError('These entry/exit refinements are not supported by midday quote execution yet.')
         if self.fee_model == 'custom_bps' and (self.buy_cost_bps <= 0 or self.sell_cost_bps <= 0):
-            raise ValueError('Paper custom charges must be positive; choose Zerodha fees for its tariff.')
+            raise ValueError('Paper custom charges must be positive; choose Upstox Plus fees for its tariff.')
         if not self.acknowledge_limitations:
             raise ValueError('Acknowledge the paper-trading and data limitations first.')
         return self

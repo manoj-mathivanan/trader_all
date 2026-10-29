@@ -99,11 +99,8 @@ def execute(portfolio, cfg, data, checks, quote_map, clock, job_id):
             p['best_close'] = max(p['best_close'], b['close'])
             target = {'take_8': 8, 'take_15': 15, 'take_25': 25}.get(exit_cfg.winner_exit)
             if b['close'] >= p['entry'] * (1 + exit_cfg.stop_pct / 100 * exit_cfg.breakeven_r):
-                if cfg.fee_model == 'zerodha_equity':
-                    from core.execution.zerodha import breakeven_price
-                    be = breakeven_price(p['entry_cost'], p['quantity'], day, cfg.slippage_bps)
-                else:
-                    be = p['entry_cost'] / p['quantity'] / ((1 - cfg.sell_cost_bps / 10000) * (1 - cfg.slippage_bps / 10000))
+                from core.execution.upstox import breakeven_price
+                be = breakeven_price(p['entry_cost'], p['quantity'], day, cfg.slippage_bps)
                 if target and b['close'] >= p['entry'] * (1 + target / 100):
                     reason = f'Completed close target +{target}% (observed midday exit)'
                 elif exit_cfg.winner_exit in ('trail_50d', 'trail_30w'):

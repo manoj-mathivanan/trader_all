@@ -2,8 +2,10 @@
 from statistics import mean, pstdev
 
 
-def indicators(bars, *, bollinger_multiplier=2):
-    """Wilder RSI(14), Supertrend(10,3), configurable 20-period Bollinger band."""
+def indicators(bars, *, bollinger_multiplier=2, bollinger_period=20):
+    """Wilder RSI(14), Supertrend(10,3), configurable Bollinger bands."""
+    if not isinstance(bollinger_period, int) or isinstance(bollinger_period, bool) or bollinger_period < 2:
+        raise ValueError('Bollinger period must be an integer of at least two.')
     result = []
     atr = gain = loss = upper = lower = trend = None
     ranges, gains, losses = [], [], []
@@ -34,10 +36,11 @@ def indicators(bars, *, bollinger_multiplier=2):
                 trend = 1
             elif trend == 1 and b['close'] < lower:
                 trend = -1
-        window = closes[max(0, i-19):i+1]
+        window = closes[max(0, i-bollinger_period+1):i+1]
         result.append(dict(rsi=rsi, supertrend=(lower if trend == 1 else upper),
                            uptrend=trend == 1,
-                           upper_band=mean(window)+bollinger_multiplier*pstdev(window) if i >= 19 else None))
+                           upper_band=mean(window)+bollinger_multiplier*pstdev(window) if i >= bollinger_period-1 else None,
+                           lower_band=mean(window)-bollinger_multiplier*pstdev(window) if i >= bollinger_period-1 else None))
     return result
 
 

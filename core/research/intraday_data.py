@@ -8,6 +8,16 @@ from core.research import store, upstox
 
 IST = timezone(timedelta(hours=5, minutes=30))
 SPECIAL_SESSIONS = {
+    '2022-10-24': {'open': '18:15', 'close': '19:15',
+                   'source': 'https://upstox.com/announcements/revised-timings/update-on-muhurat-trading/'},
+    '2023-11-12': {'open': '18:15', 'close': '19:15',
+                   'source': 'https://nsearchives.nseindia.com/content/circulars/CMTR59124.pdf'},
+    '2024-03-02': {'open': '09:15', 'close': '12:30',
+                   'segments': [('09:15','10:00'),('11:30','12:30')],
+                   'source': 'https://nsearchives.nseindia.com/content/circulars/MSD60677.pdf'},
+    '2024-05-18': {'open': '09:15', 'close': '12:30',
+                   'segments': [('09:15','10:00'),('11:30','12:30')],
+                   'source': 'https://nsearchives.nseindia.com/content/circulars/MSD61893.pdf'},
     '2024-11-01': {'open': '18:00', 'close': '19:00',
                    'source': 'https://nsearchives.nseindia.com/content/circulars/CMTR64628.pdf'},
     '2025-10-21': {'open': '13:45', 'close': '14:45',

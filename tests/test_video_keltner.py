@@ -1,6 +1,6 @@
 import unittest
 from copy import deepcopy
-from core.execution.zerodha import equity_charges
+from core.execution.upstox import equity_charges
 from core.research.video_methods import aggregate_minutes,portfolio_replay
 from core.research.video_keltner import indicators,setups,replay,settle
 from tests.test_video_methods import bars
@@ -89,11 +89,11 @@ class KeltnerTest(unittest.TestCase):
         self.assertLess(stressed['net_pnl'],ledger[0]['net_pnl'])
 
     def test_cost_guard_counts_market_entry_friction(self):
-        t=dict(date='2026-07-01',entry_at=100000,exit_at=300000,symbol='AAA',entry=100,stop=99,
+        t=dict(date='2026-07-01',entry_at=100000,exit_at=300000,symbol='AAA',entry=100,stop=98.5,
                exit_raw=102,market_exit=False,volume=100000,reason='target',ambiguity=False,
                exit_legs=[dict(raw=102,market=False,index=1)])
         self.assertEqual(len(portfolio_replay([t],max_friction_r=.25,settle=settle)),1)
-        self.assertEqual(portfolio_replay([dict(t,entry_raw=99.8)],max_friction_r=.25,settle=settle),[])
+        self.assertEqual(portfolio_replay([dict(t,entry_raw=99.5)],max_friction_r=.25,settle=settle),[])
 
 
 if __name__=='__main__':unittest.main()

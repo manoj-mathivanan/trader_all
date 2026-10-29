@@ -90,7 +90,7 @@ def simulate(datasets, cfg, *, state=None, liquidate=True, allow_entries=True, e
     positions, marks = state.get('positions', {}), state.get('marks', {})
     trades, curve, orders = state.get('trades', []), state.get('curve', []), state.get('orders', [])
     broker = PaperBrokerAdapter(cfg)
-    slip, buy_fee, sell_fee = cfg.slippage_bps / 10000, cfg.buy_cost_bps / 10000, cfg.sell_cost_bps / 10000
+    slip = cfg.slippage_bps / 10000
     peak = state.get('peak', cfg.capital)
     max_dd = state.get('max_dd', 0)
     total_fees, total_slippage, skipped = (state.get(k, 0) for k in ('total_fees', 'total_slippage', 'skipped'))
@@ -105,7 +105,7 @@ def simulate(datasets, cfg, *, state=None, liquidate=True, allow_entries=True, e
                        'failed_breakout_sessions')
     exit_keys = ('pattern', 'stop_pct', 'breakeven_r', 'winner_exit', 'trail_pct', 'max_hold_days',
                  'stalled_exit_sessions', 'stalled_min_r', 'failed_breakout_sessions')
-    refined = cfg.fee_model != 'custom_bps' or cfg.winner_exit == 'trail_pct' or any(
+    refined = cfg.winner_exit == 'trail_pct' or any(
         getattr(cfg, k) for k in refinement_keys if k != 'stalled_min_r')
     skip_reasons = dict(state.get('entry_filter_rejections', {}))
     last_exit_dates = {t['symbol']: t['exit_date'] for t in trades}
@@ -186,8 +186,8 @@ def simulate(datasets, cfg, *, state=None, liquidate=True, allow_entries=True, e
         nonlocal cash, total_fees, total_slippage
         p = positions.pop(symbol)
         intraday = day == p['entry_date']
-        if intraday and cfg.fee_model == 'zerodha_equity':
-            from core.execution.zerodha import equity_charges
+        if intraday:
+            from core.execution.upstox import equity_charges
             actual_buy = equity_charges(p['entry'], p['quantity'], 'buy', day, intraday=True)
             correction = actual_buy['total'] - p['entry_fee']
             cash -= correction
@@ -396,11 +396,8 @@ def simulate(datasets, cfg, *, state=None, liquidate=True, allow_entries=True, e
             p['best_close'] = max(p['best_close'], b['close'])
             # Close-based updates activate next session, never retroactively.
             if b['close'] >= p['entry'] * (1 + exit_cfg.stop_pct / 100 * exit_cfg.breakeven_r):
-                if cfg.fee_model == 'zerodha_equity':
-                    from core.execution.zerodha import breakeven_price
-                    breakeven = breakeven_price(p['entry_cost'], p['quantity'], day, cfg.slippage_bps)
-                else:
-                    breakeven = p['entry_cost'] / p['quantity'] / ((1 - sell_fee) * (1 - slip))
+                from core.execution.upstox import breakeven_price
+                breakeven = breakeven_price(p['entry_cost'], p['quantity'], day, cfg.slippage_bps)
                 if exit_cfg.pattern == 'breakout':
                     trailing = None
                 elif exit_cfg.winner_exit == 'trail_30w':
@@ -431,8 +428,8 @@ def simulate(datasets, cfg, *, state=None, liquidate=True, allow_entries=True, e
         max_dd = max(max_dd, (peak - equity) / peak * 100)
         curve.append({'date': day, 'equity': round(equity, 2), 'drawdown_pct': round((peak - equity) / peak * 100, 4)})
     # Bisection breakeven fills leave tiny floating-point residues. Preserve
-    # historical custom-bps metrics, but don't label Zerodha flat exits wins.
-    tolerance = 1e-6 if cfg.fee_model == 'zerodha_equity' else 0
+    # precision without labeling fee-adjusted flat exits as wins.
+    tolerance = 1e-6
     wins, losses = [t for t in trades if t['pnl'] > tolerance], [t for t in trades if t['pnl'] < -tolerance]
     return {'trades': trades, 'curve': curve, 'corporate_actions': action_log, 'sector_checks': sector_checks,
         'entry_filter_rejections': skip_reasons,
@@ -632,10 +629,10 @@ def run(settings, cfg, log, job_id, *, fundamental_evidence=None, sector_evidenc
         store.write('run_fundamentals/'+job_id, fundamental_evidence)
         result['fundamental_reference'] = {k: fundamental_evidence[k] for k in ('sha256','captured_at','method','notice')}
         result['warnings'].append(fundamental_evidence['notice'])
-    if cfg.fee_model == 'zerodha_equity':
-        from core.execution.zerodha import SOURCES
-        result['cost_model'] = dict(name='Zerodha NSE cash equity', reviewed_at='2026-10-10', sources=SOURCES,
-            notice='Resident-individual tariff; delivery plus same-day intraday reclassification. Includes DP on delivery sells. '
+    if cfg.fee_model == 'upstox_plus':
+        from core.execution.upstox import SOURCES
+        result['cost_model'] = dict(name='Upstox Plus NSE cash equity', reviewed_at='2026-10-29', sources=SOURCES,
+            notice='Upstox Plus brokerage applied to all replay dates; date-dependent statutory charges. Delivery plus same-day intraday reclassification. Pre-October-2024 exchange rates are approximate. Includes DP on delivery sells. '
                    'Trade-level estimates differ from contract-note rounding. Account AMC and personal income tax excluded. Slippage is separate.')
         result['warnings'] = [w for w in result['warnings'] if not w.startswith('All-in fee rates')]
         result['warnings'].append(result['cost_model']['notice'])

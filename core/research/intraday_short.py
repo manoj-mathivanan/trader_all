@@ -1,4 +1,5 @@
 """Prior-day downside signals with five-minute execution and compulsory same-day cover."""
+from core.execution.upstox import size_order, breakeven_price
 import math
 from core.execution.paper import PaperBrokerAdapter
 from core.research import bearish, corporate_actions, intraday_data
@@ -54,7 +55,7 @@ def entry_plan(datasets,cfg,entry_warmup=0):
 def simulate(datasets,cfg,sessions,plan=None,entry_warmup=0):
     plan = entry_plan(datasets,cfg,entry_warmup) if plan is None else plan
     broker = PaperBrokerAdapter(cfg)
-    slip,buy_fee,sell_fee = cfg.slippage_bps/10000,cfg.buy_cost_bps/10000,cfg.sell_cost_bps/10000
+    slip = cfg.slippage_bps/10000
     cash,peak,max_dd = cfg.capital,cfg.capital,0
     trades,orders,curve = [],[],[]
     total_fees = total_slippage = skipped = ambiguous = 0
@@ -83,12 +84,11 @@ def simulate(datasets,cfg,sessions,plan=None,entry_warmup=0):
             fill = bars[0]['open']*(1-slip)
             distance = fill*cfg.stop_pct/100
             stop = fill+distance
-            unit_risk = distance+fill*sell_fee+stop*(buy_fee+slip)
-            qty = max(0,min(math.floor(max(0,equity_at_open)*cfg.risk_pct/100/unit_risk),math.floor(max(0,cash-reserved)/(fill*(1+sell_fee)))))
+            qty = size_order(max(0,equity_at_open), max(0,cash-reserved), fill, stop*(1+-1*-cfg.slippage_bps/10000), cfg.risk_pct, day, sign=-1, intraday=True)
             if qty<1:
                 skipped += 1
                 continue
-            entry = broker.fill(bars[0]['open'],qty,'sell')
+            entry = broker.fill(bars[0]['open'],qty,'sell', day=day, intraday=True)
             reserved += qty*fill+entry['fees']
             selected.append((candidate,bars,qty,entry,stop,distance))
         # Slots and capital are allocated together at the open; later exits cannot finance more open-time entries.
@@ -119,7 +119,7 @@ def simulate(datasets,cfg,sessions,plan=None,entry_warmup=0):
                     break
                 best = min(best,b['close'])
                 if b['close']<=fill*(1-cfg.stop_pct/100*cfg.breakeven_r):
-                    breakeven = fill*(1-sell_fee)/(1+buy_fee)/(1+slip)
+                    breakeven = breakeven_price(fill*qty-entry['fees'], qty, day, cfg.slippage_bps, intraday=True, sign=-1)
                     if target is None:
                         length = 150 if cfg.winner_exit=='trail_30w' else 50
                         rows = corporate_actions.adjusted_bars(datasets[symbol],day)
@@ -128,7 +128,7 @@ def simulate(datasets,cfg,sessions,plan=None,entry_warmup=0):
                     else:
                         trailing = best*(1+cfg.trail_pct/100)
                     stop = min(stop,breakeven,trailing)
-            cover = broker.fill(exit_price,qty,'buy')
+            cover = broker.fill(exit_price,qty,'buy', day=day, intraday=True)
             fees = entry['fees']+cover['fees']
             pnl = qty*(fill-cover['price'])-fees
             cash += pnl
