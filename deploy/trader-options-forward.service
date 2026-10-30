@@ -1,0 +1,11 @@
+[Unit]
+Description=Frozen options forward shadow-paper collection and replay
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/trader
+ExecStart=/usr/bin/flock -n /run/lock/trader-options-forward.lock /usr/bin/docker exec -w /state/data/options-forward-runtime-v1 trader-trader-1 python scripts/run_options_forward_service.py
+TimeoutStartSec=2h
+Nice=10

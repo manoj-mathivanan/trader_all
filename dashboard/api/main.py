@@ -164,6 +164,7 @@ def bootstrap():
                         'namespace': os.environ.get('TRADER_DB_NAMESPACE',ENVIRONMENT)},
             'settings': cfg.model_dump(mode='json'), 'settings_schema': DataPreferences.model_json_schema(),
             'market_fetch': store.read('market_fetch'),
+            'paper_refresh_schedule': store.read('paper_refresh_schedule', {}),
             'sector_fetch': store.read('sector/fetch'), 'sector_comparisons': store.read('sector/comparisons', [])[:20],
             'backtest_schema': BacktestConfig.model_json_schema(), 'patterns': pattern_definitions(),
             'bearish_schema': bearish.BearishConfig.model_json_schema(), 'bearish_screens': bearish.SCREENS,

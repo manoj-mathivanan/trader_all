@@ -1,0 +1,10 @@
+[Unit]
+Description=Collect forward options sessions and capture pre-open catalog at 08:45 India time
+
+[Timer]
+OnCalendar=*-*-* 08:45:00 Asia/Kolkata
+Persistent=true
+Unit=trader-options-forward.service
+
+[Install]
+WantedBy=timers.target

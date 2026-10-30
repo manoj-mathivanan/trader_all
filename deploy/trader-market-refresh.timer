@@ -1,8 +1,9 @@
 [Unit]
-Description=Refresh completed market candles at 06:00 India time
+Description=Refresh market candles at 06:00 and 16:30 India time
 
 [Timer]
 OnCalendar=*-*-* 06:00:00 Asia/Kolkata
+OnCalendar=*-*-* 16:30:00 Asia/Kolkata
 Persistent=true
 Unit=trader-market-refresh.service
 

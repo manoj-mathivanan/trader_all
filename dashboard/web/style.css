@@ -159,3 +159,8 @@ main{min-height:calc(100vh - 68px)}
 .run-metrics .negative{color:var(--red)}
 [data-theme=dark] .run-metrics .positive{color:#76d6a0}
 [hidden]{display:none!important}
+
+.equity-chart-wrap{position:relative}.equity-chart-wrap .equity-chart{cursor:crosshair}.equity-chart:focus-visible{outline:2px solid var(--accent);outline-offset:2px}.equity-tooltip{position:absolute;top:0;left:50%;transform:translateX(-50%);max-width:calc(100% - 16px);padding:7px 10px;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--ink);font-size:12px;box-shadow:var(--shadow);pointer-events:none}
+
+.paper-pnl.profit{color:#187443}.paper-pnl.loss{color:#b42318}
+:root[data-theme="dark"] .paper-pnl.profit{color:#76d6a0}:root[data-theme="dark"] .paper-pnl.loss{color:#ff9b93}

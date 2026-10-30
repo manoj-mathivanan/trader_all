@@ -3,7 +3,7 @@ from threading import Event, Thread
 from datetime import datetime
 from functools import partial
 from core.research import jobs, store
-from core.portfolio import paper, manager, registry
+from core.portfolio import paper, manager, registry, refresh_followup
 
 
 def recover_interrupted():
@@ -37,6 +37,8 @@ def tick():
             return
         targets = [(s, p) for s in sorted(registry.PLUGINS) for p in manager.list_portfolios(s)]
         for strategy_id, portfolio in targets:
+            if refresh_followup.enabled(strategy_id):
+                continue
             plugin = registry.PLUGINS[strategy_id]
             if plugin.trigger_mode != 'batch':
                 continue

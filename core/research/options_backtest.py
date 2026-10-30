@@ -28,12 +28,18 @@ class ReplayConfig:
     slippage_bps: float = 0
     fee_model: str = 'upstox_options'
     chain_policy: str = 'strict'
+    premium_stop_fraction: float | None = None
+    breakeven_activation_fraction: float | None = None
 
     def __post_init__(self):
         if self.timeframe not in (3, 5) or self.premium_variant not in ('fixed_250', 'underlying_1pct') or self.fee_model not in ('custom_bps', 'upstox_options'):
             raise ValueError('Unsupported timeframe or premium-selection variant.')
         if self.chain_policy not in ('strict', 'observed_traded'):
             raise ValueError('Unsupported chain coverage policy.')
+        if self.premium_stop_fraction is not None and (not math.isfinite(self.premium_stop_fraction) or not 0 < self.premium_stop_fraction < 1):
+            raise ValueError('Premium stop fraction must be between zero and one.')
+        if self.breakeven_activation_fraction is not None and (not math.isfinite(self.breakeven_activation_fraction) or self.breakeven_activation_fraction <= 0):
+            raise ValueError('Breakeven activation fraction must be positive.')
         values = (self.capital, self.brokerage_per_order, self.buy_charge_bps, self.sell_charge_bps, self.slippage_bps)
         if not all(math.isfinite(v) for v in values) or self.capital <= 0 or min(values[1:]) < 0 or self.slippage_bps >= 10000:
             raise ValueError('Invalid capital or cost assumptions.')
@@ -234,7 +240,7 @@ def selection_coverage(catalogs, option_bars, expiries, event, side):
                 traded_candidates=sum(b is not None and b['volume'] > 0 for b in observed))
 
 
-def replay(audit, option_bars, catalogs, expiries, config):
+def replay(audit, option_bars, catalogs, expiries, config, *, session_catalogs=None):
     """Replay a caller-audited catalog/price set; no fabricated fills or expiry rolls.
 
     option_bars maps key -> timestamp -> normalized candle. Costs are illustrative
@@ -253,6 +259,9 @@ def replay(audit, option_bars, catalogs, expiries, config):
     for day in {e['date'] for e in audit['events']}:
         instant = datetime.fromisoformat(day+'T15:20:00+05:30')
         times.add(int(instant.timestamp()*1000))
+        if config.premium_stop_fraction is not None or config.breakeven_activation_fraction is not None:
+            start = datetime.fromisoformat(day+'T09:15:00+05:30')
+            times.update(range(int(start.timestamp()*1000), int(instant.timestamp()*1000)+MINUTE, MINUTE))
     for stamp in sorted(times):
         instant = datetime.fromtimestamp(stamp/1000, history.IST)
         event = events.get(stamp)
@@ -270,6 +279,22 @@ def replay(audit, option_bars, catalogs, expiries, config):
                 exit_reason = 'scheduled_intraday_exit'
             elif event and event['ready'] and event['exit_'+position['direction']]:
                 exit_reason = 'supertrend_close_reversal'
+            elif config.premium_stop_fraction is not None or config.breakeven_activation_fraction is not None:
+                previous = option_bars.get(position['key'], {}).get(stamp-MINUTE)
+                if not previous or previous['volume'] <= 0:
+                    errors.append('Premium-exit monitoring minute missing or zero volume; position unresolved.')
+                    break
+                if config.premium_stop_fraction is not None and previous['close'] <= position['entry']*(1-config.premium_stop_fraction):
+                    exit_reason = 'premium_stop_completed_minute'
+                if config.breakeven_activation_fraction is not None:
+                    if previous['close'] >= position['entry']*(1+config.breakeven_activation_fraction):
+                        position.setdefault('protection_activation_timestamp', stamp)
+                    if 'protection_activation_timestamp' in position:
+                        estimated_fill = previous['close']*(1-config.slippage_bps/10000)
+                        estimated_net = estimated_fill*position['quantity']-transaction_fee(
+                            estimated_fill, position['quantity'], 'sell', instant.date(), config)
+                        if exit_reason is None and estimated_net <= position['entry_notional']+position['entry_fee']:
+                            exit_reason = 'fee_breakeven_completed_minute'
         if exit_reason:
             bar = option_bars.get(position['key'], {}).get(stamp)
             if not bar or bar['volume'] <= 0:
@@ -290,8 +315,10 @@ def replay(audit, option_bars, catalogs, expiries, config):
         side = 'call' if event['call'] else 'put' if event['put'] else None
         if side is None or not armed[side]:
             continue
-        coverage.append(selection_coverage(catalogs, option_bars, expiries, event, side))
-        contract, reason = choose_contract(catalogs, option_bars, expiries, event, side, config.premium_variant, config.chain_policy)
+        current_catalogs = session_catalogs.get(event['date'], {}) if session_catalogs is not None else catalogs
+        current_expiries = sorted(current_catalogs) if session_catalogs is not None else expiries
+        coverage.append(selection_coverage(current_catalogs, option_bars, current_expiries, event, side))
+        contract, reason = choose_contract(current_catalogs, option_bars, current_expiries, event, side, config.premium_variant, config.chain_policy)
         if reason:
             skips.append(dict(timestamp=stamp, direction=side, reason=reason))
             continue

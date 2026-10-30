@@ -122,11 +122,14 @@ def simulate(openings, closes, entries, exits, ranks, stamps, symbols, cfg):
     from core.execution.upstox import equity_charges, size_order
     from datetime import timezone, timedelta
     def session(stamp):return datetime.fromtimestamp(int(stamp)/1000,timezone(timedelta(hours=5,minutes=30))).date().isoformat()
+    sessions = [session(stamp) for stamp in stamps]
     capital = cash = cfg['capital']
     slip = cfg['slippage_bps']/10000
     positions, trades, curve = {}, [], []
     fees = slippage = 0.
     skipped = 0
+    daily_entry_skips = 0
+    last_entry_day = {}
     peak = capital
     max_dd = 0.
     def close(s, i, raw, reason):
@@ -158,6 +161,9 @@ def simulate(openings, closes, entries, exits, ranks, stamps, symbols, cfg):
         candidates = [int(s) for s in np.flatnonzero(entries[i]) if s not in positions and s not in exited]
         candidates.sort(key=lambda s: (-ranks[i,s], symbols[s]))
         for s in candidates:
+            if cfg.get('one_entry_per_day') and last_entry_day.get(s) == sessions[i]:
+                daily_entry_skips += 1
+                continue
             if len(positions) >= cfg['max_positions']:
                 skipped += 1
                 continue
@@ -173,6 +179,7 @@ def simulate(openings, closes, entries, exits, ranks, stamps, symbols, cfg):
             positions[s] = dict(entry=price, entry_timestamp=int(stamps[i]),
                                 signal_timestamp=int(stamps[i-1]) if i else None,
                                 quantity=qty, entry_fee=fee)
+            last_entry_day[s] = sessions[i]
         if i == len(stamps)-1:
             for s in list(positions): close(s,i,closes[i,s], 'End of backtest · final 5-minute close')
         equity = cash+sum(p['quantity']*closes[i,s] for s,p in positions.items())
@@ -187,7 +194,7 @@ def simulate(openings, closes, entries, exits, ranks, stamps, symbols, cfg):
                     max_drawdown_pct=max_dd,trade_count=len(trades),
                     win_rate=100*sum(t['pnl']>0 for t in trades)/len(trades) if trades else None,
                     profit_factor=wins/losses if losses else None, modeled_fees=fees,modeled_slippage=slippage,
-                    skipped_entries=skipped), trades=trades, curve=curve)
+                    skipped_entries=skipped, daily_entry_limit_skips=daily_entry_skips), trades=trades, curve=curve)
 
 
 def run(root):

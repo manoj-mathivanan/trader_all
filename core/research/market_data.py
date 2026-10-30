@@ -9,6 +9,16 @@ from core.research.config import Settings
 BENCHMARK = {'key': 'NSE_INDEX|Nifty 50', 'isin': 'NIFTY50', 'symbol': 'NIFTY50'}
 
 
+def retained_completed_benchmark(candles, cutoff):
+    """Keep a verified completed session while daily publication is still pending."""
+    record = store.read('bars/NIFTY50', {})
+    retained = [b for b in record.get('bars', []) if b['date'] <= str(cutoff)
+                and b['date'] in record.get('provisional_daily', {})
+                and complete_minutes(store.read(intraday_data.cache_key('NIFTY50', b['date'])), b['date'])]
+    # Published history wins when it has arrived.
+    return upstox.merge_candles(retained, candles)
+
+
 def windows(last):
     # Same calendar date in the previous year, including leap-day handling.
     try:
@@ -23,6 +33,7 @@ def last_traded_day(client, token, now=None):
     # Never ingest an unfinished session. Historical availability can lag the close.
     cutoff = now.date() if (now.hour, now.minute) >= (16, 0) else now.date() - timedelta(days=1)
     candles = upstox.fetch_range(client, BENCHMARK, token, cutoff - timedelta(days=30), cutoff)
+    candles = retained_completed_benchmark(candles, cutoff)
     current = current_session.completed_day(now)
     if current and (not candles or candles[-1]['date'] < str(current)):
         observed = current_session.daily(client, BENCHMARK, token, current, now=now)
@@ -247,6 +258,7 @@ def fetch(log, job_id=None, *, include_fundamentals=True):
                 window['minute_start'] = min(window['minute_start'], previous.get('minute_start', previous['end']))
         start, minute_start, end = (date.fromisoformat(window[k]) for k in ('daily_start', 'minute_start', 'end'))
         benchmark = upstox.fetch_range(client, BENCHMARK, token, start, end)
+        benchmark = retained_completed_benchmark(benchmark, end)
         current = current_session.completed_day()
         if current == end and (not benchmark or benchmark[-1]['date'] != str(end)):
             aggregate = current_session.daily(client, BENCHMARK, token, end)
@@ -326,4 +338,10 @@ def fetch(log, job_id=None, *, include_fundamentals=True):
         store.write('market_fetch', result)
         fundamentals_note = 'Quarterly fundamentals checked; inspect the fundamentals result for coverage and failures.' if include_fundamentals else 'Fundamentals were not requested.'
         log(f"Finished all {result['total_symbols']} stocks: daily {result['daily_symbols']}, five-minute {result['minute_symbols']}; {len(result['failures'])} candle failures. {fundamentals_note} Older history retained.")
+        from core.portfolio import refresh_followup
+        followups = refresh_followup.run(log, job_id, result)
+        if followups:
+            result['paper_cycles'] = followups
+            result['partial'] = result['partial'] or any(p['status'] == 'failed' for p in followups)
+            store.write('market_fetch', result)
         return result

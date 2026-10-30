@@ -4,7 +4,7 @@ from types import SimpleNamespace
 import httpx
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from typing import Literal
-from core.research import store, market_data, market_history, corporate_actions
+from core.research import store, market_data, market_history, corporate_actions, current_session
 from core.research import four_indicator_swing as fs
 from core.research.config import Settings
 from core.portfolio import manager, paper
@@ -114,8 +114,11 @@ def cycle(log, job_id, *, ingest=True, portfolio_id=None):
                 if n%50 == 0:
                     log(f'Refreshed {n}/{len(universe["instruments"])} daily instruments.')
         else:
+            cutoff = paper.local_now().date()
+            if current_session.completed_day(paper.local_now()) != cutoff:
+                cutoff -= timedelta(days=1)
             dates = [b['date'] for b in store.read('bars/NIFTY50',{}).get('bars',[])
-                     if b['date'] < str(paper.local_now().date())]
+                     if b['date'] <= str(cutoff)]
             if not dates:
                 raise ValueError('No completed benchmark sessions are cached.')
             end = date.fromisoformat(max(dates))
@@ -126,7 +129,10 @@ def cycle(log, job_id, *, ingest=True, portfolio_id=None):
     if end < cfg.start_session:
         log('No completed session on or after the replay start; ledger unchanged.')
         return dict(portfolio_id=portfolio['id'],sessions=0)
-    research = fs.SwingConfig(start=min(cfg.start_session,end-timedelta(days=1)),end=end,coverage_mode='available_history',rule_set=cfg.rule_set)
+    # The observed completed session can be today; backtest form date restrictions
+    # do not apply to the paper engine's internal input preparation.
+    research = SimpleNamespace(start=min(cfg.start_session,end-timedelta(days=1)),end=end,
+                               coverage_mode='available_history',rule_set=cfg.rule_set,comparison_run_id=None)
     if not previous:
         frozen = fs.prepare(Settings(universe=portfolio['universe']),research,log)
     else:
