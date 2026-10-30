@@ -7,7 +7,7 @@ from typing import Literal
 from core.research import store, market_data, market_history, corporate_actions, current_session
 from core.research import four_indicator_swing as fs
 from core.research.config import Settings
-from core.portfolio import manager, paper
+from core.portfolio import manager, paper, paper_input_revisions
 
 class PaperConfig(BaseModel):
     model_config = ConfigDict(extra='forbid', allow_inf_nan=False)
@@ -142,6 +142,7 @@ def cycle(log, job_id, *, ingest=True, portfolio_id=None):
         items = {i['symbol']:i for i in universe['instruments']}
         records = fs.read_many(['bars/'+items[s]['isin'] for s in previous['datasets']])
         sessions = {b['date'] for b in store.read('bars/NIFTY50',{})['bars'] if last < b['date'] <= str(end)}
+        reconciled = 0
         for symbol,old in previous['datasets'].items():
             record = records.get('bars/'+items[symbol]['isin']) or {}
             rows,_ = market_history.prepare(items[symbol],record,reference=evidence,fingerprint=False)
@@ -149,8 +150,8 @@ def cycle(log, job_id, *, ingest=True, portfolio_id=None):
                 raise ValueError(f'{symbol}: corporate action requires reconciliation; ledger unchanged.')
             rows = corporate_actions.adjusted_bars(rows,str(cfg.start_session))
             rows = [{k:v for k,v in b.items() if k != 'corporate_actions'} for b in rows if old[0]['date'] <= b['date'] <= str(end)]
-            if fs.digest([b for b in rows if b['date'] <= old[-1]['date']]) != fs.digest(old):
-                raise ValueError(f'{symbol}: previously processed inputs changed; ledger unchanged.')
+            rows, count = paper_input_revisions.reconcile(frozen, symbol, items[symbol], old, rows, record)
+            reconciled += count
             missing = sessions-{b['date'] for b in rows}
             if missing:
                 # Only suspend an unheld stock with no prices in the entire new
@@ -173,6 +174,9 @@ def cycle(log, job_id, *, ingest=True, portfolio_id=None):
             if data_quality.audit({symbol:rows})['findings']:
                 raise ValueError(f'{symbol}: unresolved price discontinuity; ledger unchanged.')
             frozen['datasets'][symbol] = rows
+            paper_input_revisions.capture_provisional(frozen, symbol, record, old[-1]['date'], str(end))
+        if reconciled:
+            log(f'Audited {reconciled} published daily-candle finalisations; original paper observations and accounting preserved.')
         frozen['captured_at'] = store.now()
         if not frozen['datasets']:
             raise ValueError('No eligible stock prices remain for this cycle; ledger unchanged.')
