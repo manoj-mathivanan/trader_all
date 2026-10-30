@@ -67,6 +67,8 @@ class EarlyStopTests(unittest.TestCase):
         self.assertEqual(result['baseline_winners_cut'],1)
         self.assertEqual(result['worsened_trades'],1)
         self.assertLess(result['fixed_entry_delta_pnl'],0)
+        import json
+        json.dumps(result)
 
 
 if __name__ == '__main__':

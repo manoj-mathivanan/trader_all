@@ -162,10 +162,10 @@ def paired_diagnostics(baseline, openings, lows, stamps, symbols, cfg, stop_pct)
         fees = sum(equity_charges(p, t['quantity'], side, exit_day if side == 'sell' else entry_day,
                                   intraday=entry_day == exit_day)['total']
                    for p, side in ((t['entry'], 'buy'), (price, 'sell')))
-        pnl = (price-t['entry'])*t['quantity']-fees
+        pnl = float((price-t['entry'])*t['quantity']-fees)
         rows.append(dict(symbol=t['symbol'], entry_timestamp=t['entry_timestamp'],
-                         stop_bar_timestamp=int(stamps[hit]), baseline_pnl=t['pnl'], stop_pnl=pnl,
-                         delta_pnl=pnl-t['pnl'], baseline_winner=t['pnl'] > 0))
+                         stop_bar_timestamp=int(stamps[hit]), baseline_pnl=float(t['pnl']), stop_pnl=pnl,
+                         delta_pnl=float(pnl-t['pnl']), baseline_winner=bool(t['pnl'] > 0)))
     return dict(stopped_baseline_trades=len(rows), baseline_winners_cut=sum(r['baseline_winner'] for r in rows),
                 improved_trades=sum(r['delta_pnl'] > 0 for r in rows),
                 worsened_trades=sum(r['delta_pnl'] < 0 for r in rows),
