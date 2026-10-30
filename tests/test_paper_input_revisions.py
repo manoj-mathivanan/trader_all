@@ -58,6 +58,19 @@ class RevisionTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'revised again'):
             self.reconcile(current=[dict(self.published,volume=77),self.new])
 
+    def test_published_reversion_to_original_values_still_stops(self):
+        self.reconcile()
+        with self.assertRaisesRegex(ValueError,'revised again'):
+            self.reconcile(current=[self.old,self.new])
+
+    def test_identical_first_publication_is_recorded_before_any_later_revision(self):
+        self.frozen['history']={'A':{'provisional_daily':{self.day:{'provisional':True}}}}
+        result,count=self.reconcile(current=[self.old,self.new])
+        self.assertEqual(result,[self.old,self.new]);self.assertEqual(count,1)
+        self.assertEqual(self.frozen['published_input_reconciliations']['A/'+self.day]['differences'],{})
+        with self.assertRaisesRegex(ValueError,'revised again'):
+            self.reconcile()
+
     def test_date_and_timestamp_revisions_still_stop(self):
         with self.assertRaisesRegex(ValueError,'input dates changed'):
             self.reconcile(current=[self.new])

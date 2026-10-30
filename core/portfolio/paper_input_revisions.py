@@ -39,15 +39,11 @@ def reconcile(frozen, symbol, item, old, current, record):
     """Keep processed inputs; allow only proven first publication or its repeat."""
     end = old[-1]['date']
     prefix = [b for b in current if b['date'] <= end]
-    if prefix == old:
-        return current, 0
     if [b['date'] for b in prefix] != [b['date'] for b in old]:
         raise ValueError(f'{symbol}: previously processed input dates changed; ledger unchanged.')
     audits = frozen.setdefault('published_input_reconciliations', {})
     count = 0
     for original, published in zip(old, prefix):
-        if original == published:
-            continue
         day = original['date']
         fields = {k for k in set(original) | set(published) if original.get(k) != published.get(k)}
         key = symbol+'/'+day
@@ -56,6 +52,11 @@ def reconcile(frozen, symbol, item, old, current, record):
             if previous['original_sha256'] != digest(original) or previous['published_sha256'] != digest(published):
                 raise ValueError(f'{symbol}: published history revised again on {day}; ledger unchanged.')
             continue
+        if original == published:
+            known = frozen.get('history', {}).get(symbol, {}).get('provisional_daily', {}).get(day, {})
+            if (known.get('provisional') is not True or record.get('source') != 'upstox_v3'
+                    or day in record.get('provisional_daily', {})):
+                continue
         evidence = provisional_evidence(frozen, symbol, item, original)
         if (not fields <= set(VALUES) or not evidence or record.get('source') != 'upstox_v3'
                 or day in record.get('provisional_daily', {})):
