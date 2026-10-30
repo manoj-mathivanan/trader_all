@@ -151,13 +151,31 @@ def cycle(log, job_id, *, ingest=True, portfolio_id=None):
             rows = [{k:v for k,v in b.items() if k != 'corporate_actions'} for b in rows if old[0]['date'] <= b['date'] <= str(end)]
             if fs.digest([b for b in rows if b['date'] <= old[-1]['date']]) != fs.digest(old):
                 raise ValueError(f'{symbol}: previously processed inputs changed; ledger unchanged.')
-            if sessions-{b['date'] for b in rows}:
-                raise ValueError(f'{symbol}: missing completed-session prices; ledger unchanged.')
+            missing = sessions-{b['date'] for b in rows}
+            if missing:
+                # Only suspend an unheld stock with no prices in the entire new
+                # interval. A partially covered interval could contain an entry
+                # before the gap, so it still requires reconciliation.
+                if symbol in portfolio['ledger'].get('positions', {}) or missing != sessions:
+                    raise ValueError(f'{symbol}: missing completed-session prices; ledger unchanged.')
+                reason = f'No completed-session prices for {min(missing)} through {max(missing)}; unheld stock suspended from new entries.'
+                frozen['datasets'].pop(symbol)
+                frozen['excluded'] = sorted(set(frozen.get('excluded', [])) | {symbol})
+                frozen.setdefault('exclusion_reasons', {})[symbol] = reason
+                frozen.setdefault('suspended_inputs', {})[symbol] = dict(
+                    suspended_through=str(end), missing_sessions=sorted(missing),
+                    last_observed=old[-1]['date'], reason=reason)
+                for field in ('coverage', 'history_fragments'):
+                    frozen.get(field, {}).pop(symbol, None)
+                log(f'{symbol}: {reason}')
+                continue
             from core.research import data_quality
             if data_quality.audit({symbol:rows})['findings']:
                 raise ValueError(f'{symbol}: unresolved price discontinuity; ledger unchanged.')
             frozen['datasets'][symbol] = rows
         frozen['captured_at'] = store.now()
+        if not frozen['datasets']:
+            raise ValueError('No eligible stock prices remain for this cycle; ledger unchanged.')
     start = date.fromisoformat(last)+timedelta(days=1) if last else cfg.start_session
     simcfg = SimpleNamespace(**{**cfg.model_dump(),'start':start,'end':end})
     rule = next(r for r in fs.RULES if r[0] == cfg.rule_set)
