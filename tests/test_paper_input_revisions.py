@@ -87,6 +87,12 @@ class RevisionTests(unittest.TestCase):
         revisions.capture_provisional(self.frozen,'A',self.record,self.day,'2026-10-30')
         self.assertEqual(set(self.frozen['history']['A']['provisional_daily']),{'2026-10-30'})
 
+    def test_new_published_candle_does_not_inherit_an_unused_future_flag(self):
+        self.frozen['history']={'A':{'provisional_daily':{self.day:{'provisional':True},'2026-10-30':{'provisional':True}}}}
+        self.record['provisional_daily']={}
+        revisions.capture_provisional(self.frozen,'A',self.record,self.day,'2026-10-30')
+        self.assertEqual(set(self.frozen['history']['A']['provisional_daily']),{self.day})
+
     def test_benchmark_uses_the_same_reconciliation_policy(self):
         store.write('intraday/5m/NIFTY50/'+self.day,self.minute)
         result,count=revisions.reconcile(self.frozen,'NIFTY50',{'isin':'NIFTY50'},[self.old],

@@ -73,5 +73,11 @@ def reconcile(frozen, symbol, item, old, current, record):
 
 def capture_provisional(frozen, symbol, record, after, through):
     dates = {day:details for day,details in record.get('provisional_daily', {}).items() if after < day <= through}
+    known = frozen.get('history', {}).get(symbol, {}).get('provisional_daily', {})
+    # Initial input evidence can describe dates beyond a published-only cutoff.
+    # A newly appended published candle must not inherit such an unused flag.
+    for day in list(known):
+        if after < day <= through and day not in dates:
+            known.pop(day)
     if dates:
         frozen.setdefault('history', {}).setdefault(symbol, {}).setdefault('provisional_daily', {}).update(dates)
