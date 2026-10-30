@@ -1,11 +1,15 @@
 import unittest
-import numpy as np
+try:
+    import numpy as np
+except ImportError:
+    np = None
 from datetime import datetime, timezone, timedelta
 
 from scripts.research_four_indicator_early_stop import simulate, paired_diagnostics
 from scripts.research_four_indicator_5m import simulate as reference
 
 
+@unittest.skipIf(np is None, 'Optional NumPy research runtime unavailable')
 class EarlyStopTests(unittest.TestCase):
     def fixture(self):
         zone = timezone(timedelta(hours=5,minutes=30))
