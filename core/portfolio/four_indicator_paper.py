@@ -177,9 +177,9 @@ def cycle(log, job_id, *, ingest=True, portfolio_id=None):
             paper_input_revisions.capture_provisional(frozen, symbol, record, old[-1]['date'], str(end))
         if reconciled:
             log(f'Audited {reconciled} published daily-candle finalisations; original paper observations and accounting preserved.')
-        frozen['captured_at'] = store.now()
         if not frozen['datasets']:
             raise ValueError('No eligible stock prices remain for this cycle; ledger unchanged.')
+        frozen['captured_at'] = store.now()
     start = date.fromisoformat(last)+timedelta(days=1) if last else cfg.start_session
     simcfg = SimpleNamespace(**{**cfg.model_dump(),'start':start,'end':end})
     rule = next(r for r in fs.RULES if r[0] == cfg.rule_set)
