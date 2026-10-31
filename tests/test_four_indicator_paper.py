@@ -43,6 +43,20 @@ class ContinuationTests(unittest.TestCase):
         self.assertEqual([o['side'] for o in paused['ledger']['orders']],['BUY','SELL'])
 
 class PortfolioTests(unittest.TestCase):
+    def test_legacy_schedule_edits_normalize_new_defaults_and_allocation_freezes(self):
+        from core.strategies.four_indicator_allocation import AllocationConfig
+        paper.save(self.cfg, Settings(), create=True, portfolio_id='legacy')
+        key = manager.key(fs.STRATEGY, 'legacy')
+        old = store.read(key)
+        for name in AllocationConfig.model_fields:
+            old['config'].pop(name)
+        store.write(key, old)
+        updated = paper.save(self.cfg.model_copy(update={'name':'Updated schedule'}), Settings(), portfolio_id='legacy')
+        self.assertEqual(updated['config']['candidate_ranking'], 'turnover')
+        self.assertEqual(updated['config']['target_atr_pct'], 0)
+        with self.assertRaisesRegex(ValueError, 'freeze'):
+            paper.save(self.cfg.model_copy(update={'target_atr_pct':2}), Settings(), portfolio_id='legacy')
+
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory()
         self.env=patch.dict(os.environ,{'TRADER_STORAGE':'json'})

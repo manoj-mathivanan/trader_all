@@ -10,7 +10,7 @@ const context = vm.createContext({
 vm.runInContext(source.slice(0,source.indexOf("$('#modal').addEventListener('close'")),context);
 const run = code=>vm.runInContext(code,context);
 run(`state={token_saved:false,paper_enabled:true,jobs:[],screens:[{id:'custom_a',name:'Saved <screen>',pattern:'vcp'}],strategies:[{id:'swing_patterns',name:'Swing patterns',status:'active'},{id:'intraday_momentum',name:'Momentum',status:'active'},{id:'scalping',name:'Scalping',status:'active'}],paper_schemas:{swing_patterns:{}},scalping_paper_schema:{}};`);
-assert.deepEqual(Array.from(run('nav.map(n=>n[0])')),['overview','data','backtests','paper','live','settings','jobs','company','news']);
+assert.deepEqual(Array.from(run('nav.map(n=>n[0])')),['overview','data','backtests','intraday','futures','paper','live','settings','jobs','company','news']);
 run('state.instruments=[];');
 const dataActions=run('marketRefreshActions()');
 assert.match(dataActions,/data-action="refresh-stocks" disabled/);

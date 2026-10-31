@@ -12,6 +12,7 @@ from uuid import uuid4
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from core.research import store, market_history, corporate_actions, data_quality, intraday_data
 from core.strategies.four_indicator import indicators, decision
+from core.strategies.four_indicator_allocation import AllocationConfig, AllocationContext, allocation_notice
 
 STRATEGY = 'four_indicator_swing'
 LEGACY_PARAMETERS = dict(rsi_threshold=70, bollinger_multiplier=2)
@@ -25,7 +26,7 @@ RULES = (
 )
 
 
-class SwingConfig(BaseModel):
+class SwingConfig(AllocationConfig):
     model_config = ConfigDict(extra='forbid', allow_inf_nan=False)
     strategy_id: Literal['four_indicator_swing'] = STRATEGY
     name: str = Field('Four-indicator daily swing', min_length=1, max_length=80, title='Run name')
@@ -165,7 +166,7 @@ def prepare(settings, cfg, log):
             raise ValueError('No stock has contiguous observed-session coverage after its own warmup.')
     coverage = {s:dict(first_available=rows[0]['date'],last_available=rows[-1]['date'],
                        eligible_from=max(str(cfg.start),rows[100]['date'])) for s,rows in datasets.items()}
-    return dict(datasets=datasets, universe=universe, excluded=excluded, exclusion_reasons=reasons,
+    return dict(datasets=datasets, universe=universe, benchmark=[b for b in calendar if b['date'] <= str(cfg.end)], excluded=excluded, exclusion_reasons=reasons,
                 history=history, coverage=coverage, history_fragments=fragments,
                 coverage_policy='latest-contiguous-segment-v1' if cfg.coverage_mode == 'available_history' else 'full-window-v1',
                 captured_at=store.now(), source='Cached daily equity candles')
@@ -183,7 +184,7 @@ def features(datasets, log=None, *, rsi_threshold=70, bollinger_multiplier=2):
     return result
 
 
-def simulate(datasets, signals, cfg, rule, *, state=None, liquidate=True, entry_start=None, entries_allowed=True):
+def simulate(datasets, signals, cfg, rule, *, state=None, liquidate=True, entry_start=None, entries_allowed=True, instruments=(), benchmark=(), entry_filter=None):
     _, label, checks, below = rule
     events = {}
     for symbol, rows in datasets.items():
@@ -200,6 +201,9 @@ def simulate(datasets, signals, cfg, rule, *, state=None, liquidate=True, entry_
     drawdown = state.get('max_drawdown_pct',0)
     slip = cfg.slippage_bps/10000
     days = sorted(events)
+    allocation_context = AllocationContext(datasets, cfg, instruments, benchmark)
+    allocation_cfg = allocation_context.config
+    filter_decisions = []
 
     def close(symbol, bar, raw, reason):
         nonlocal cash, fees, slippage
@@ -237,15 +241,31 @@ def simulate(datasets, signals, cfg, rule, *, state=None, liquidate=True, entry_
                 continue
             signal = signals[symbol][i-1]
             if signal and all(signal['checks'][j]['passed'] for j in checks) and (not below or signal['close'] < signal['checks'][2]['value']):
-                candidates.append((-(rows[i-1]['close']*rows[i-1]['volume']), symbol, i))
+                candidates.append((allocation_context.rank(symbol, i-1, rows[i-1]), symbol, i))
         equity_open = cash+sum(p['quantity']*(datasets[s][available[s]]['open'] if s in available else marks[s]) for s,p in positions.items())
-        budget = equity_open/cfg.max_positions
         for _,symbol,i in sorted(candidates):
             if len(positions) >= cfg.max_positions:
                 skipped += 1
                 continue
             bar = datasets[symbol][i]
+            filter_evidence = None
+            if entry_filter is not None:
+                allowed, filter_evidence = entry_filter(symbol, datasets[symbol][i-1]['date'], day)
+                filter_decisions.append(dict(symbol=symbol, date=day, allowed=allowed, evidence=filter_evidence))
+                if not allowed:
+                    skipped += 1
+                    continue
             price = bar['open']*(1+slip)
+            allocation = allocation_context.allocation(symbol, i-1, datasets[symbol][i-1]['date'], equity_open, cfg.max_positions)
+            if filter_evidence is not None:
+                allocation['analyst_filter'] = filter_evidence
+            sector = allocation_context.sectors.get(symbol, '')
+            sector_exposure = sum(p['quantity']*(datasets[s][available[s]]['open'] if s in available else marks[s])
+                                  for s,p in positions.items() if allocation_context.sectors.get(s, '') == sector)
+            budget = allocation['requested_budget']
+            if allocation_cfg.max_sector_pct < 100:
+                budget = min(budget, max(0, equity_open*allocation_cfg.max_sector_pct/100-sector_exposure))
+            allocation.update(sector_exposure_before=sector_exposure, cash_budget=max(0, min(budget, cash)))
             quantity = size_order(equity_open, min(budget,cash), price, price, 100, day)
             if quantity <= 0:
                 skipped += 1
@@ -256,8 +276,8 @@ def simulate(datasets, signals, cfg, rule, *, state=None, liquidate=True, entry_
             slippage += (price-bar['open'])*quantity
             positions[symbol] = dict(entry=price, entry_date=day, quantity=quantity, entry_fee=charge,
                                      entry_cost=price*quantity+charge,
-                                     signal_date=datasets[symbol][i-1]['date'], signal=signals[symbol][i-1])
-            orders.append(dict(symbol=symbol,side='BUY',date=day,price=price,quantity=quantity,fees=charge,signal_date=datasets[symbol][i-1]['date']))
+                                     signal_date=datasets[symbol][i-1]['date'], signal=signals[symbol][i-1], allocation=allocation)
+            orders.append(dict(symbol=symbol,side='BUY',date=day,price=price,quantity=quantity,fees=charge,signal_date=datasets[symbol][i-1]['date'], allocation=allocation))
         for symbol,i in available.items():
             marks[symbol] = datasets[symbol][i]['close']
         # Liquidate at each symbol's final observed close, rather than inventing a missing fill.
@@ -282,10 +302,15 @@ def simulate(datasets, signals, cfg, rule, *, state=None, liquidate=True, entry_
     result = dict(trades=trades, curve=curve, metrics=dict(final_equity=equity,return_pct=(equity/cfg.capital-1)*100,
                 max_drawdown_pct=drawdown,trade_count=len(trades),win_rate=100*len(wins)/len(trades) if trades else None,
                 profit_factor=sum(wins)/-sum(losses) if losses else None,modeled_fees=fees,modeled_slippage=slippage,
-                skipped_entries=skipped,drawdown_basis='Marked at daily closes',net_pnl=equity-cfg.capital),
+                skipped_entries=skipped,drawdown_basis='Marked at daily closes',net_pnl=equity-cfg.capital,
+                average_exposure_pct=sum(c.get('exposure_pct',(c['equity']-c['cash'])/c['equity']*100 if c['equity'] > 0 else 0) for c in curve)/len(curve) if curve else 0,
+                traded_notional=sum(o['price']*o['quantity'] for o in orders),
+                top_five_pnl=sum(sorted((t['pnl'] for t in trades if t['pnl'] > 0),reverse=True)[:5])),
                 rule_label=label)
     if not liquidate:
         result['ledger'] = ledger
+    if entry_filter is not None:
+        result['entry_filter_decisions'] = filter_decisions
     return result
 
 
@@ -301,7 +326,7 @@ def run(settings, cfg, log, job_id):
         if rule[0] == 'rsi':
             rule = (rule[0], f'+ RSI > {cfg.rsi_threshold:g}', *rule[2:])
         run_id = job_id if not ids else uuid4().hex[:12]
-        result = simulate(datasets,signal_values,cfg,rule)
+        result = simulate(datasets,signal_values,cfg,rule,instruments=frozen['universe']['instruments'],benchmark=frozen.get('benchmark',()))
         config = cfg.model_copy(update=dict(rule_set=rule[0],name=(cfg.name+' · '+rule[1])[:80])).model_dump(mode='json')
         result.update(id=run_id,strategy_id=STRATEGY,created_at=store.now(),config=config,
                       universe=settings.universe,universe_snapshot=frozen['universe'],input_sha256=input_sha256,
@@ -312,7 +337,8 @@ def run(settings, cfg, log, job_id):
                       warnings=['Daily equity swing adaptation of an intraday option-buying video; no options are traded or priced.',
                                 f'Supertrend 10/3; RSI(14) >{cfg.rsi_threshold:g}; traditional prior-day R1; Bollinger(20,{cfg.bollinger_multiplier:g}). Each variant uses only its declared entry conditions.',
                                 'Entries and Supertrend reversal exits fill at the next observed session open. No profit target, extra fundamental gate or maximum holding period.',
-                                'Equal capital slots; no leverage. Simultaneous signals rank by completed signal-day turnover. Prices mark at daily closes; final holdings liquidate at the final observed close.',
+                                allocation_notice(cfg),
+                                'No leverage. Prices mark at daily closes; final holdings liquidate at the final observed close. Cash and sector limits include entry fees conservatively; exposure can exceed an entry cap after price moves.',
                                 'Current universe membership causes survivorship bias. Known in-window splits/bonuses and unresolved data gaps are excluded and listed. Dividends and historical taxes are not reconstructed.',
                                 'Fees and slippage are explicit assumptions. This is exploratory research, not evidence of a deployable edge.'])
         if any(h.get('provisional_daily') for h in frozen.get('history', {}).values()):

@@ -8,8 +8,9 @@ from core.research import store, market_data, market_history, corporate_actions,
 from core.research import four_indicator_swing as fs
 from core.research.config import Settings
 from core.portfolio import manager, paper, paper_input_revisions
+from core.strategies.four_indicator_allocation import AllocationConfig
 
-class PaperConfig(BaseModel):
+class PaperConfig(AllocationConfig):
     model_config = ConfigDict(extra='forbid', allow_inf_nan=False)
     name: str = Field('Four-indicator paper', min_length=1, max_length=80)
     rule_set: Literal['rsi','bollinger'] = Field('bollinger', title='Entry variant')
@@ -38,8 +39,8 @@ class PaperConfig(BaseModel):
             raise ValueError('Replay start must be today or earlier.')
         return self
 
-def save(config, settings, *, create=False, portfolio_id=None):
-    key = manager.key(fs.STRATEGY, portfolio_id)
+def save(config, settings, *, create=False, portfolio_id=None, strategy_id=fs.STRATEGY):
+    key = manager.key(strategy_id, portfolio_id)
     with store.LOCK:
         manager.ensure_idle()
         existing = store.read(key)
@@ -49,13 +50,13 @@ def save(config, settings, *, create=False, portfolio_id=None):
             if not existing:
                 raise ValueError('Create the paper portfolio first.')
             editable = {'name','auto_run','run_hour','run_minute'}
-            previous = {**existing['config'], **fs.stored_parameters(existing['config'])}
+            previous = type(config)(**{**existing['config'], **fs.stored_parameters(existing['config'])}).model_dump(mode='json')
             if any(previous.get(k) != v for k,v in config.model_dump(mode='json').items() if k not in editable):
                 raise ValueError('Rules, start date, capital and costs freeze per paper portfolio. Create a separate scenario to change them.')
             existing['config'] = config.model_dump(mode='json')
         else:
             clock = paper.local_now()
-            existing = dict(id=portfolio_id or fs.STRATEGY,strategy_name=fs.STRATEGY,mode='paper',
+            existing = dict(id=portfolio_id or strategy_id,strategy_name=strategy_id,mode='paper',
                             status='active',created_at=store.now(),start_session=str(config.start_session),
                             universe=settings.universe,config=config.model_dump(mode='json'),
                             ledger={},cycles=[],metrics={'final_equity':config.capital},
@@ -87,12 +88,12 @@ def adopt_all_four_defaults(portfolio_id):
         store.write(key, portfolio)
         return portfolio
 
-def cycle(log, job_id, *, ingest=True, portfolio_id=None):
-    key = manager.key(fs.STRATEGY,portfolio_id)
+def cycle(log, job_id, *, ingest=True, portfolio_id=None, strategy_id=fs.STRATEGY, config_model=PaperConfig, published_only=False, entry_filter_factory=None):
+    key = manager.key(strategy_id,portfolio_id)
     portfolio = store.read(key)
     if not portfolio:
         raise ValueError('Create a four-indicator paper portfolio first.')
-    cfg = PaperConfig(**{**portfolio['config'], **fs.stored_parameters(portfolio['config'])})
+    cfg = config_model(**{**portfolio['config'], **fs.stored_parameters(portfolio['config'])})
     previous = store.read(portfolio['input_reference']) if portfolio.get('input_reference') else None
     if portfolio.get('input_reference') and (not previous or fs.digest(previous) != portfolio['cycles'][-1]['input_sha256']):
         raise ValueError('Saved paper inputs are missing or changed; ledger unchanged.')
@@ -122,6 +123,12 @@ def cycle(log, job_id, *, ingest=True, portfolio_id=None):
             if not dates:
                 raise ValueError('No completed benchmark sessions are cached.')
             end = date.fromisoformat(max(dates))
+    if published_only:
+        from core.portfolio.five_indicator_paper import published_end
+        confirmed=published_end(universe,end,previous.get('datasets') if previous else None)
+        if confirmed < end:
+            log('Provisional daily candles deferred; published history is available through '+str(confirmed)+'.')
+        end=confirmed
     last = portfolio['ledger'].get('last_session')
     if last and str(end) <= last:
         log('No new completed sessions; ledger unchanged.')
@@ -179,13 +186,26 @@ def cycle(log, job_id, *, ingest=True, portfolio_id=None):
             log(f'Audited {reconciled} published daily-candle finalisations; original paper observations and accounting preserved.')
         if not frozen['datasets']:
             raise ValueError('No eligible stock prices remain for this cycle; ledger unchanged.')
+        benchmark = [b for b in store.read('bars/NIFTY50',{}).get('bars',[]) if b['date'] <= str(end)]
+        previous_benchmark = frozen.get('benchmark',[])
+        if previous_benchmark:
+            old_end = previous_benchmark[-1]['date']
+            benchmark, count = paper_input_revisions.reconcile(frozen, 'NIFTY50', market_data.BENCHMARK,
+                previous_benchmark, benchmark, store.read('bars/NIFTY50', {}))
+            if count:
+                log(f'Audited {count} benchmark finalisations; captured signal inputs preserved.')
+        frozen['benchmark'] = benchmark
+        paper_input_revisions.capture_provisional(frozen, 'NIFTY50', store.read('bars/NIFTY50', {}),
+            previous_benchmark[-1]['date'] if previous_benchmark else '', str(end))
         frozen['captured_at'] = store.now()
     start = date.fromisoformat(last)+timedelta(days=1) if last else cfg.start_session
     simcfg = SimpleNamespace(**{**cfg.model_dump(),'start':start,'end':end})
     rule = next(r for r in fs.RULES if r[0] == cfg.rule_set)
-    result = fs.simulate(frozen['datasets'],fs.features(frozen['datasets'],log,**fs.stored_parameters(portfolio['config'])),simcfg,rule,
+    signals = fs.features(frozen['datasets'],log,**fs.stored_parameters(portfolio['config']))
+    entry_filter = entry_filter_factory(frozen,portfolio,signals,log) if entry_filter_factory else None
+    result = fs.simulate(frozen['datasets'],signals,simcfg,rule,
                          state=portfolio['ledger'],liquidate=False,entry_start=cfg.start_session,
-                         entries_allowed=portfolio['status']=='active')
+                         entries_allowed=portfolio['status']=='active', instruments=frozen['universe']['instruments'], benchmark=frozen.get('benchmark',()),entry_filter=entry_filter)
     ledger = result['ledger']
     for order in ledger['orders']:
         order['mode'] = 'historical_replay' if order['date'] <= portfolio['replay_through'] else 'daily_reconstruction'
@@ -194,6 +214,9 @@ def cycle(log, job_id, *, ingest=True, portfolio_id=None):
     reference = 'paper_inputs/'+portfolio['id']+'/'+job_id
     cycle_record = dict(job_id=job_id,at=store.now(),start=str(start),end=str(end),config=portfolio['config'],
                         input_reference=reference,input_sha256=fs.digest(frozen),status=portfolio['status'])
+    if entry_filter_factory:
+        from collections import Counter
+        cycle_record['entry_filter_summary'] = dict(Counter(d['evidence']['reason'] for d in result.get('entry_filter_decisions',[])))
     with store.LOCK:
         if store.read(key) != portfolio:
             raise ValueError('Portfolio changed during cycle; retry without modifying the ledger.')
@@ -204,6 +227,8 @@ def cycle(log, job_id, *, ingest=True, portfolio_id=None):
                          universe_snapshot=frozen['universe'],excluded=frozen['exclusion_reasons'],
                          updated_at=store.now())
         portfolio['cycles'].append(cycle_record)
+        if entry_filter_factory:
+            portfolio['last_entry_filter_decisions'] = result.get('entry_filter_decisions',[])
         store.write(key,portfolio)
     count = sum(str(start)<=c['date']<=str(end) for c in ledger['curve'])
     log(f'{portfolio["config"]["name"]}: {count} sessions; {len(ledger["positions"])} open positions; equity ₹{result["metrics"]["final_equity"]:,.2f}.')

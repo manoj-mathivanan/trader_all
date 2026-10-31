@@ -6,7 +6,7 @@ API, scheduling, and paper settings UI operate on the strategy ID independently.
 from dataclasses import dataclass
 from typing import Callable
 from pydantic import BaseModel
-from core.portfolio import paper, scalping_paper, four_indicator_paper
+from core.portfolio import paper, scalping_paper, four_indicator_paper, five_indicator_paper, analyst_indicator_paper
 
 
 @dataclass(frozen=True)
@@ -17,6 +17,8 @@ class PaperPlugin:
 
 
 PLUGINS = {'swing_patterns': PaperPlugin(paper.PaperConfig, paper.cycle),
+           'four_indicator_analyst': PaperPlugin(analyst_indicator_paper.PaperConfig, analyst_indicator_paper.cycle),
+           'five_indicator_swing': PaperPlugin(five_indicator_paper.PaperConfig, five_indicator_paper.cycle),
            'four_indicator_swing': PaperPlugin(four_indicator_paper.PaperConfig, four_indicator_paper.cycle),
            'scalping': PaperPlugin(scalping_paper.ScalpingPaperConfig, scalping_paper.cycle, 'streaming')}
 

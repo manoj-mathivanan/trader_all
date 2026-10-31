@@ -11,14 +11,17 @@ def enabled(strategy_id='four_indicator_swing'):
 
 
 def run(log, job_id, refresh):
-    if not job_id or not enabled() or not refresh.get('completed_at'):
+    from core.portfolio import registry
+    strategies=[s for s,plugin in registry.PLUGINS.items() if plugin.trigger_mode=='batch' and enabled(s)]
+    if not job_id or not strategies or not refresh.get('completed_at'):
         return []
     if not refresh.get('daily_symbols') or jobs.completion_status(refresh) == 'failed':
         log('Paper cycles skipped: market refresh has no usable daily data.')
         return []
-    from core.portfolio import four_indicator_paper
+    from core.portfolio import four_indicator_paper, five_indicator_paper, analyst_indicator_paper, paper
     results = []
-    for p in manager.list_portfolios('four_indicator_swing'):
+    targets=[(s,p) for s in strategies for p in manager.list_portfolios(s)]
+    for strategy_id,p in targets:
         if not p['config'].get('auto_run'):
             continue
         receipt = 'paper_refresh_cycles/'+p['id']+'/'+job_id
@@ -26,7 +29,9 @@ def run(log, job_id, refresh):
             continue
         log(f"Market refresh completed; running paper portfolio {p['config']['name']}.")
         try:
-            result = four_indicator_paper.cycle(log, job_id, ingest=False, portfolio_id=p['id'])
+            module = {'five_indicator_swing':five_indicator_paper,'four_indicator_swing':four_indicator_paper,
+                      'four_indicator_analyst':analyst_indicator_paper,'swing_patterns':paper}[strategy_id]
+            result = module.cycle(log, job_id, ingest=False, portfolio_id=p['id'])
             outcome = dict(portfolio_id=p['id'], status='success', result=result)
         except Exception as exc:
             message = str(exc) if isinstance(exc, ValueError) else jobs.failure_detail(exc)

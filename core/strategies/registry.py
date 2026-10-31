@@ -23,6 +23,8 @@ class StrategyDefinition:
 
 
 REGISTRY = (
+    StrategyDefinition("four_indicator_analyst", "Four indicators + analyst consensus", "Four entry conditions followed by at least 75% Buy/Strong Buy analyst opinions · paper", "active", "daily", "batch"),
+    StrategyDefinition("five_indicator_swing", "Five-indicator daily swing", "Supertrend / RSI / R1 / Bollinger entries with RS126 candidate ranking · paper", "active", "daily", "batch"),
     StrategyDefinition("four_indicator_swing", "Four-indicator daily swing", "Daily equity adaptation · Supertrend / RSI / R1 / Bollinger · backtests and paper", "active", "daily", "batch", "four_indicator_swing"),
     StrategyDefinition("swing_patterns", "Swing patterns", "End-of-day · Indian equities", "active", "daily", "batch", "daily_breakout"),
     StrategyDefinition("intraday_momentum", "Intraday momentum", "Opening range · relative volume · research", "active", "intraday_5m", "batch", "opening_range_momentum"),

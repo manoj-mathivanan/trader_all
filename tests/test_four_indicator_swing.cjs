@@ -28,8 +28,22 @@ assert.match(run('paperPortfolioCards()'),/Equal capital slots/);
 assert.doesNotMatch(run('paperPortfolioCards()'),/undefined|NaN|Scalping/);
 assert.match(run('fourIndicatorPaperDetail()'),/Historical replay &lt;test&gt;/);
 assert.match(run('fourIndicatorPaperDetail()'),/A&lt;B&gt;/);
+assert.match(run(`fourIndicatorAllocationLabel({target_atr_pct:2,candidate_ranking:'relative_volume',market_weak_scale:.5,sector_weak_scale:.5,max_sector_pct:30})`),/ATR allocation · relative volume ranking · market scaling · sector scaling · sector cap 30%/);
+run(`showFourIndicatorSwingResult({id:'allocation',rule_label:'All four',universe:'test',config:{name:'Sizing'},metrics:{},curve:[],manifest:[],excluded:[],warnings:[],trades:[{symbol:'A<B>',signal_date:'2026-10-01',allocation:{relative_volume:2,atr_pct:3,market:{status:'weak'},sector:'IT<test>',sector_breadth:{status:'unknown'},multiplier:.25,cash_budget:2500}}]});`);
+assert.match(context.dialog.body,/Entry allocation decisions/);
+assert.match(context.dialog.body,/IT&lt;test&gt;/);
 assert.match(run('paperPath("cycle")'),/four_indicator_swing\/paper\/cycle\?portfolio_id=rsi/);
 assert.match(run('strategyPicker("four_indicator_swing","new-paper-strategy",true)'),/Four-indicator daily swing/);
+run(`state.paper_schemas={five_indicator_swing:{properties:{}}};state.five_indicator_paper_scenarios=[{...state.four_indicator_paper_scenarios[0],id:'five',strategy_name:'five_indicator_swing',config:{...state.four_indicator_paper_scenarios[0].config,name:'Five paper',rule_set:'bollinger',candidate_ranking:'rs_126'}}];selectedPaperStrategy='five_indicator_swing';selectedPaperScenario='five';`);
+assert.match(run('strategyPicker("five_indicator_swing","new-paper-strategy",true)'),/Five-indicator daily swing/);
+assert.doesNotMatch(run('strategyOptions(false).map(x=>x[0]).join(",")'),/five_indicator_swing/);
+assert.match(run('paperPortfolioCards()'),/Five paper/);
+assert.match(run('fourIndicatorPaperDetail()'),/Five indicators · RS126 ranking/);
+assert.match(run('paperPath("cycle")'),/five_indicator_swing\/paper\/cycle\?portfolio_id=five/);
+run(`state.paper_schemas.five_indicator_swing={properties:{rule_set:{type:'string',const:'bollinger',default:'bollinger'},candidate_ranking:{type:'string',const:'rs_126',default:'rs_126'},slot_scale:{type:'number',const:1,default:1}}};selectedPaperScenario='new_five';fourIndicatorPaperForm();`);
+assert.match(context.dialog.title,/Create five-indicator paper/);
+assert.match(context.dialog.body,/RS126 ranks candidates after all four entry conditions pass/);
+assert.doesNotMatch(context.dialog.body,/option value="rsi"/);
 console.log('Indicator paper scenarios render in the existing Paper trade page with independent selection and replay labels.');
 
 (async()=>{

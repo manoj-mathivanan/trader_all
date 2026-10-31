@@ -17,7 +17,7 @@ from core.research.config import Settings, DataPreferences, BacktestConfig, Bear
 from core.research import bearish, momentum, scalping, strategy_presets, four_indicator_swing
 from core.research.strategy_presets import ScreenInput
 from core.portfolio import paper, scheduler, manager as portfolios, registry as paper_plugins
-from core.portfolio import scalping_paper, scalping_control, four_indicator_paper
+from core.portfolio import scalping_paper, scalping_control, four_indicator_paper, five_indicator_paper, analyst_indicator_paper
 from core.strategies.registry import all_strategies
 from strategies.swing_patterns.patterns.registry import definitions as pattern_definitions
 from dashboard.api.company_review import router as company_review_router
@@ -180,6 +180,8 @@ def bootstrap():
             'paper_portfolios': {s['id']: scalping_paper.public_portfolio() if s['id']=='scalping' else portfolios.get(s['id']) for s in all_strategies()} if PAPER_ENABLED else {},
             'paper_scenarios': portfolios.list_portfolios('swing_patterns') if PAPER_ENABLED else [],
             'four_indicator_paper_scenarios': portfolios.list_portfolios('four_indicator_swing') if PAPER_ENABLED else [],
+            'analyst_indicator_paper_scenarios': portfolios.list_portfolios('four_indicator_analyst') if PAPER_ENABLED else [],
+            'five_indicator_paper_scenarios': portfolios.list_portfolios('five_indicator_swing') if PAPER_ENABLED else [],
             'paper_schemas': {strategy_id: plugin.config_model.model_json_schema()
                               for strategy_id, plugin in paper_plugins.PLUGINS.items()},
             'screens': strategy_presets.selectable(), 'reference_only': strategy_presets.reference_only(),
@@ -189,7 +191,7 @@ def bootstrap():
             'remote_enabled': bool(PUBLIC_ORIGIN),
             'instruments': instruments, 'universe_updated': universe.get('fetched_at'),
             'jobs': store.read('jobs', [])[:100], 'runs': store.read('runs_index', []),
-            'strategies': [s for s in all_strategies() if not strategy_presets.reference_only() or s['id'] in ('swing_patterns','four_indicator_swing')], 'auth_enabled': accounts.enabled() or bool(USER)}
+            'strategies': [s for s in all_strategies() if not strategy_presets.reference_only() or s['id'] in ('swing_patterns','four_indicator_swing','five_indicator_swing','four_indicator_analyst')], 'auth_enabled': accounts.enabled() or bool(USER)}
 
 
 @app.put('/api/settings')
@@ -518,6 +520,18 @@ def get_strategy_portfolio(strategy_id: str, portfolio_id: str | None = None):
     return portfolios.get(strategy_id, portfolio_id)
 
 
+@app.get('/api/strategies/{strategy_id}/paper/chart')
+def paper_trade_chart(strategy_id: str, symbol: str, entry_date: str, exit_date: str = '', portfolio_id: str | None = None):
+    from core.portfolio.paper_chart import chart_data
+    portfolio = portfolios.get(strategy_id, portfolio_id)
+    if not portfolio:
+        raise HTTPException(404, 'Paper portfolio not found.')
+    try:
+        return chart_data(portfolio, symbol, entry_date, exit_date)
+    except ValueError as error:
+        raise HTTPException(404, str(error)) from None
+
+
 @app.get('/api/strategies/{strategy_id}/paper/opportunities')
 def get_strategy_opportunities(strategy_id: str, portfolio_id: str | None = None, cycle_id: str | None = None):
     portfolio = portfolios.get(strategy_id, portfolio_id)
@@ -545,6 +559,10 @@ def create_strategy_portfolio(strategy_id: str, value: dict, portfolio_id: str |
         return create_scalping_paper(config)
     if strategy_id=='four_indicator_swing':
         return four_indicator_paper.save(config,settings(),create=True,portfolio_id=portfolio_id)
+    if strategy_id=='four_indicator_analyst':
+        return analyst_indicator_paper.save(config,settings(),create=True,portfolio_id=portfolio_id)
+    if strategy_id=='five_indicator_swing':
+        return five_indicator_paper.save(config,settings(),create=True,portfolio_id=portfolio_id)
     return portfolios.save(strategy_id, config, settings(), create=True, clock=paper.local_now(), portfolio_id=portfolio_id)
 
 
@@ -556,6 +574,10 @@ def update_strategy_portfolio(strategy_id: str, value: dict, portfolio_id: str |
         return update_scalping_paper(config)
     if strategy_id=='four_indicator_swing':
         return four_indicator_paper.save(config,settings(),portfolio_id=portfolio_id)
+    if strategy_id=='four_indicator_analyst':
+        return analyst_indicator_paper.save(config,settings(),portfolio_id=portfolio_id)
+    if strategy_id=='five_indicator_swing':
+        return five_indicator_paper.save(config,settings(),portfolio_id=portfolio_id)
     return portfolios.save(strategy_id, config, settings(), clock=paper.local_now(), portfolio_id=portfolio_id)
 
 
@@ -575,7 +597,7 @@ def strategy_paper_job(strategy_id: str, portfolio_id: str | None = None):
         raise ValueError('Create a paper portfolio for this strategy first.')
     store.token()
     from functools import partial
-    runner = partial(plugin.run_cycle, portfolio_id=portfolio_id) if strategy_id in ('swing_patterns','four_indicator_swing') else plugin.run_cycle
+    runner = partial(plugin.run_cycle, portfolio_id=portfolio_id) if strategy_id in ('swing_patterns','four_indicator_swing','five_indicator_swing','four_indicator_analyst') else plugin.run_cycle
     return jobs.submit('Paper daily cycle', runner,
                        {'portfolio_id': portfolio_id or strategy_id, 'strategy_id': strategy_id, 'trigger': 'manual'})
 
