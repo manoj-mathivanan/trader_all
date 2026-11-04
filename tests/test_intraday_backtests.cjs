@@ -9,7 +9,7 @@ async function main(){
     document:{addEventListener(type,fn){(listeners[type]||=[]).push(fn);}},
     sessionStorage:{getItem:k=>saved.get(k)||null,setItem:(k,v)=>saved.set(k,v),removeItem:k=>saved.delete(k)},
     setTimeout(fn){timers.push(fn);return timers.length;},clearTimeout(){},
-    currentView:'jobs',state:{user:{username:'tester'}},
+    currentView:'jobs',state:{user:{username:'tester'},jobs:[]},
     $:selector=>elements[selector]||null,
     esc:v=>String(v).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('"','&quot;'),
     money:v=>Number(v).toFixed(2),number:v=>String(v),pct:v=>v+'%',equitySvg:()=>'<svg></svg>',
@@ -39,9 +39,11 @@ async function main(){
   assert.deepEqual(JSON.parse(JSON.stringify(calls[0].body)),{stock:'RELIANCE',target_pct:.3,entry_time:'11:45',direction:'short'});
   resolveCreate({id:'abcdef123456'});await first;
   assert.equal(dialog.open,false);assert.ok(saved.has('trader-intraday-pending'));
+  assert.equal(context.state.jobs[0].id,'abcdef123456');
 
   handler=async()=>({status:'running',logs:[{message:'Validated 100/495 stock sessions.'}]});
   await context.intradayPollCustom();assert.ok(context.intradayBacktestStatus().includes('Validated 100/495'));
+  assert.ok(context.intradayBacktestStatus().includes('href="#jobs"'));
   const report={...JSON.parse(fs.readFileSync('dashboard/reports/reliance-short-target02.json','utf8')),id:'custom-abcdef123456',custom:true,entry_time:'11:45'};
   const {days,curve,skipped,assumptions,fee_sources,...summary}=report;
   summary.trade_count=days.length;summary.skipped_count=skipped.length;

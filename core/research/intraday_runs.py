@@ -57,4 +57,5 @@ def submit(value):
     if value.stock not in intraday_target.instruments():
         raise ValueError('Choose a stock from the audited list.')
     config, owner = value.model_dump(), identity.username()
-    return jobs.submit('intraday_target', lambda log, job_id: execute(config, log, job_id, owner), config)
+    title = f'Intraday backtest · {value.stock} · '+('Buy' if value.direction=='long' else 'Sell')
+    return jobs.submit(title, lambda log, job_id: execute(config, log, job_id, owner), config)

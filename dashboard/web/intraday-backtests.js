@@ -10,7 +10,7 @@ function intradayCustomRedraw(){if(currentView==='intraday'){if(state)render();e
 function intradayRememberPending(){try{if(intradayCustomPending)sessionStorage.setItem('trader-intraday-pending',JSON.stringify(intradayCustomPending));else sessionStorage.removeItem('trader-intraday-pending');}catch{}}
 
 function intradayBacktestStatus(){
-  if(intradayCustomPending)return `<div class="notice intraday-run-status" role="status">${esc(intradayCustomPending.message||'Backtest running…')} ${intradayCustomPollError?`${esc(intradayCustomPollError)} <button class="text-button" id="intraday-check-progress">Check progress</button>`:''}</div>`;
+  if(intradayCustomPending)return `<div class="notice intraday-run-status" role="status">${esc(intradayCustomPending.message||'Backtest running…')} <a class="text-button" href="#jobs">View in Jobs & logs →</a> ${intradayCustomPollError?`${esc(intradayCustomPollError)} <button class="text-button" id="intraday-check-progress">Check progress</button>`:''}</div>`;
   if(intradayCustomError)return `<div class="notice warn" role="status">${esc(intradayCustomError)} <button class="text-button" id="intraday-custom-retry">Reload saved results</button></div>`;
   return '';
 }
@@ -65,6 +65,7 @@ async function intradaySubmitCustom(form){
   intradayBacktestDraft=config;intradayCustomSubmitting=true;submit.disabled=true;error.textContent='';
   try{
     const job=await api('intraday/backtests','POST',config);
+    if(state?.jobs)state.jobs=[job,...state.jobs.filter(j=>j.id!==job.id)];
     intradayCustomPending={id:job.id,message:'Backtest queued. Validating saved market data…'};
     intradayCustomPollError='';intradayRememberPending();
     if($('#intraday-backtest-form')===form)$('#modal').close();
@@ -80,6 +81,7 @@ async function intradayPollCustom(){
   intradayCustomPolling=true;
   try{
     const job=await api('jobs/'+encodeURIComponent(intradayCustomPending.id));
+    if(currentView==='intraday'&&state?.jobs)state.jobs=state.jobs.map(j=>j.id===job.id?job:j);
     if(['queued','running'].includes(job.status)){
       intradayCustomPending.message=job.logs?.at(-1)?.message||'Backtest running…';
       intradayCustomPollError='';intradayRememberPending();intradayCustomRedraw();

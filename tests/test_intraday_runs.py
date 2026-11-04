@@ -15,6 +15,14 @@ from tests.test_intraday_target import session
 
 
 class IntradayRunTests(unittest.TestCase):
+    def test_submit_creates_a_readable_jobs_screen_entry(self):
+        request=intraday_runs.TargetRequest(stock='RELIANCE',target_pct=.3,entry_time='09:45',direction='short')
+        with patch.object(intraday_target,'instruments',return_value=intraday_target.STOCKS), \
+             patch.object(intraday_runs.jobs,'submit',return_value={'id':'abcdef123456'}) as submit:
+            self.assertEqual(intraday_runs.submit(request)['id'],'abcdef123456')
+            self.assertEqual(submit.call_args.args[0],'Intraday backtest · RELIANCE · Sell')
+            self.assertEqual(submit.call_args.args[2]['entry_time'],'09:45')
+
     def test_config_rejects_invalid_values_and_normalizes_symbol(self):
         self.assertEqual(intraday_runs.TargetRequest(stock=' reliance ', target_pct=.2).stock, 'RELIANCE')
         for change in ({'target_pct':0},{'target_pct':100},{'target_pct':float('nan')},
