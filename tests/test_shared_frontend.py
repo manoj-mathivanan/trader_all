@@ -11,6 +11,38 @@ from dashboard.shared import PRODUCTION, create_app
 
 
 class SharedFrontendTests(unittest.TestCase):
+    def test_intraday_fallback_uses_official_members_and_production_closes(self):
+        from unittest.mock import patch
+        from dashboard import intraday_preview
+        csv = 'Symbol,Company Name,ISIN Code\n' + '\n'.join(
+            f'STOCK{i},Company {i},INE{i}' for i in range(50))
+
+        requested = []
+
+        def handler(request):
+            requested.append(request.url.path)
+            if request.url.host == 'www.niftyindices.com':
+                self.assertNotIn('cookie', request.headers)
+                return httpx.Response(200, text=csv)
+            if request.url.path == '/api/bootstrap':
+                self.assertEqual(request.headers.get('cookie'), 'session=test')
+                return httpx.Response(200, json={'instruments': [
+                    {'isin': 'INE1', 'close': 2500, 'last': '2026-11-03'}]})
+            return httpx.Response(404)
+
+        with patch.object(intraday_preview, '_members', None), patch.object(intraday_preview, '_expires', 0):
+            client = self.client(handler)
+            result = client.get('/api/intraday/stocks', headers={'cookie': 'session=test'})
+            self.assertEqual(result.status_code, 200)
+            self.assertEqual(len(result.json()['stocks']), 50)
+            self.assertEqual(result.json()['price_mode'], 'saved_close')
+            self.assertEqual(requested, ['/IndexConstituent/ind_nifty50list.csv'])
+            client.get('/api/intraday/stocks')
+            self.assertEqual(requested, ['/IndexConstituent/ind_nifty50list.csv'])
+            result = client.get('/api/intraday/price/STOCK1', headers={'cookie': 'session=test'})
+            self.assertEqual(result.json(), {'price': 2500, 'as_of': '2026-11-03', 'source': 'Saved daily close'})
+            self.assertEqual(client.get('/api/intraday/price/UNKNOWN', headers={'cookie': 'session=test'}).status_code, 503)
+
     def test_entrypoint_does_not_load_database_or_worker_modules(self):
         result = subprocess.run([sys.executable, '-c',
             "import dashboard.shared,sys; assert not any(n.startswith('core.') for n in sys.modules)"],

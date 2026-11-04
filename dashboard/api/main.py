@@ -26,6 +26,7 @@ from dashboard.api.live_trading import router as live_trading_router
 from core.portfolio import live
 from core.research import accounts, identity
 from dashboard.api.accounts import router as accounts_router, PUBLIC as AUTH_PUBLIC, admin_request
+from dashboard.api.intraday import router as intraday_router
 from starlette.concurrency import run_in_threadpool
 
 WEB = Path(__file__).resolve().parents[1] / 'web'
@@ -93,6 +94,7 @@ app.include_router(company_review_router)
 app.include_router(investor_intelligence_router)
 app.include_router(live_trading_router)
 app.include_router(accounts_router)
+app.include_router(intraday_router)
 
 
 @app.middleware('http')

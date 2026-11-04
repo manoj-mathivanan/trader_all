@@ -13,7 +13,8 @@ for(const category of ['intraday','futures']){
   const expected=data.records.filter(r=>r.category===category);
   assert.ok(expected.length>30);
   assert.equal((page.match(/class="research-record"/g)||[]).length,expected.length);
-  assert.match(vm.runInContext(`workspaceNavigation('${category}')`,context),new RegExp(`<s>${category==='intraday'?'Intraday':'Futures'}</s>`));
+  if(category==='futures')assert.match(vm.runInContext(`workspaceNavigation('${category}')`,context),/<s>Futures<\/s>/);
+  else assert.doesNotMatch(vm.runInContext("workspaceNavigation('intraday')",context),/<s>Intraday<\/s>/);
 }
 assert.match(vm.runInContext("researchArchiveView('futures')",context),/investigations tested options/);
 vm.runInContext(`researchArchiveData={as_of:'today',records:[{category:'intraday',title:'<img src=x>',source:'<script>',content:'<script>alert(1)</script>'}]};`,context);

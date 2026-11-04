@@ -22,9 +22,9 @@ function showLogin(setup=false){
 }
 async function startWorkspace(){
   const session=await api('auth/session');
-  if(!session.enabled)return refresh();
+  if(!session.enabled){if(typeof intradayPrime==='function')intradayPrime();return refresh();}
   if(!session.user){showLogin(session.setup_required);return;}
-  accountSession=session.user;await refresh();
+  accountSession=session.user;if(typeof intradayPrime==='function')intradayPrime();await refresh();
 }
 function permissionControls(root){
   if(!state?.user)return;

@@ -37,6 +37,15 @@ def create_app(*, transport=None):
     def index():
         return FileResponse(WEB / 'index.html')
 
+    @app.get('/api/intraday/backtests/{report_id}')
+    def intraday_target_report(report_id: str):
+        if report_id not in ('hdfcbank-target', 'hdfcbank-short-target'):
+            return JSONResponse({'detail': 'Unknown backtest.'}, status_code=404)
+        report = WEB.parent / 'reports' / (report_id + '.json')
+        if not report.is_file():
+            return JSONResponse({'detail': 'The HDFCBANK backtest has not been generated.'}, status_code=404)
+        return FileResponse(report, media_type='application/json')
+
     @app.api_route('/api/{path:path}', methods=['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'])
     async def proxy(request: Request, path: str):
         url = httpx.URL(PRODUCTION).copy_with(path=request.url.path,
@@ -48,6 +57,9 @@ def create_app(*, transport=None):
             # Never retry mutations: a timeout may occur after production committed them.
             async with httpx.AsyncClient(transport=transport, timeout=httpx.Timeout(120, connect=10),
                                          follow_redirects=False, trust_env=False) as client:
+                if request.method == 'GET' and (path == 'intraday/stocks' or path.startswith('intraday/price/')):
+                    from dashboard.intraday_preview import preview
+                    return await preview(client, PRODUCTION, headers, path)
                 upstream = await client.request(request.method, url, headers=headers,
                                                 content=await request.body())
         except httpx.HTTPError:
