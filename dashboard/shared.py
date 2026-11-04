@@ -38,7 +38,9 @@ def create_app(*, transport=None):
         return FileResponse(WEB / 'index.html')
 
     @app.get('/api/intraday/backtests/{report_id}')
-    def intraday_target_report(report_id: str):
+    async def intraday_target_report(report_id: str, request: Request):
+        if report_id.startswith('custom-'):
+            return await proxy(request, 'intraday/backtests/'+report_id)
         if report_id not in ('hdfcbank-target', 'hdfcbank-short-target', 'hdfcbank-target02', 'hdfcbank-short-target02', 'reliance-target02', 'reliance-short-target02'):
             return JSONResponse({'detail': 'Unknown backtest.'}, status_code=404)
         report = WEB.parent / 'reports' / (report_id + '.json')

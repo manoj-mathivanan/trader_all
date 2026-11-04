@@ -258,3 +258,4 @@ dialog:has(.intraday-daily-ledger) .intraday-summary{grid-template-columns:repea
   .intraday-daily-ledger td::before{content:attr(data-label);display:block;color:var(--muted);font-size:10px;margin-bottom:4px}
   dialog:has(.intraday-daily-ledger) .intraday-summary{grid-template-columns:repeat(2,minmax(0,1fr))}
 }
+.intraday-history-heading{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:8px}.intraday-backtest-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin-bottom:18px}.intraday-time-control{grid-column:1/-1}.intraday-time-control input[type=range]{width:100%;accent-color:var(--accent)}.intraday-time-labels{display:flex;justify-content:space-between;color:var(--muted);font-size:11px}.intraday-run-status{margin-top:10px}.intraday-backtest-fields output{font-weight:650;color:var(--accent)}@media(max-width:520px){.intraday-backtest-fields{grid-template-columns:1fr}}
