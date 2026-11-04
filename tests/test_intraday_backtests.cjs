@@ -18,13 +18,22 @@ async function main(){
   });
   vm.runInContext(fs.readFileSync('dashboard/web/intraday-calculator.js','utf8'),context);
   vm.runInContext(fs.readFileSync('dashboard/web/intraday-backtests.js','utf8'),context);
-  const options={stocks:[{symbol:'HDFCBANK',name:'HDFC Bank'},{symbol:'RELIANCE',name:'Reliance'}],start:'2024-11-04',end:'2026-11-03',capital:500000,leverage:5,entry_min:'09:15',entry_max:'15:14',exit_time:'15:15',stop_loss_supported:true};
+  const runs=[{id:'missing'}, {id:'old',generated_at:'2026-11-03T18:30:00Z'},
+    {id:'latest',generated_at:'2026-11-04T23:00:00+05:30'},
+    {id:'morning',generated_at:'2026-11-04T09:00:00+05:30'},
+    {id:'fallback',generated_at:'invalid',created_at:'2026-11-04T13:00:00Z'}];
+  assert.deepEqual(Array.from(context.intradaySortReports(runs),r=>r.id),['latest','fallback','morning','old','missing']);
+  assert.equal(runs[0].id,'missing','Sorting must not mutate stored report arrays');
+  assert.ok(context.intradayRunWhen({generated_at:'2026-11-04T03:30:00Z'}).includes('09:00:00'));
+  assert.equal(context.intradayRunWhen({}),'Run time unavailable');
+  const options={stocks:[{symbol:'HDFCBANK',name:'HDFC Bank'},{symbol:'RELIANCE',name:'Reliance'}],start:'2024-11-04',end:'2026-11-03',capital:500000,leverage:5,entry_min:'09:15',entry_max:'15:14',exit_time:'15:15',stop_loss_supported:true,reversal_supported:true};
   const formHtml=context.intradayBacktestFormHtml(options);
   for(const field of ['stock','target_pct','entry_time','direction'])assert.ok(formHtml.includes(`name="${field}"`));
   assert.ok(formHtml.includes('min="555" max="914" step="1"'));
   assert.ok(formHtml.includes('RELIANCE'));
   assert.ok(formHtml.includes('15:15 IST'));
   assert.ok(formHtml.includes('name="stop_loss_enabled"'));
+  assert.ok(formHtml.includes('name="reverse_once_on_stop"'));
   assert.ok(formHtml.includes('disabled hidden'));
   assert.ok(!context.intradayBacktestFormHtml({...options,stop_loss_supported:false}).includes('name="stop_loss_enabled"'));
   for(const minute of [555,570,660,899,914])assert.equal(context.intradayMinutes(context.intradayTime(minute)),minute);
@@ -46,7 +55,7 @@ async function main(){
   assert.equal(stopControls.hidden,true);assert.equal(stopControls.disabled,true);
 
   const submit={disabled:false},error={textContent:''};
-  const form={elements:{stock:{value:'RELIANCE'},target_pct:{value:'0.3'},entry_time:{value:'11:45'},direction:{value:'short'},stop_loss_enabled:{checked:false},stop_loss_delay_minutes:{value:'30'},stop_loss_pct:{value:'0.2'}},querySelector:selector=>selector==='[type="submit"]'?submit:error};
+  const form={elements:{stock:{value:'RELIANCE'},target_pct:{value:'0.3'},entry_time:{value:'11:45'},direction:{value:'short'},stop_loss_enabled:{checked:false},stop_loss_delay_minutes:{value:'30'},stop_loss_pct:{value:'0.2'},reverse_once_on_stop:{checked:false}},querySelector:selector=>selector==='[type="submit"]'?submit:error};
   elements['#intraday-backtest-form']=form;
   let resolveCreate;handler=()=>new Promise(resolve=>resolveCreate=resolve);
   const first=context.intradaySubmitCustom(form);await context.intradaySubmitCustom(form);
@@ -67,6 +76,11 @@ async function main(){
   assert.equal(context.intradayCustomReports()[0].id,report.id);
   assert.ok(context.intradayBacktestView().includes('RELIANCE'));
   assert.ok(context.intradayBacktestView().includes('Backtest</button>'));
+  context.oldStatic={...summary,id:'older-static',generated_at:'2024-11-04T00:00:00Z'};
+  vm.runInContext('intradayBacktest=oldStatic;',context);
+  const sortedTable=context.intradayBacktestView();
+  assert.ok(sortedTable.indexOf('data-intraday-report="custom-abcdef123456"')<sortedTable.indexOf('data-intraday-report="older-static"'));
+  assert.ok(sortedTable.includes('class="intraday-run-time"'));
   handler=async()=>report;
   await context.intradayOpenCustomReport(report.id);
   assert.ok(context.detail.title.includes('11:45'));
@@ -79,14 +93,23 @@ async function main(){
   assert.ok(context.detail.body.includes('from 12:30'));
   assert.ok(context.detail.body.includes('Stop loss *'));
   assert.ok(context.detail.body.includes('1 stop-loss exits'));
+  report.reverse_once_on_stop=true;report.outcome_basis='net_day_pnl';report.reversal_count=1;
+  report.success_days=0;report.failure_days=1;
+  report.trades=[{...report.days[0],leg_number:1,direction:'long'},{...report.days[0],leg_number:2,direction:'short'}];
+  context.intradayBacktestDetails(report.id);
+  assert.ok(context.detail.body.includes('Trade 2 · Sell'));
+  assert.ok(context.detail.body.includes('Entry / side'));
+  assert.ok(context.detail.body.includes('0 profitable / 1 non-profitable days'));
 
   handler=async()=>{throw Error('Another job is active.');};
   form.elements.stop_loss_enabled.checked=true;
+  form.elements.reverse_once_on_stop.checked=true;
   form.elements.stop_loss_delay_minutes.value='45';form.elements.stop_loss_pct.value='0.25';
   await context.intradaySubmitCustom(form);
   assert.equal(calls.at(-1).body.stop_loss_enabled,true);
   assert.equal(calls.at(-1).body.stop_loss_delay_minutes,45);
   assert.equal(calls.at(-1).body.stop_loss_pct,.25);
+  assert.equal(calls.at(-1).body.reverse_once_on_stop,true);
   assert.equal(error.textContent,'Another job is active.');assert.equal(submit.disabled,false);
   assert.ok(!saved.has('trader-intraday-pending'));
   console.log('Custom backtest inputs, minute slider, duplicate prevention, queued progress, persisted results, correct trigger labels and failure recovery passed.');

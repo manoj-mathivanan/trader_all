@@ -2,7 +2,7 @@
 let intradayUserReports=[], intradayCustomLoaded=false, intradayCustomLoading=false, intradayCustomError='';
 let intradayCustomPending=null, intradayCustomTimer=null, intradayCustomPollError='';
 let intradayCustomSubmitting=false, intradayCustomPolling=false, intradayCustomDetailRequest=0;
-let intradayBacktestDraft={stock:'HDFCBANK',target_pct:.2,entry_time:'09:30',direction:'long',stop_loss_enabled:false,stop_loss_delay_minutes:30,stop_loss_pct:.2};
+let intradayBacktestDraft={stock:'HDFCBANK',target_pct:.2,entry_time:'09:30',direction:'long',stop_loss_enabled:false,stop_loss_delay_minutes:30,stop_loss_pct:.2,reverse_once_on_stop:false};
 try{const saved=JSON.parse(sessionStorage.getItem('trader-intraday-pending')||'null');if(saved&&/^[a-f0-9]{12}$/.test(saved.id))intradayCustomPending=saved;}catch{}
 
 function intradayCustomReports(){return intradayUserReports;}
@@ -62,6 +62,7 @@ function intradayBacktestFormHtml(options){
       <label class="field"><span>Reverse move from entry (%)</span><input type="number" name="stop_loss_pct" min="0.0001" max="99.9999" step="any" value="${d.stop_loss_pct??.2}" required></label>
       <div class="field intraday-time-control"><label for="intraday-stop-slider">Stop-loss delay</label><input type="range" id="intraday-stop-slider" min="0" max="${stopMax}" step="1" value="${stopDelay}" aria-valuetext="${esc(intradayStopLabel(d.entry_time,stopDelay))}"><output id="intraday-stop-label">${esc(intradayStopLabel(d.entry_time,stopDelay))}</output></div>
       <p class="settings-context intraday-time-control">If the trade remains open, start checking the fixed stop after this delay: below entry for Buy, above entry for Sell. A delay of 0 activates it immediately.</p>
+      ${options.reversal_supported?`<label class="field checkbox intraday-time-control"><input type="checkbox" name="reverse_once_on_stop" ${d.reverse_once_on_stop?'checked':''}><span>Reverse once after the first stop loss</span></label><p class="settings-context intraday-time-control">Open one opposite trade at the next minute’s open, with double the initial target, the same stop percentage, and a fresh delay. Use remaining capital at 5× leverage. Never take a third trade; exit by 15:15.</p>`:''}
     </fieldset>`:''}
     </div><p class="settings-context">${esc(options.start)} → ${esc(options.end)} · ${money(options.capital)} starting capital · ${options.leverage}× leverage, compounded daily. Enter at the selected minute’s opening price. Exit at the target, an enabled stop, or ${esc(options.exit_time)} IST. Includes Zerodha charges; excludes slippage. Uses saved, audited one-minute data.</p>
     <div class="form-error" role="alert"></div><div class="form-actions"><button type="button" class="button" data-action="close">Cancel</button><button class="button primary" type="submit">Run backtest</button></div></form>`;
@@ -85,7 +86,9 @@ async function intradaySubmitCustom(form){
   const config={stock:form.elements.stock.value,target_pct:Number(form.elements.target_pct.value),entry_time:form.elements.entry_time.value,direction:form.elements.direction.value};
   const stopEnabled=Boolean(form.elements.stop_loss_enabled?.checked);
   if(stopEnabled){config.stop_loss_enabled=true;config.stop_loss_delay_minutes=Number(form.elements.stop_loss_delay_minutes.value);config.stop_loss_pct=Number(form.elements.stop_loss_pct.value);}
-  intradayBacktestDraft={...intradayBacktestDraft,...config,stop_loss_enabled:stopEnabled,stop_loss_delay_minutes:Number(form.elements.stop_loss_delay_minutes?.value??intradayBacktestDraft.stop_loss_delay_minutes),stop_loss_pct:Number(form.elements.stop_loss_pct?.value??intradayBacktestDraft.stop_loss_pct)};
+  const reverseEnabled=stopEnabled&&Boolean(form.elements.reverse_once_on_stop?.checked);
+  if(reverseEnabled)config.reverse_once_on_stop=true;
+  intradayBacktestDraft={...intradayBacktestDraft,...config,stop_loss_enabled:stopEnabled,reverse_once_on_stop:reverseEnabled,stop_loss_delay_minutes:Number(form.elements.stop_loss_delay_minutes?.value??intradayBacktestDraft.stop_loss_delay_minutes),stop_loss_pct:Number(form.elements.stop_loss_pct?.value??intradayBacktestDraft.stop_loss_pct)};
   intradayCustomSubmitting=true;submit.disabled=true;error.textContent='';
   try{
     const job=await api('intraday/backtests','POST',config);

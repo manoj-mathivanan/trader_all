@@ -1,4 +1,23 @@
 'use strict';
+
+function intradayRunTime(report){
+  for(const value of [report.generated_at,report.created_at]){
+    if(typeof value!=='string')continue;
+    const time=Date.parse(value);if(Number.isFinite(time))return time;
+  }
+  return null;
+}
+function intradaySortReports(reports){
+  return reports.filter(Boolean).sort((a,b)=>{
+    const left=intradayRunTime(a)??-Infinity,right=intradayRunTime(b)??-Infinity;
+    return left===right?0:left>right?-1:1;
+  });
+}
+function intradayRunWhen(report){
+  const time=intradayRunTime(report);
+  return time===null?'Run time unavailable':new Date(time).toLocaleString('en-IN',{timeZone:'Asia/Kolkata',day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false})+' IST';
+}
+
 const intradayScenario={price:1000, movement:1, capital:10000, success:true, symbol:'', direction:'long'};
 let intradayBacktest=null, intradaySmallTargetBacktest=null, intradaySmallShortBacktest=null, intradayRelianceLong=null, intradayRelianceShort=null, intradayShortBacktest=null, intradayBacktestLoading=false, intradayBacktestError='';
 
@@ -11,21 +30,22 @@ async function intradayLoadBacktest(){
 
 function intradayBacktestView(){
   const r=intradayBacktest||(typeof intradayCustomReports==='function'?intradayCustomReports()[0]:null);
-  const rows=[intradayBacktest,intradayShortBacktest,intradaySmallTargetBacktest,intradaySmallShortBacktest,intradayRelianceLong,intradayRelianceShort,...(typeof intradayCustomReports==='function'?intradayCustomReports():[])].filter(Boolean).map(r=>`<tr class="intraday-backtest-row" data-intraday-report="${esc(r.id)}" tabindex="0" aria-label="View ${esc(r.stock_name)} ${r.direction==='short'?'short':'long'} daily backtest details"><td><button class="text-button" data-intraday-report="${esc(r.id)}">${esc(r.strategy)}</button></td><td>${esc(r.stock_name)}<br><small>${esc(r.stock)} · ${r.direction==='short'?'Short':'Long'}</small></td><td>${r.success_days} / ${r.failure_days}<br><small>${r.trade_count??r.days.length} trades · ${r.skipped_count??r.skipped.length} skipped</small></td><td>${money(r.total_gross_pnl)}</td><td>${money(r.total_charges)}</td><td class="${r.final_pnl>=0?'positive':'negative'}">${money(r.final_pnl)}</td><td>${money(r.final_capital)}</td></tr>`).join('');
+  const rows=intradaySortReports([intradayBacktest,intradayShortBacktest,intradaySmallTargetBacktest,intradaySmallShortBacktest,intradayRelianceLong,intradayRelianceShort,...(typeof intradayCustomReports==='function'?intradayCustomReports():[])]).map(r=>`<tr class="intraday-backtest-row" data-intraday-report="${esc(r.id)}" data-run-time="${intradayRunTime(r)??''}" tabindex="0" aria-label="View ${esc(r.stock_name)} ${r.direction==='short'?'short':'long'} daily backtest details"><td><button class="text-button" data-intraday-report="${esc(r.id)}">${esc(r.strategy)}</button><small class="intraday-run-time">Run · ${esc(intradayRunWhen(r))}</small></td><td>${esc(r.stock_name)}<br><small>${esc(r.stock)} · ${r.direction==='short'?'Short':'Long'}</small></td><td>${r.success_days} / ${r.failure_days}${r.outcome_basis==='net_day_pnl'?'<br><small>Net day P&L</small>':''}<br><small>${r.trade_count??r.days.length} trades · ${r.skipped_count??r.skipped.length} skipped</small></td><td>${money(r.total_gross_pnl)}</td><td>${money(r.total_charges)}</td><td class="${r.final_pnl>=0?'positive':'negative'}">${money(r.final_pnl)}</td><td>${money(r.final_capital)}</td></tr>`).join('');
   return `<section class="panel intraday-backtests"><div class="panel-body"><div class="intraday-history-heading"><h2>Historical backtests</h2><button type="button" class="button primary" id="intraday-new-backtest">Backtest</button></div>${typeof intradayBacktestStatus==='function'?intradayBacktestStatus():''}<p class="settings-context">₹5,00,000 starting capital · 5× leverage · daily compounding · Zerodha charges</p>${r?`
-    <p>${esc(r.start)} → ${esc(r.end)} · Trading-day counts are shown per strategy.</p>
+    <p>${esc(r.start)} → ${esc(r.end)} · Newest runs first · Trading-day counts are shown per strategy.</p>
     <div class="table-wrap"><table><thead><tr><th>Strategy description</th><th>Stock name</th><th>Success / failure days</th><th>Total profit / loss<br><small>Before charges</small></th><th>Total charges in trade</th><th>Final profit / loss<br><small>After charges</small></th><th>Final capital</th></tr></thead><tbody>${rows}</tbody></table></div>
-    <p class="settings-context">Select the entry for the capital graph and daily ledger. Success = target reached; failure = target missed, even if the exit was profitable. Fills and charges are modeled estimates.</p>`:
+    <p class="settings-context">Select the entry for the capital graph and daily ledger. For standard runs, success means target reached; reversal runs classify days by combined net P&L after both trades. Fills and charges are modeled estimates.</p>`:
     `<p role="status">${intradayBacktestLoading?'Loading backtest…':esc(intradayBacktestError||'Backtest unavailable.')}</p>${intradayBacktestError?'<button class="button" id="intraday-backtest-retry">Retry backtest</button>':''}`}</div></section>`;
 }
 
 function intradayBacktestDetails(id){
-  const r=[intradayBacktest,intradayShortBacktest,intradaySmallTargetBacktest,intradaySmallShortBacktest,intradayRelianceLong,intradayRelianceShort,...(typeof intradayCustomReports==='function'?intradayCustomReports():[])].find(r=>r&&(!id||r.id===id));if(!r)return;
+  const r=intradaySortReports([intradayBacktest,intradayShortBacktest,intradaySmallTargetBacktest,intradaySmallShortBacktest,intradayRelianceLong,intradayRelianceShort,...(typeof intradayCustomReports==='function'?intradayCustomReports():[])]).find(r=>r&&(!id||r.id===id));if(!r)return;
   if(r.custom&&!r.days){void intradayOpenCustomReport(r.id);return;}
   const short=r.direction==='short';
-  const labels=['Date','Target result','Opening capital',short?'Sell · '+(r.entry_time||'09:30'):'Buy · '+(r.entry_time||'09:30'),'Target / stop',short?'Buy back / minute':'Sell / minute','Shares','Gross P&L','Charges','Net P&L','Closing capital'];
-  const cells=r.days.map(d=>{const values=[esc(d.date),d.outcome==='success'?'Success':'Failure',money(d.opening_capital),money(d.entry_price),`${money(d.target_price)}${d.stop_price?`<br><small>Stop ${money(d.stop_price)}${d.stop_active_from?`<br>from ${esc(d.stop_active_from)}`:''}</small>`:''}`,`${money(d.exit_price)}<br><small>${esc(d.exit_time)} IST${d.exit_reason?'<br>'+esc(d.exit_reason)+(d.ambiguous_exit?' *':''):''}</small>`,number(d.quantity,0),money(d.gross_pnl),`<details><summary>${money(d.charges)}</summary>${Object.entries(d.fees).filter(([,v])=>v).map(([k,v])=>`<div>${esc(k.toUpperCase())}: ${money(v)}</div>`).join('')}</details>`,money(d.net_pnl),money(d.closing_capital)];return `<tr>${values.map((value,i)=>`<td data-label="${esc(labels[i])}"${i===9?` class="${d.net_pnl>=0?'positive':'negative'}"`:''}>${value}</td>`).join('')}</tr>`;}).join('');
-  modal(`${r.stock_name} · ${short?'Short':'Long'} · ${r.entry_time||'09:30'} target backtest`,`<p>${esc(r.strategy)}</p><p>${esc(r.start)} → ${esc(r.end)} · ${r.success_days} target successes / ${r.failure_days} failures · ${r.net_profitable_days} net profitable days${r.stop_loss_enabled?` · ${r.stop_loss_days} stop-loss exits`:''}</p>
+  const ledger=r.reverse_once_on_stop&&r.trades?r.trades:r.days;
+  const labels=[r.reverse_once_on_stop?'Date / trade':'Date','Target result','Opening capital',r.reverse_once_on_stop?'Entry / side':short?'Sell · '+(r.entry_time||'09:30'):'Buy · '+(r.entry_time||'09:30'),'Target / stop',r.reverse_once_on_stop?'Exit / minute':short?'Buy back / minute':'Sell / minute','Shares','Gross P&L','Charges','Net P&L','Closing capital'];
+  const cells=ledger.map(d=>{const values=[`${esc(d.date)}${r.reverse_once_on_stop?`<br><small>Trade ${d.leg_number} · ${d.direction==='short'?'Sell':'Buy'}</small>`:''}`,d.outcome==='success'?'Success':'Failure',money(d.opening_capital),`${money(d.entry_price)}${r.reverse_once_on_stop?`<br><small>${esc(d.entry_time)} IST · ${d.direction==='short'?'Sell':'Buy'}</small>`:''}`,`${money(d.target_price)}${d.stop_price?`<br><small>Stop ${money(d.stop_price)}${d.stop_active_from?`<br>from ${esc(d.stop_active_from)}`:''}</small>`:''}`,`${money(d.exit_price)}<br><small>${esc(d.exit_time)} IST${d.exit_reason?'<br>'+esc(d.exit_reason)+(d.ambiguous_exit?' *':''):''}</small>`,number(d.quantity,0),money(d.gross_pnl),`<details><summary>${money(d.charges)}</summary>${Object.entries(d.fees).filter(([,v])=>v).map(([k,v])=>`<div>${esc(k.toUpperCase())}: ${money(v)}</div>`).join('')}</details>`,money(d.net_pnl),money(d.closing_capital)];return `<tr>${values.map((value,i)=>`<td data-label="${esc(labels[i])}"${i===9?` class="${d.net_pnl>=0?'positive':'negative'}"`:''}>${value}</td>`).join('')}</tr>`;}).join('');
+  modal(`${r.stock_name} · ${short?'Short':'Long'} · ${r.entry_time||'09:30'} target backtest`,`<p>${esc(r.strategy)}</p><p>${esc(r.start)} → ${esc(r.end)} · ${r.outcome_basis==='net_day_pnl'?`${r.success_days} profitable / ${r.failure_days} non-profitable days`:`${r.success_days} target successes / ${r.failure_days} failures`} · ${r.net_profitable_days} net profitable days${r.reverse_once_on_stop?` · ${r.reversal_count} reversals`:''}${r.stop_loss_enabled?` · ${r.stop_loss_exits??r.stop_loss_days} stop-loss exits`:''}</p>
     <div class="intraday-summary"><div>Starting capital<br><b>${money(r.starting_capital)}</b></div><div>Gross P&L<br><b>${money(r.total_gross_pnl)}</b></div><div>Total charges<br><b>${money(r.total_charges)}</b></div><div>Net P&L<br><b>${money(r.final_pnl)}</b></div><div>Final capital<br><b>${money(r.final_capital)}</b></div><div>Net return<br><b>${pct(r.return_pct)}</b></div></div>
     <h3>Capital after each trading day</h3>${equitySvg(r.curve)}
     <details class="intraday-fees"><summary>Execution assumptions & data coverage</summary><ul>${r.assumptions.map(a=>`<li>${esc(a)}</li>`).join('')}</ul><p>${esc(r.data_source)} · ${r.expected_sessions} verified sessions. Generated ${esc(r.generated_at)}.</p><p>${r.fee_sources.map((url,i)=>`<a href="${esc(url)}" target="_blank" rel="noopener">Fee source ${i+1}</a>`).join(' · ')}</p><p>Input SHA-256: <code style="overflow-wrap:anywhere">${esc(r.input_sha256)}</code></p>${(r.skipped_count??r.skipped.length)?`<p>Skipped: ${r.skipped.map(d=>`${esc(d.date)} — ${esc(d.reason)}`).join('; ')}</p>`:''}</details>
