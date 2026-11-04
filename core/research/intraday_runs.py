@@ -1,7 +1,7 @@
 """Saved custom target experiments over the audited minute archive."""
 import re
 from typing import Literal
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from core.research import identity, intraday_target, jobs, store
 
 CATALOG = 'intraday_target_catalog'
@@ -13,6 +13,14 @@ class TargetRequest(BaseModel):
     target_pct: float = Field(gt=0, lt=100, allow_inf_nan=False)
     entry_time: str = '09:30'
     direction: Literal['long', 'short'] = 'long'
+    stop_loss_enabled: bool = False
+    stop_loss_delay_minutes: int = Field(default=30, ge=0, le=359, strict=True)
+    stop_loss_pct: float = Field(default=.2, gt=0, lt=100, allow_inf_nan=False)
+
+    @model_validator(mode='after')
+    def stop_before_exit(self):
+        intraday_target.stop_activation(self.entry_time, self.stop_loss_enabled, self.stop_loss_delay_minutes, self.stop_loss_pct)
+        return self
 
     @field_validator('stock')
     @classmethod
@@ -49,7 +57,7 @@ def execute(config, log, job_id, owner=None):
             raise ValueError('This experiment is already saved; create a new backtest.')
         store.write(key, report)
         store.write(CATALOG, [summary]+summaries())
-    log(f'Saved {report["trade_count"]} trades; net P&L {report["final_pnl"]:.2f}.')
+    log(f'Saved {report["trade_count"]} trades; {report.get("stop_loss_days",0)} stop-loss exits; net P&L {report["final_pnl"]:.2f}.')
     return {'report_id': report['id']}
 
 

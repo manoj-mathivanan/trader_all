@@ -30,13 +30,55 @@ def validate_entry_time(value):
     return value
 
 
-def simulate(sessions, expected, *, start='2024-11-04', end='2026-11-03', capital=500000, direction='long', target_pct=.5, stock='HDFCBANK', entry_time='09:30', instrument=None):
+def stop_activation(entry_time, enabled, delay_minutes, percentage):
+    validate_entry_time(entry_time)
+    if not isinstance(enabled, bool):
+        raise ValueError('Stop loss must be enabled or disabled.')
+    if not isinstance(delay_minutes, int) or isinstance(delay_minutes, bool) or not 0 <= delay_minutes <= 359:
+        raise ValueError('Stop-loss delay must be a whole number from 0 to 359 minutes.')
+    if not math.isfinite(percentage) or not 0 < percentage < 100:
+        raise ValueError('Stop-loss percent must be between zero and 100.')
+    if not enabled:
+        return None
+    hour, minute = map(int, entry_time.split(':'))
+    activation = hour*60+minute+delay_minutes
+    if activation >= 15*60+15:
+        raise ValueError('The stop loss must activate before the 15:15 session exit.')
+    return f'{activation//60:02d}:{activation%60:02d}'
+
+
+def trade_exit(bars, entry_time, target, short, stop=None, active_from=None):
+    """Respect known opening prints; resolve unknown intrabar ordering stop first."""
+    for bar in bars:
+        time = bar['time']
+        if not entry_time <= time <= '15:15':
+            continue
+        target_open = bar['open'] <= target if short else bar['open'] >= target
+        active = stop is not None and time >= active_from
+        stop_open = active and (bar['open'] >= stop if short else bar['open'] <= stop)
+        if target_open:
+            return target, time, 'Target reached', False
+        if stop_open:
+            return bar['open'], time, 'Stop loss', False
+        if time == '15:15':
+            return bar['open'], time, 'Session exit', False
+        target_hit = bar['low'] <= target if short else bar['high'] >= target
+        stop_hit = active and (bar['high'] >= stop if short else bar['low'] <= stop)
+        if stop_hit:
+            return stop, time, 'Stop loss', bool(target_hit)
+        if target_hit:
+            return target, time, 'Target reached', False
+    raise ValueError('No valid session exit candle.')
+
+
+def simulate(sessions, expected, *, start='2024-11-04', end='2026-11-03', capital=500000, direction='long', target_pct=.5, stock='HDFCBANK', entry_time='09:30', instrument=None, stop_loss_enabled=False, stop_loss_delay_minutes=30, stop_loss_pct=.2):
     if instrument is None and stock not in STOCKS:
         raise ValueError('Unsupported backtest stock.')
     instrument = instrument or STOCKS[stock]
     if instrument.get('symbol') != stock or not instrument.get('isin'):
         raise ValueError('Stock identity does not match the requested instrument.')
     validate_entry_time(entry_time)
+    active_from = stop_activation(entry_time, stop_loss_enabled, stop_loss_delay_minutes, stop_loss_pct)
     if direction not in ('long', 'short'):
         raise ValueError('Direction must be long or short.')
     short = direction == 'short'
@@ -70,16 +112,8 @@ def simulate(sessions, expected, *, start='2024-11-04', end='2026-11-03', capita
             skipped.append(dict(date=day, reason='Insufficient capital for one share'))
             continue
         target = entry * factor
-        hit = next((b for b in bars if entry_time <= b['time'] < '15:15' and
-                    (b['low'] <= target if short else b['high'] >= target)), None)
-        # The 15:15 open can fill a resting target before the manual market exit.
-        if hit:
-            exit_price, exit_time = target, hit['time']
-        elif (by_time['15:15']['open'] <= target if short else by_time['15:15']['open'] >= target):
-            hit = by_time['15:15']
-            exit_price, exit_time = target, '15:15'
-        else:
-            exit_price, exit_time = by_time['15:15']['open'], '15:15'
+        stop = entry*(1+(1 if short else -1)*stop_loss_pct/100) if stop_loss_enabled else None
+        exit_price, exit_time, exit_reason, ambiguous = trade_exit(bars, entry_time, target, short, stop, active_from)
         buy = equity_charges(exit_price if short else entry, quantity, 'buy', day, intraday=True)
         sell = equity_charges(entry if short else exit_price, quantity, 'sell', day, intraday=True)
         fees = {k: buy[k] + sell[k] for k in buy if k != 'total'}
@@ -90,13 +124,18 @@ def simulate(sessions, expected, *, start='2024-11-04', end='2026-11-03', capita
         capital += net
         days.append(dict(date=day, entry_price=entry, target_price=target, exit_price=exit_price,
             entry_time=entry_time, exit_time=exit_time, quantity=quantity,
-            outcome='success' if hit else 'failure', gross_pnl=gross, charges=charges,
+            outcome='success' if exit_reason=='Target reached' else 'failure', gross_pnl=gross, charges=charges,
+            stop_price=stop, stop_active_from=active_from, exit_reason=exit_reason, ambiguous_exit=ambiguous,
             fees=fees, net_pnl=net, opening_capital=opening, closing_capital=capital))
     gross = sum(d['gross_pnl'] for d in days)
     charges = sum(d['charges'] for d in days)
     return dict(id=stock.lower()+'-'+entry_time.replace(':','')+'-'+('short-' if short else '')+'target'+target_label.replace('.','')+'-2y', direction=direction, stock=stock, stock_name=instrument['name'], isin=instrument['isin'], entry_time=entry_time,
-        strategy=(f'Sell at {entry_time} IST; buy back at −{target_label}%' if short else f'Buy at {entry_time} IST; sell at +{target_label}%')+', otherwise exit at 15:15 IST. Compound daily at 5× leverage.',
+        strategy=(f'Sell at {entry_time} IST; buy back at −{target_label}%' if short else f'Buy at {entry_time} IST; sell at +{target_label}%')+(f'; stop loss {stop_loss_pct:g}% against entry after {stop_loss_delay_minutes} min' if stop_loss_enabled else '')+', otherwise exit at 15:15 IST. Compound daily at 5× leverage.',
         start=start, end=end, starting_capital=initial, leverage=5, target_pct=target_pct,
+        stop_loss_enabled=stop_loss_enabled, stop_loss_delay_minutes=stop_loss_delay_minutes,
+        stop_loss_pct=stop_loss_pct, stop_active_from=active_from,
+        stop_loss_days=sum(d['exit_reason']=='Stop loss' for d in days),
+        ambiguous_days=sum(d['ambiguous_exit'] for d in days),
         success_days=sum(d['outcome']=='success' for d in days),
         failure_days=sum(d['outcome']=='failure' for d in days),
         net_profitable_days=sum(d['net_pnl']>0 for d in days),
@@ -112,10 +151,12 @@ def simulate(sessions, expected, *, start='2024-11-04', end='2026-11-03', capita
             'Zerodha NSE resident-individual intraday fees use trade-date rates, including brokerage, STT, exchange, IPFT, SEBI, stamp duty and GST. Trade estimates exclude contract-note rounding.',
             'Assumes 5× margin is always available. No slippage, spread, tick-size rounding, market impact, margin liquidation, auto-square-off fees, AMC or income tax. Fees are deducted after exit.',
             f'Uses observed minute OHLC, no overnight price comparisons or split-crossing positions. Special sessions without {entry_time} or a 15:15 exit are skipped explicitly.'
-        ])
+        ]+([f'Stop loss activates at {active_from} IST, {stop_loss_delay_minutes} minutes after entry, if the trade is still open. The fixed stop is {stop_loss_pct:g}% against entry: below a buy entry and above a sell entry. Earlier adverse moves do not trigger it.',
+             'Once active, stop-loss checks continue each minute. If a minute opens beyond the stop, exit at that opening price. A stop can therefore lose more than the chosen percentage.',
+             'Opening prints are checked before intrabar extremes. If both target and stop are touched within the same minute and their order is unknown, count the stop first; these trades are flagged. No intrabar extremes after 15:15 are used.'] if stop_loss_enabled else ['Delayed stop loss is disabled.']))
 
 
-def build_report(direction='long', target_pct=.5, stock='HDFCBANK', entry_time='09:30', log=lambda message: None):
+def build_report(direction='long', target_pct=.5, stock='HDFCBANK', entry_time='09:30', log=lambda message: None, stop_loss_enabled=False, stop_loss_delay_minutes=30, stop_loss_pct=.2):
     from core.research import store
     from scripts.pull_nifty_minute_history import expected_calendar, persisted_sessions
     from scripts.backfill_nifty50_stock_minutes import valid_session
@@ -124,7 +165,10 @@ def build_report(direction='long', target_pct=.5, stock='HDFCBANK', entry_time='
         raise ValueError('Unsupported backtest stock.')
     instrument = available[stock]
     validate_entry_time(entry_time)
+    active_from = stop_activation(entry_time, stop_loss_enabled, stop_loss_delay_minutes, stop_loss_pct)
     start, end = date(2024, 11, 4), date(2026, 11, 3)
+    log(f'{stock} {direction} · entry {entry_time} IST · target {target_pct:g}% · '+
+        (f'stop {stop_loss_pct:g}% active from {active_from} IST ({stop_loss_delay_minutes} min delay).' if stop_loss_enabled else 'stop loss disabled.'))
     log(f'Loading audited one-minute history for {stock}.')
     sessions = persisted_sessions(start, end, instrument['isin'])
     expected = expected_calendar(start, end)
@@ -135,6 +179,6 @@ def build_report(direction='long', target_pct=.5, stock='HDFCBANK', entry_time='
             raise ValueError(f'Incorrect instrument identity for {stock}: {day}')
         if count % 100 == 0:
             log(f'Validated {count}/{len(expected)} stock sessions.')
-    report = simulate(sessions, expected, start=str(start), end=str(end), direction=direction, target_pct=target_pct, stock=stock, entry_time=entry_time, instrument=instrument)
+    report = simulate(sessions, expected, start=str(start), end=str(end), direction=direction, target_pct=target_pct, stock=stock, entry_time=entry_time, instrument=instrument, stop_loss_enabled=stop_loss_enabled, stop_loss_delay_minutes=stop_loss_delay_minutes, stop_loss_pct=stop_loss_pct)
     report.update(generated_at=store.now(), data_source='Upstox historical one-minute candles; shared PostgreSQL, local namespace')
     return report

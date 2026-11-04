@@ -84,6 +84,11 @@ class IntradayRunTests(unittest.TestCase):
             result=client.post('/api/intraday/backtests',json=values)
             self.assertEqual(result.status_code,202)
             self.assertEqual(submit.call_args.args[0].entry_time,'11:45')
+            enabled=client.post('/api/intraday/backtests',json={**values,'stop_loss_enabled':True,'stop_loss_delay_minutes':20,'stop_loss_pct':.3})
+            self.assertEqual(enabled.status_code,202)
+            self.assertTrue(submit.call_args.args[0].stop_loss_enabled)
+            self.assertEqual(submit.call_args.args[0].stop_loss_delay_minutes,20)
+            self.assertEqual(submit.call_args.args[0].stop_loss_pct,.3)
             self.assertEqual(client.post('/api/intraday/backtests',json={**values,'entry_time':'15:30'}).status_code,422)
         with patch.object(intraday_runs,'submit',side_effect=ValueError('Another job is active.')):
             self.assertEqual(client.post('/api/intraday/backtests',json=values).status_code,400)

@@ -11,7 +11,7 @@ def options():
     return dict(stocks=[dict(symbol=i['symbol'], name=i['name']) for i in
                        sorted(intraday_target.instruments().values(), key=lambda i:i['symbol'])],
                 start='2024-11-04', end='2026-11-03', capital=500000, leverage=5,
-                entry_min='09:15', entry_max='15:14', exit_time='15:15')
+                entry_min='09:15', entry_max='15:14', exit_time='15:15', stop_loss_supported=True)
 
 
 @router.get('/backtests')
