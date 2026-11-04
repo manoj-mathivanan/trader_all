@@ -46,7 +46,7 @@ vm.runInContext('intradayShortBacktest=shortReport; globalThis.summary=intradayB
 assert.ok(context.summary.includes('249 / 245'));
 assert.ok(context.summary.includes('259 / 235'));
 assert.ok(context.detail.title.includes('Short'));
-assert.ok(context.detail.body.includes('Sell · 09:30'));
+assert.ok(context.detail.body.includes('Sell Â· 09:30'));
 assert.ok(context.detail.body.includes('Buy back / minute'));
 assert.ok(context.detail.body.includes('155993.97'));
 console.log('Backtest summary, capital graph input and all 494 daily ledger rows passed.');
@@ -58,3 +58,11 @@ assert.ok(context.detail.body.includes('sell at +0.2%'));
 assert.ok(context.detail.body.includes('146924.51'));
 assert.ok(context.detail.title.includes('Long'));
 console.log('Independent 0.2% long target summary and daily report passed.');
+
+context.smallShortReport=JSON.parse(fs.readFileSync('dashboard/reports/hdfcbank-short-target02.json','utf8'));
+vm.runInContext('intradaySmallShortBacktest=smallShortReport; globalThis.summary=intradayBacktestView(); intradayBacktestDetails(smallShortReport.id);',context);
+assert.ok(context.summary.includes('406 / 88'));
+assert.ok(context.detail.body.includes('buy back at \u22120.2%'));
+assert.ok(context.detail.body.includes('210077.01'));
+assert.ok(context.detail.title.includes('Short'));
+console.log('Independent 0.2% short target summary and daily report passed.');

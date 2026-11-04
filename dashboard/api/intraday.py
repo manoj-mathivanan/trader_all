@@ -16,7 +16,7 @@ _expires = 0
 def target_backtest(report_id: str):
     from pathlib import Path
     from fastapi.responses import FileResponse, JSONResponse
-    if report_id not in ('hdfcbank-target', 'hdfcbank-short-target', 'hdfcbank-target02'):
+    if report_id not in ('hdfcbank-target', 'hdfcbank-short-target', 'hdfcbank-target02', 'hdfcbank-short-target02'):
         return JSONResponse({'detail': 'Unknown backtest.'}, status_code=404)
     report = Path(__file__).resolve().parents[1] / 'reports' / (report_id + '.json')
     if not report.is_file():

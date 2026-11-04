@@ -32,6 +32,21 @@ class TargetBacktestTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 simulate(data, [d], target_pct=target)
 
+    def test_short_point_two_target_and_fee_sides(self):
+        d = '2024-11-04'
+        data = {d: session(d, {'09:31': [100, 100, 99.75, 100],
+                              '10:00': [100, 100, 99.4, 100]})}
+        small = simulate(data, [d], direction='short', target_pct=.2)
+        original = simulate(data, [d], direction='short')
+        trade = small['days'][0]
+        self.assertEqual(trade['exit_time'], '09:31')
+        self.assertEqual(trade['exit_price'], 99.8)
+        self.assertAlmostEqual(trade['gross_pnl'], 5000)
+        self.assertEqual(trade['fees']['stt'], 2500000*.00025)
+        self.assertEqual(trade['fees']['stamp'], 2495000*.00003)
+        self.assertEqual(original['days'][0]['exit_time'], '10:00')
+        self.assertEqual(small['id'], 'hdfcbank-0930-short-target02-2y')
+
     def test_short_target_uses_low_and_taxes_the_correct_legs(self):
         d = '2024-11-04'
         r = simulate({d: session(d, {'09:29': [100, 100, 98, 100],
@@ -94,7 +109,7 @@ class TargetBacktestTests(unittest.TestCase):
         self.assertEqual(r['final_capital'], 500000)
 
     def test_saved_report_reconciles_and_shared_page_serves_same_data(self):
-        for name in ('hdfcbank-target', 'hdfcbank-short-target', 'hdfcbank-target02'):
+        for name in ('hdfcbank-target', 'hdfcbank-short-target', 'hdfcbank-target02', 'hdfcbank-short-target02'):
             with self.subTest(report=name):
                 self.check_saved_report(name)
 
