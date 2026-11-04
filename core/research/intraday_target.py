@@ -1,4 +1,4 @@
-"""One daily long at 09:30, target or manual 15:15 exit, compounded net of fees."""
+"""Daily long/short at 09:30, target or 15:15 exit, compounded net of fees."""
 from datetime import date
 import hashlib
 import json
@@ -6,8 +6,16 @@ import math
 from core.execution.zerodha import equity_charges, SOURCES
 from core.research import intraday_data
 
+STOCKS = {
+    'HDFCBANK': dict(symbol='HDFCBANK', name='HDFC Bank Ltd.', isin='INE040A01034'),
+    'RELIANCE': dict(symbol='RELIANCE', name='Reliance Industries Ltd.', isin='INE002A01018'),
+}
 
-def simulate(sessions, expected, *, start='2024-11-04', end='2026-11-03', capital=500000, direction='long', target_pct=.5):
+
+def simulate(sessions, expected, *, start='2024-11-04', end='2026-11-03', capital=500000, direction='long', target_pct=.5, stock='HDFCBANK'):
+    if stock not in STOCKS:
+        raise ValueError('Unsupported backtest stock.')
+    instrument = STOCKS[stock]
     if direction not in ('long', 'short'):
         raise ValueError('Direction must be long or short.')
     short = direction == 'short'
@@ -64,7 +72,7 @@ def simulate(sessions, expected, *, start='2024-11-04', end='2026-11-03', capita
             fees=fees, net_pnl=net, opening_capital=opening, closing_capital=capital))
     gross = sum(d['gross_pnl'] for d in days)
     charges = sum(d['charges'] for d in days)
-    return dict(id='hdfcbank-0930-'+('short-' if short else '')+'target'+target_label.replace('.','')+'-2y', direction=direction, stock='HDFCBANK', stock_name='HDFC Bank Ltd.',
+    return dict(id=stock.lower()+'-0930-'+('short-' if short else '')+'target'+target_label.replace('.','')+'-2y', direction=direction, stock=stock, stock_name=instrument['name'], isin=instrument['isin'],
         strategy=(f'Sell at 09:30 IST; buy back at −{target_label}%' if short else f'Buy at 09:30 IST; sell at +{target_label}%')+', otherwise exit at 15:15 IST. Compound daily at 5× leverage.',
         start=start, end=end, starting_capital=initial, leverage=5, target_pct=target_pct,
         success_days=sum(d['outcome']=='success' for d in days),
@@ -85,16 +93,21 @@ def simulate(sessions, expected, *, start='2024-11-04', end='2026-11-03', capita
         ])
 
 
-def build_report(direction='long', target_pct=.5):
+def build_report(direction='long', target_pct=.5, stock='HDFCBANK'):
     from core.research import store
     from scripts.pull_nifty_minute_history import expected_calendar, persisted_sessions
     from scripts.backfill_nifty50_stock_minutes import valid_session
+    if stock not in STOCKS:
+        raise ValueError('Unsupported backtest stock.')
+    instrument = STOCKS[stock]
     start, end = date(2024, 11, 4), date(2026, 11, 3)
-    sessions = persisted_sessions(start, end, 'INE040A01034')
+    sessions = persisted_sessions(start, end, instrument['isin'])
     expected = expected_calendar(start, end)
     for day in expected:
-        if not valid_session(day, sessions.get(day), 'INE040A01034'):
-            raise ValueError(f'Unverified HDFCBANK minute data: {day}')
-    report = simulate(sessions, expected, start=str(start), end=str(end), direction=direction, target_pct=target_pct)
+        if not valid_session(day, sessions.get(day), instrument['isin']):
+            raise ValueError(f'Unverified {stock} minute data: {day}')
+        if sessions[day].get('instrument', {}).get('isin') != instrument['isin']:
+            raise ValueError(f'Incorrect instrument identity for {stock}: {day}')
+    report = simulate(sessions, expected, start=str(start), end=str(end), direction=direction, target_pct=target_pct, stock=stock)
     report.update(generated_at=store.now(), data_source='Upstox historical one-minute candles; shared PostgreSQL, local namespace')
     return report

@@ -39,11 +39,11 @@ def create_app(*, transport=None):
 
     @app.get('/api/intraday/backtests/{report_id}')
     def intraday_target_report(report_id: str):
-        if report_id not in ('hdfcbank-target', 'hdfcbank-short-target', 'hdfcbank-target02', 'hdfcbank-short-target02'):
+        if report_id not in ('hdfcbank-target', 'hdfcbank-short-target', 'hdfcbank-target02', 'hdfcbank-short-target02', 'reliance-target02', 'reliance-short-target02'):
             return JSONResponse({'detail': 'Unknown backtest.'}, status_code=404)
         report = WEB.parent / 'reports' / (report_id + '.json')
         if not report.is_file():
-            return JSONResponse({'detail': 'The HDFCBANK backtest has not been generated.'}, status_code=404)
+            return JSONResponse({'detail': 'This backtest has not been generated.'}, status_code=404)
         return FileResponse(report, media_type='application/json')
 
     @app.api_route('/api/{path:path}', methods=['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'])

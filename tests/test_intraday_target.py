@@ -16,6 +16,20 @@ def session(day, changes=None):
 
 
 class TargetBacktestTests(unittest.TestCase):
+    def test_reliance_identity_and_both_directions(self):
+        d = '2024-11-04'
+        data = {d: session(d, {'09:31': [100, 100.3, 99.7, 100]})}
+        for direction in ('long', 'short'):
+            result = simulate(data, [d], stock='RELIANCE', direction=direction, target_pct=.2)
+            self.assertEqual(result['stock'], 'RELIANCE')
+            self.assertEqual(result['stock_name'], 'Reliance Industries Ltd.')
+            self.assertEqual(result['isin'], 'INE002A01018')
+            self.assertEqual(result['success_days'], 1)
+            self.assertTrue(result['id'].startswith('reliance-0930-'))
+            self.assertAlmostEqual(result['days'][0]['gross_pnl'], 5000)
+        with self.assertRaises(ValueError):
+            simulate(data, [d], stock='UNKNOWN')
+
     def test_point_two_target_exits_before_point_five(self):
         d = '2024-11-04'
         data = {d: session(d, {'09:31': [100, 100.25, 100, 100],
@@ -109,7 +123,7 @@ class TargetBacktestTests(unittest.TestCase):
         self.assertEqual(r['final_capital'], 500000)
 
     def test_saved_report_reconciles_and_shared_page_serves_same_data(self):
-        for name in ('hdfcbank-target', 'hdfcbank-short-target', 'hdfcbank-target02', 'hdfcbank-short-target02'):
+        for name in ('hdfcbank-target', 'hdfcbank-short-target', 'hdfcbank-target02', 'hdfcbank-short-target02', 'reliance-target02', 'reliance-short-target02'):
             with self.subTest(report=name):
                 self.check_saved_report(name)
 

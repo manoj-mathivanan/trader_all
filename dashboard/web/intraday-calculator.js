@@ -1,17 +1,17 @@
 'use strict';
 const intradayScenario={price:1000, movement:1, capital:10000, success:true, symbol:'', direction:'long'};
-let intradayBacktest=null, intradaySmallTargetBacktest=null, intradaySmallShortBacktest=null, intradayShortBacktest=null, intradayBacktestLoading=false, intradayBacktestError='';
+let intradayBacktest=null, intradaySmallTargetBacktest=null, intradaySmallShortBacktest=null, intradayRelianceLong=null, intradayRelianceShort=null, intradayShortBacktest=null, intradayBacktestLoading=false, intradayBacktestError='';
 
 async function intradayLoadBacktest(){
   intradayBacktestLoading=true;intradayBacktestError='';
-  try{[intradayBacktest,intradayShortBacktest,intradaySmallTargetBacktest,intradaySmallShortBacktest]=await Promise.all(['hdfcbank-target','hdfcbank-short-target','hdfcbank-target02','hdfcbank-short-target02'].map(id=>api('intraday/backtests/'+id)));}
+  try{[intradayBacktest,intradayShortBacktest,intradaySmallTargetBacktest,intradaySmallShortBacktest,intradayRelianceLong,intradayRelianceShort]=await Promise.all(['hdfcbank-target','hdfcbank-short-target','hdfcbank-target02','hdfcbank-short-target02','reliance-target02','reliance-short-target02'].map(id=>api('intraday/backtests/'+id)));}
   catch(error){intradayBacktestError=error.message;}
   finally{intradayBacktestLoading=false;if(currentView==='intraday'){if(state)render();else intradayPrime();}}
 }
 
 function intradayBacktestView(){
   const r=intradayBacktest;
-  const rows=[intradayBacktest,intradayShortBacktest,intradaySmallTargetBacktest,intradaySmallShortBacktest].filter(Boolean).map(r=>`<tr class="intraday-backtest-row" data-intraday-report="${esc(r.id)}" tabindex="0" aria-label="View HDFC Bank ${r.direction==='short'?'short':'long'} daily backtest details"><td><button class="text-button" data-intraday-report="${esc(r.id)}">${esc(r.strategy)}</button></td><td>${esc(r.stock_name)}<br><small>${esc(r.stock)} · ${r.direction==='short'?'Short':'Long'}</small></td><td>${r.success_days} / ${r.failure_days}</td><td>${money(r.total_gross_pnl)}</td><td>${money(r.total_charges)}</td><td class="${r.final_pnl>=0?'positive':'negative'}">${money(r.final_pnl)}</td><td>${money(r.final_capital)}</td></tr>`).join('');
+  const rows=[intradayBacktest,intradayShortBacktest,intradaySmallTargetBacktest,intradaySmallShortBacktest,intradayRelianceLong,intradayRelianceShort].filter(Boolean).map(r=>`<tr class="intraday-backtest-row" data-intraday-report="${esc(r.id)}" tabindex="0" aria-label="View ${esc(r.stock_name)} ${r.direction==='short'?'short':'long'} daily backtest details"><td><button class="text-button" data-intraday-report="${esc(r.id)}">${esc(r.strategy)}</button></td><td>${esc(r.stock_name)}<br><small>${esc(r.stock)} · ${r.direction==='short'?'Short':'Long'}</small></td><td>${r.success_days} / ${r.failure_days}</td><td>${money(r.total_gross_pnl)}</td><td>${money(r.total_charges)}</td><td class="${r.final_pnl>=0?'positive':'negative'}">${money(r.final_pnl)}</td><td>${money(r.final_capital)}</td></tr>`).join('');
   return `<section class="panel intraday-backtests"><div class="panel-body"><h2>Historical backtests</h2><p class="settings-context">₹5,00,000 starting capital · 5× leverage · daily compounding · Zerodha charges</p>${r?`
     <p>${esc(r.start)} → ${esc(r.end)} · ${r.days.length} trades · ${r.skipped.length} skipped sessions</p>
     <div class="table-wrap"><table><thead><tr><th>Strategy description</th><th>Stock name</th><th>Success / failure days</th><th>Total profit / loss<br><small>Before charges</small></th><th>Total charges in trade</th><th>Final profit / loss<br><small>After charges</small></th><th>Final capital</th></tr></thead><tbody>${rows}</tbody></table></div>
@@ -20,11 +20,11 @@ function intradayBacktestView(){
 }
 
 function intradayBacktestDetails(id){
-  const r=[intradayBacktest,intradayShortBacktest,intradaySmallTargetBacktest,intradaySmallShortBacktest].find(r=>r&&(!id||r.id===id));if(!r)return;
+  const r=[intradayBacktest,intradayShortBacktest,intradaySmallTargetBacktest,intradaySmallShortBacktest,intradayRelianceLong,intradayRelianceShort].find(r=>r&&(!id||r.id===id));if(!r)return;
   const short=r.direction==='short';
   const labels=['Date','Target result','Opening capital',short?'Sell · 09:30':'Buy · 09:30','Target',short?'Buy back / minute':'Sell / minute','Shares','Gross P&L','Charges','Net P&L','Closing capital'];
   const cells=r.days.map(d=>{const values=[esc(d.date),d.outcome==='success'?'Success':'Failure',money(d.opening_capital),money(d.entry_price),money(d.target_price),`${money(d.exit_price)}<br><small>${esc(d.exit_time)} IST</small>`,number(d.quantity,0),money(d.gross_pnl),`<details><summary>${money(d.charges)}</summary>${Object.entries(d.fees).filter(([,v])=>v).map(([k,v])=>`<div>${esc(k.toUpperCase())}: ${money(v)}</div>`).join('')}</details>`,money(d.net_pnl),money(d.closing_capital)];return `<tr>${values.map((value,i)=>`<td data-label="${esc(labels[i])}"${i===9?` class="${d.net_pnl>=0?'positive':'negative'}"`:''}>${value}</td>`).join('')}</tr>`;}).join('');
-  modal(`HDFC Bank · ${short?'Short':'Long'} · 09:30 target backtest`,`<p>${esc(r.strategy)}</p><p>${esc(r.start)} → ${esc(r.end)} · ${r.success_days} target successes / ${r.failure_days} failures · ${r.net_profitable_days} net profitable days</p>
+  modal(`${r.stock_name} · ${short?'Short':'Long'} · 09:30 target backtest`,`<p>${esc(r.strategy)}</p><p>${esc(r.start)} → ${esc(r.end)} · ${r.success_days} target successes / ${r.failure_days} failures · ${r.net_profitable_days} net profitable days</p>
     <div class="intraday-summary"><div>Starting capital<br><b>${money(r.starting_capital)}</b></div><div>Gross P&L<br><b>${money(r.total_gross_pnl)}</b></div><div>Total charges<br><b>${money(r.total_charges)}</b></div><div>Net P&L<br><b>${money(r.final_pnl)}</b></div><div>Final capital<br><b>${money(r.final_capital)}</b></div><div>Net return<br><b>${pct(r.return_pct)}</b></div></div>
     <h3>Capital after each trading day</h3>${equitySvg(r.curve)}
     <details class="intraday-fees"><summary>Execution assumptions & data coverage</summary><ul>${r.assumptions.map(a=>`<li>${esc(a)}</li>`).join('')}</ul><p>${esc(r.data_source)} · ${r.expected_sessions} verified sessions. Generated ${esc(r.generated_at)}.</p><p>${r.fee_sources.map((url,i)=>`<a href="${esc(url)}" target="_blank" rel="noopener">Fee source ${i+1}</a>`).join(' · ')}</p><p>Input SHA-256: <code style="overflow-wrap:anywhere">${esc(r.input_sha256)}</code></p>${r.skipped.length?`<p>Skipped: ${r.skipped.map(d=>`${esc(d.date)} — ${esc(d.reason)}`).join('; ')}</p>`:''}</details>

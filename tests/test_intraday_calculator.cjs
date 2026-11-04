@@ -66,3 +66,17 @@ assert.ok(context.detail.body.includes('buy back at \u22120.2%'));
 assert.ok(context.detail.body.includes('210077.01'));
 assert.ok(context.detail.title.includes('Short'));
 console.log('Independent 0.2% short target summary and daily report passed.');
+
+context.relianceLong=JSON.parse(fs.readFileSync('dashboard/reports/reliance-target02.json','utf8'));
+context.relianceShort=JSON.parse(fs.readFileSync('dashboard/reports/reliance-short-target02.json','utf8'));
+vm.runInContext('intradayRelianceLong=relianceLong; intradayRelianceShort=relianceShort; globalThis.summary=intradayBacktestView(); intradayBacktestDetails(relianceLong.id);',context);
+assert.ok(context.summary.includes('RELIANCE'));
+assert.ok(context.summary.includes('398 / 96'));
+assert.ok(context.detail.title.includes('Reliance Industries Ltd.'));
+assert.ok(context.detail.title.includes('Long'));
+assert.ok(context.detail.body.includes('89739.69'));
+vm.runInContext('intradayBacktestDetails(relianceShort.id);',context);
+assert.ok(context.detail.title.includes('Reliance Industries Ltd.'));
+assert.ok(context.detail.title.includes('Short'));
+assert.ok(context.detail.body.includes('142296.96'));
+console.log('RELIANCE long and short reports, stock-specific headings and capital totals passed.');
