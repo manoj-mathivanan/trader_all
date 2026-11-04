@@ -2,14 +2,19 @@
 from datetime import date
 import hashlib
 import json
+import math
 from core.execution.zerodha import equity_charges, SOURCES
 from core.research import intraday_data
 
 
-def simulate(sessions, expected, *, start='2024-11-04', end='2026-11-03', capital=500000, direction='long'):
+def simulate(sessions, expected, *, start='2024-11-04', end='2026-11-03', capital=500000, direction='long', target_pct=.5):
     if direction not in ('long', 'short'):
         raise ValueError('Direction must be long or short.')
     short = direction == 'short'
+    if not math.isfinite(target_pct) or not 0 < target_pct < 100:
+        raise ValueError('Target percent must be between zero and 100.')
+    factor = 1 + (-1 if short else 1) * target_pct / 100
+    target_label = f'{target_pct:g}'
     initial = capital
     days, skipped = [], []
     digest = hashlib.sha256()
@@ -34,7 +39,7 @@ def simulate(sessions, expected, *, start='2024-11-04', end='2026-11-03', capita
         if not quantity:
             skipped.append(dict(date=day, reason='Insufficient capital for one share'))
             continue
-        target = entry * (.995 if short else 1.005)
+        target = entry * factor
         hit = next((b for b in bars if '09:30' <= b['time'] < '15:15' and
                     (b['low'] <= target if short else b['high'] >= target)), None)
         # The 15:15 open can fill a resting target before the manual market exit.
@@ -59,9 +64,9 @@ def simulate(sessions, expected, *, start='2024-11-04', end='2026-11-03', capita
             fees=fees, net_pnl=net, opening_capital=opening, closing_capital=capital))
     gross = sum(d['gross_pnl'] for d in days)
     charges = sum(d['charges'] for d in days)
-    return dict(id='hdfcbank-0930-'+('short-' if short else '')+'target05-2y', direction=direction, stock='HDFCBANK', stock_name='HDFC Bank Ltd.',
-        strategy=('Sell at 09:30 IST; buy back at −0.5%' if short else 'Buy at 09:30 IST; sell at +0.5%')+', otherwise exit at 15:15 IST. Compound daily at 5× leverage.',
-        start=start, end=end, starting_capital=initial, leverage=5, target_pct=.5,
+    return dict(id='hdfcbank-0930-'+('short-' if short else '')+'target'+target_label.replace('.','')+'-2y', direction=direction, stock='HDFCBANK', stock_name='HDFC Bank Ltd.',
+        strategy=(f'Sell at 09:30 IST; buy back at −{target_label}%' if short else f'Buy at 09:30 IST; sell at +{target_label}%')+', otherwise exit at 15:15 IST. Compound daily at 5× leverage.',
+        start=start, end=end, starting_capital=initial, leverage=5, target_pct=target_pct,
         success_days=sum(d['outcome']=='success' for d in days),
         failure_days=sum(d['outcome']=='failure' for d in days),
         net_profitable_days=sum(d['net_pnl']>0 for d in days),
@@ -72,7 +77,7 @@ def simulate(sessions, expected, *, start='2024-11-04', end='2026-11-03', capita
             dict(date=d['date'], equity=d['closing_capital']) for d in days],
         assumptions=[
             f'One {direction} trade per eligible day; whole shares = floor(opening capital × 5 / entry price). Net P&L compounds daily; no overnight positions.',
-            'Entry is the 09:30 one-minute candle open; target fills at exactly entry × '+('0.995 when a subsequent or entry-minute low reaches it.' if short else '1.005 when a subsequent or entry-minute high reaches it.')+' Exit times identify a minute, not an exact tick.',
+            f'Entry is the 09:30 one-minute candle open; target fills at exactly entry × {factor:g} when a subsequent or entry-minute '+('low' if short else 'high')+' reaches it. Exit times identify a minute, not an exact tick.',
             'Target is active until the 15:15 manual exit. Target failure is independent of P&L: a failure can still close with a profit.',
             'Zerodha NSE resident-individual intraday fees use trade-date rates, including brokerage, STT, exchange, IPFT, SEBI, stamp duty and GST. Trade estimates exclude contract-note rounding.',
             'Assumes 5× margin is always available. No slippage, spread, tick-size rounding, market impact, margin liquidation, auto-square-off fees, AMC or income tax. Fees are deducted after exit.',
@@ -80,7 +85,7 @@ def simulate(sessions, expected, *, start='2024-11-04', end='2026-11-03', capita
         ])
 
 
-def build_report(direction='long'):
+def build_report(direction='long', target_pct=.5):
     from core.research import store
     from scripts.pull_nifty_minute_history import expected_calendar, persisted_sessions
     from scripts.backfill_nifty50_stock_minutes import valid_session
@@ -90,6 +95,6 @@ def build_report(direction='long'):
     for day in expected:
         if not valid_session(day, sessions.get(day), 'INE040A01034'):
             raise ValueError(f'Unverified HDFCBANK minute data: {day}')
-    report = simulate(sessions, expected, start=str(start), end=str(end), direction=direction)
+    report = simulate(sessions, expected, start=str(start), end=str(end), direction=direction, target_pct=target_pct)
     report.update(generated_at=store.now(), data_source='Upstox historical one-minute candles; shared PostgreSQL, local namespace')
     return report

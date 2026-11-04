@@ -16,6 +16,22 @@ def session(day, changes=None):
 
 
 class TargetBacktestTests(unittest.TestCase):
+    def test_point_two_target_exits_before_point_five(self):
+        d = '2024-11-04'
+        data = {d: session(d, {'09:31': [100, 100.25, 100, 100],
+                              '10:00': [100, 100.6, 100, 100]})}
+        small = simulate(data, [d], target_pct=.2)
+        original = simulate(data, [d])
+        self.assertEqual(small['days'][0]['exit_time'], '09:31')
+        self.assertEqual(small['days'][0]['exit_price'], 100.2)
+        self.assertAlmostEqual(small['days'][0]['gross_pnl'], 5000)
+        self.assertEqual(original['days'][0]['exit_time'], '10:00')
+        self.assertEqual(small['target_pct'], .2)
+        self.assertEqual(small['id'], 'hdfcbank-0930-target02-2y')
+        for target in (0, -1, 100, float('nan')):
+            with self.assertRaises(ValueError):
+                simulate(data, [d], target_pct=target)
+
     def test_short_target_uses_low_and_taxes_the_correct_legs(self):
         d = '2024-11-04'
         r = simulate({d: session(d, {'09:29': [100, 100, 98, 100],
@@ -78,7 +94,7 @@ class TargetBacktestTests(unittest.TestCase):
         self.assertEqual(r['final_capital'], 500000)
 
     def test_saved_report_reconciles_and_shared_page_serves_same_data(self):
-        for name in ('hdfcbank-target', 'hdfcbank-short-target'):
+        for name in ('hdfcbank-target', 'hdfcbank-short-target', 'hdfcbank-target02'):
             with self.subTest(report=name):
                 self.check_saved_report(name)
 
